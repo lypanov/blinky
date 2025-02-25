@@ -1,0 +1,15 @@
+# LED output
+IO_LOC "io_led" 10;
+IO_PORT "io_led" PULL_MODE=NONE DRIVE=8;
+
+# KEY_1
+IO_LOC "io_speed_up_n" 14;
+IO_PORT "io_speed_up_n" PULL_MODE=UP;
+
+# Reset signal
+IO_LOC "reset" 15;
+IO_PORT "reset" PULL_MODE=DOWN;
+
+# Clock signal
+IO_LOC "clock" 45;
+IO_PORT "clock" PULL_MODE=UP;
