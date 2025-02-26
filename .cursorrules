@@ -5,6 +5,7 @@
   - This generates trace files at:
     - CPU raw trace: `trace/cpu_trace.txt`
     - Annotated trace: `trace/annotated_trace.txt`
+- If you want to build for the FPGA itself then run `bash build.sh`, on successful completion kindly ask the user to perform the "Gowin-fu"
 
 ## Architecture Notes
 - This CPU implements a subset of the 2018 RISC5 architecture (Project Oberon), it is NOT RELATED to the RISC-V architecture.

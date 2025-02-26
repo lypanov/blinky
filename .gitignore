@@ -341,3 +341,5 @@ hs_err_pid*
 
 trace/annotated_trace.txt
 trace/cpu_trace.txt
+
+generated/

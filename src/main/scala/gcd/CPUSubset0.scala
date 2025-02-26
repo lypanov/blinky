@@ -9,6 +9,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   val io = IO(new Bundle {
     val r0 = Output(UInt(32.W))  // Output register R0 for testing
     val halted = Output(Bool())  // Signal to indicate when the CPU has completed execution
+    val led = Output(Bool())     // LED output for the Tang Nano 4K
   })
   
   // Program counter
@@ -195,28 +196,73 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   // Connect outputs
   io.r0 := regs(0)
   io.halted := halted
+  io.led := regs(0)(0)  // Connect the least significant bit of R0 to the LED
+}
+
+// Add this class after the CPUSubset0 class
+class CPUMinimalWrapper extends Module {
+  val io = IO(new Bundle {
+    val led = Output(Bool())  // Only expose the LED output
+  })
+  
+  // Internal CPU with the blink program
+  val cpu = Module(new CPUSubset0(CPUSubset0.blinkProgram))
+  io.led := cpu.io.led
 }
 
 object CPUSubset0 {
+  // Move the blinkProgram to a place where it can be shared
+  val blinkProgram = Seq(
+    "41000000", // MOV R1, 0       ; Initialize counter
+    "42FFFFF0", // MOV R2, 0xFFF0  ; Set a large iteration count for visible blinking (65,520)
+    "03190202", // SUB R3, R1, R2  ; Compare counter to max iterations
+    "E9000002", // B NE, skip_toggle, off=2
+    "40070001", // XOR R0, R0, 1   ; Toggle LED
+    "41000000", // MOV R1, 0       ; Reset counter
+    "41180001", // ADD R1, R1, 1   ; Increment counter
+    "E7FFFFFA"  // B always, loop, off=-6
+  )
+  
   def main(args: Array[String]): Unit = {
     println("Generating CPUSubset0 Verilog")
     
     val targetDir = "generated"
     val outputFile = "CPUSubset0.v"
+    val topOutputFile = "CPUMinimalWrapper.v"
     
     new java.io.File(targetDir).mkdirs()
     
+    // Generate the base CPU Verilog for testing and debugging
     val verilogCode = ChiselStage.emitSystemVerilog(
-      gen = new CPUSubset0(), // Using default empty instruction set for Verilog generation
-      firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info",
-         "--lowering-options=disallowLocalVariables")
+      gen = new CPUSubset0(blinkProgram),
+      firtoolOpts = Array(
+        "-disable-all-randomization",
+        "-strip-debug-info",
+        "--lowering-options=disallowLocalVariables,disallowPackedArrays,noAlwaysComb"
+      )
     )
     
+    // Also generate the minimal top-level wrapper for FPGA synthesis
+    val topVerilogCode = ChiselStage.emitSystemVerilog(
+      gen = new CPUMinimalWrapper(),
+      firtoolOpts = Array(
+        "-disable-all-randomization",
+        "-strip-debug-info",
+        "--lowering-options=disallowLocalVariables,disallowPackedArrays,noAlwaysComb"
+      )
+    )
+    
+    // Write both Verilog files
     val writer = new java.io.PrintWriter(new java.io.File(s"$targetDir/$outputFile"))
     writer.write(verilogCode)
     writer.close()
     
+    val topWriter = new java.io.PrintWriter(new java.io.File(s"$targetDir/$topOutputFile"))
+    topWriter.write(topVerilogCode)
+    topWriter.close()
+    
     println(s"Verilog written to $targetDir/$outputFile")
+    println(s"Top-level wrapper written to $targetDir/$topOutputFile")
     
     // Also create a trace directory if it doesn't exist
     val traceDir = "trace"

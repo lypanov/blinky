@@ -3,8 +3,8 @@ IO_LOC "io_led" 10;
 IO_PORT "io_led" PULL_MODE=NONE DRIVE=8;
 
 # KEY_1
-IO_LOC "io_speed_up_n" 14;
-IO_PORT "io_speed_up_n" PULL_MODE=UP;
+# IO_LOC "io_speed_up_n" 14;
+# IO_PORT "io_speed_up_n" PULL_MODE=UP;
 
 # Reset signal
 IO_LOC "reset" 15;

@@ -73,6 +73,11 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
         // Get current R0 value
         val currentR0 = dut.io.r0.peek().litValue.toInt
         
+        // Also check LED output (should match bit 0 of R0)
+        val ledValue = dut.io.led.peek().litToBoolean
+        val expectedLedValue = (currentR0 & 1) == 1
+        assert(ledValue == expectedLedValue, s"LED value $ledValue does not match expected ${expectedLedValue}")
+        
         // Store in history
         r0History.enqueue(currentR0)
         if (r0History.size > HISTORY_SIZE) {
@@ -108,6 +113,32 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       toggleCount should be >= 2
       
       println(s"Test completed with $toggleCount toggles in $stepCount steps")
+    }
+  }
+  
+  it should "toggle the LED output" in {
+    test(new CPUSubset0(testInstructions)) { dut =>
+      // Set a reasonable timeout
+      dut.clock.setTimeout(1000)
+      
+      // Run for a short time just to confirm LED toggling works
+      var previousLedValue = dut.io.led.peek().litToBoolean
+      var ledChanged = false
+      
+      // Run until we see the LED change or timeout
+      for (i <- 0 until 300 if !ledChanged) {
+        dut.clock.step()
+        
+        val currentLedValue = dut.io.led.peek().litToBoolean
+        if (currentLedValue != previousLedValue) {
+          ledChanged = true
+          println(s"LED toggled from $previousLedValue to $currentLedValue at step $i")
+        }
+        
+        previousLedValue = currentLedValue
+      }
+      
+      ledChanged should be (true)
     }
   }
 }
