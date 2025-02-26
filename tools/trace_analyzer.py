@@ -212,7 +212,7 @@ class TraceAnalyzer:
                     break
                     
     def _format_value_with_sign(self, value_str):
-        """Convert a value to both unsigned and signed representations"""
+        """Convert a value to unsigned, signed, and hex representations"""
         try:
             value = int(value_str)
             unsigned_value = value
@@ -222,10 +222,14 @@ class TraceAnalyzer:
             else:
                 signed_value = value
                 
-            # Only show both formats if they're different (value is negative)
+            # Get the hexadecimal representation (always 8 digits with leading zeros)
+            hex_value = f"0x{value:08X}"
+            
+            # Show unsigned, signed (if negative), and hex for all values
             if signed_value < 0:
-                return f"{unsigned_value}U | {signed_value}"
-            return str(value)
+                return f"{unsigned_value}U | {signed_value} | {hex_value}"
+            # For positive values, show the value and hex
+            return f"{value} | {hex_value}"
         except ValueError:
             return value_str
         
