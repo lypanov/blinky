@@ -1,0 +1,328 @@
+#!/usr/bin/env python3
+
+import re
+import sys
+import os
+from collections import defaultdict
+import argparse
+
+class Instruction:
+    def __init__(self, addr, hex_code, disasm=""):
+        self.addr = addr
+        self.hex_code = hex_code.replace("0x", "").upper()
+        self.disasm = disasm
+        self.format = self._get_format()
+        self.fields = self._parse_fields()
+        
+    def _get_format(self):
+        instr = int(self.hex_code, 16)
+        format_bits = (instr >> 28) & 0xF
+        
+        if format_bits in [0x4, 0x5]:
+            return "F1"  # Immediate operations
+        elif format_bits in [0x0, 0x1]:
+            return "F0"  # Register operations
+        elif format_bits in [0xE, 0xF]:
+            return "F3"  # Branch operations
+        else:
+            return "Unknown"
+            
+    def _parse_fields(self):
+        instr = int(self.hex_code, 16)
+        fields = {}
+        
+        # Common fields for all formats
+        fields["format"] = (instr >> 28) & 0xF
+        
+        if self.format == "F1":  # Immediate operations
+            fields["a"] = (instr >> 24) & 0xF  # Destination register
+            fields["b"] = (instr >> 20) & 0xF  # Source register
+            fields["op"] = (instr >> 16) & 0xF  # Operation code
+            fields["imm"] = instr & 0xFFFF  # Immediate value
+            
+        elif self.format == "F0":  # Register operations
+            fields["a"] = (instr >> 24) & 0xF  # Destination register
+            fields["b"] = (instr >> 20) & 0xF  # Source register 1
+            fields["op"] = (instr >> 16) & 0xF  # Operation code
+            fields["c"] = instr & 0xF  # Source register 2
+            
+        elif self.format == "F3":  # Branch operations
+            fields["cond"] = (instr >> 24) & 0xF  # Branch condition
+            fields["off"] = instr & 0xFFFFFF  # Offset
+            # Sign extend the offset for display
+            if fields["off"] & 0x800000:
+                fields["off"] = fields["off"] | 0xFF000000
+                
+        return fields
+    
+    def get_disassembly(self):
+        """Generate disassembly if not provided"""
+        if self.disasm:
+            return self.disasm
+            
+        if self.format == "F1":  # Immediate operations
+            op = self.fields["op"]
+            a = self.fields["a"]
+            b = self.fields["b"]
+            imm = self.fields["imm"]
+            
+            if op == 0:
+                return f"MOV R{a}, {imm}"
+            elif op == 7:
+                return f"XOR R{a}, R{b}, {imm}"
+            elif op == 8:
+                return f"ADD R{a}, R{b}, {imm}"
+            elif op == 9:
+                return f"SUB R{a}, R{b}, {imm}"
+            else:
+                return f"Unknown F1 op: {op}"
+                
+        elif self.format == "F0":  # Register operations
+            op = self.fields["op"]
+            a = self.fields["a"]
+            b = self.fields["b"]
+            c = self.fields["c"]
+            
+            if op == 9:
+                return f"SUB R{a}, R{b}, R{c}"
+            else:
+                return f"Unknown F0 op: {op}"
+                
+        elif self.format == "F3":  # Branch operations
+            cond = self.fields["cond"]
+            off = self.fields["off"]
+            
+            if cond == 1:
+                return f"BEQ offset={off}"
+            elif cond == 9:
+                return f"BNE offset={off}"
+            elif cond == 7:
+                return f"B offset={off}"
+            else:
+                return f"Unknown branch condition: {cond}"
+                
+        return "Unknown instruction format"
+        
+    def __str__(self):
+        result = f"0x{self.addr:08x}: 0x{self.hex_code} - {self.get_disassembly()} (Format: {self.format})"
+        if self.format == "F1":
+            result += f"\n  Dest: R{self.fields['a']}, Src: R{self.fields['b']}, Op: {self.fields['op']}, Imm: {self.fields['imm']}"
+        elif self.format == "F0":
+            result += f"\n  Dest: R{self.fields['a']}, Src1: R{self.fields['b']}, Op: {self.fields['op']}, Src2: R{self.fields['c']}"
+        elif self.format == "F3":
+            result += f"\n  Cond: {self.fields['cond']}, Offset: {self.fields['off']} (Target: 0x{(self.addr + 4 + (self.fields['off'] * 4)) & 0xFFFFFFFF:08x})"
+        return result
+
+
+class TraceAnalyzer:
+    def __init__(self, trace_file):
+        self.trace_file = trace_file
+        self.instructions = {}
+        self.trace_blocks = []
+        self.load_trace_file()
+        
+    def load_trace_file(self):
+        """Load the trace file and parse trace data"""
+        if not os.path.exists(self.trace_file):
+            print(f"Error: Trace file {self.trace_file} not found")
+            sys.exit(1)
+            
+        print(f"Analyzing trace file: {self.trace_file}")
+        
+        # Define patterns for parsing
+        pc_pattern = r"PC:\s+(\d+), Instruction: ([0-9a-fA-F]+)"
+        reg_pattern = r"R0:\s+(\d+), R1:\s+(\d+), R2:\s+(\d+), R3:\s+(\d+), Z:\s+([01])"
+        format_pattern = r"Format:\s+(\d+), A:\s+(\d+), B:\s+(\d+), OP:\s+(\d+), IMM:\s+(\d+)"
+        write_pattern = r"Writing\s+(\d+) to register\s+(\d+)"
+        
+        # Read the trace file
+        with open(self.trace_file, 'r') as f:
+            lines = f.readlines()
+            
+        # Process the lines into instruction blocks
+        current_block = []
+        pending_writes = []  # Store pending register writes for next instruction
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Remove the [120] prefix if present
+            if line.startswith('['):
+                line = line[line.find(']')+1:].strip()
+            
+            # If we see a register write, store it for the next instruction block
+            write_match = re.search(write_pattern, line)
+            if write_match:
+                pending_writes.append(line)
+                continue
+                
+            pc_match = re.search(pc_pattern, line)
+            if pc_match:
+                if current_block:
+                    self.trace_blocks.append(current_block)
+                # Start a new block with pending writes from previous instructions
+                current_block = pending_writes + [line]
+                pending_writes = []  # Clear pending writes
+            elif current_block and (
+                re.search(reg_pattern, line) or 
+                re.search(format_pattern, line)
+            ):
+                current_block.append(line)
+                
+        # Add the last block if not empty
+        if current_block:
+            self.trace_blocks.append(current_block)
+            
+        # Analyze each block to extract instructions
+        for i, block in enumerate(self.trace_blocks):
+            pc_line = None
+            for line in block:
+                pc_match = re.search(pc_pattern, line)
+                if pc_match:
+                    pc = int(pc_match.group(1))
+                    instr_hex = pc_match.group(2)
+                    
+                    # Create an instruction entry if not exists
+                    if pc not in self.instructions:
+                        self.instructions[pc] = Instruction(pc, instr_hex)
+                    break
+        
+    def analyze_trace(self):
+        """Analyze the trace data and add annotations"""
+        # Use the same patterns as in load_trace_file
+        pc_pattern = r"PC:\s+(\d+), Instruction: ([0-9a-fA-F]+)"
+        reg_pattern = r"R0:\s+(\d+), R1:\s+(\d+), R2:\s+(\d+), R3:\s+(\d+), Z:\s+([01])"
+        format_pattern = r"Format:\s+(\d+), A:\s+(\d+), B:\s+(\d+), OP:\s+(\d+), IMM:\s+(\d+)"
+        write_pattern = r"Writing\s+(\d+) to register\s+(\d+)"
+        
+        results = []
+        
+        # Process each block
+        for block in self.trace_blocks:
+            results.append(self.annotate_block(block))
+            
+        return results
+        
+    def annotate_block(self, block):
+        """Annotate a block of trace output with instruction information"""
+        # Use the same patterns as in load_trace_file
+        pc_pattern = r"PC:\s+(\d+), Instruction: ([0-9a-fA-F]+)"
+        reg_pattern = r"R0:\s+(\d+), R1:\s+(\d+), R2:\s+(\d+), R3:\s+(\d+), Z:\s+([01])"
+        format_pattern = r"Format:\s+(\d+), A:\s+(\d+), B:\s+(\d+), OP:\s+(\d+), IMM:\s+(\d+)"
+        write_pattern = r"Writing\s+(\d+) to register\s+(\d+)"
+        
+        pc_line = None
+        for line in block:
+            pc_match = re.search(pc_pattern, line)
+            if pc_match:
+                pc_line = line
+                break
+                
+        if not pc_line:
+            return "\n".join(block)  # Return unchanged if no PC found
+            
+        pc_match = re.search(pc_pattern, pc_line)
+        pc = int(pc_match.group(1))
+        instr_hex = pc_match.group(2)
+        
+        # Get or create the instruction
+        instr = self.instructions.get(pc)
+        if not instr:
+            instr = Instruction(pc, instr_hex)
+            self.instructions[pc] = instr
+            
+        # Create annotated output
+        annotated = [f"===== PC: 0x{pc:08x} - {instr.get_disassembly()} ====="]
+        annotated.append(f"Instruction: 0x{instr_hex} - Format: {instr.format}")
+        
+        if instr.format == "F1":
+            annotated.append(f"  Dest: R{instr.fields['a']}, Src: R{instr.fields['b']}, Op: {instr.fields['op']}, Imm: {instr.fields['imm']}")
+        elif instr.format == "F0":
+            annotated.append(f"  Dest: R{instr.fields['a']}, Src1: R{instr.fields['b']}, Op: {instr.fields['op']}, Src2: R{instr.fields['c']}")
+        elif instr.format == "F3":
+            target = pc + 4 + (instr.fields['off'] * 4)
+            annotated.append(f"  Cond: {instr.fields['cond']}, Offset: {instr.fields['off']} (Target: 0x{target & 0xFFFFFFFF:08x})")
+        
+        # Check for register writes - these are the actual effects of THIS instruction
+        has_reg_write = False
+        for line in block:
+            write_match = re.search(write_pattern, line)
+            if write_match:
+                if not has_reg_write:
+                    annotated.append("Execution Effects:")
+                    has_reg_write = True
+                value = write_match.group(1)
+                reg = write_match.group(2)
+                annotated.append(f"  Writing R{reg} = {value}")
+            
+        # Add register state after execution
+        for line in block:
+            reg_match = re.search(reg_pattern, line)
+            if reg_match:
+                r0 = reg_match.group(1)
+                r1 = reg_match.group(2)
+                r2 = reg_match.group(3)
+                r3 = reg_match.group(4)
+                z = reg_match.group(5)
+                annotated.append("Register State:")
+                annotated.append(f"  R0={r0}, R1={r1}, R2={r2}, R3={r3}, Z={z}")
+                break
+        
+        return "\n".join(annotated)
+        
+    def write_annotated_trace(self, output_file):
+        """Write the annotated trace to a file"""
+        annotated_blocks = self.analyze_trace()
+        
+        # Create instruction map for hardcoded instructions
+        instruction_map = {
+            0x0: Instruction(0x0, "41000000", "MOV R1, 0"),
+            0x4: Instruction(0x4, "42000005", "MOV R2, 5"),
+            0x8: Instruction(0x8, "03190202", "SUB R3, R1, R2"),
+            0xC: Instruction(0xC, "E9000002", "B NE, skip_toggle, off=2"),
+            0x10: Instruction(0x10, "40070001", "XOR R0, R0, 1"),
+            0x14: Instruction(0x14, "41000000", "MOV R1, 0"),
+            0x18: Instruction(0x18, "41180001", "ADD R1, R1, 1"),
+            0x1C: Instruction(0x1C, "E7FFFFFA", "B always, loop, off=-6")
+        }
+        
+        # Add any missing instructions
+        for addr, instr in instruction_map.items():
+            if addr not in self.instructions:
+                self.instructions[addr] = instr
+        
+        with open(output_file, 'w') as f:
+            f.write("===========================================\n")
+            f.write("CPU Trace Analysis - Annotated Instruction Trace\n")
+            f.write("===========================================\n\n")
+            
+            f.write("Instructions in program:\n")
+            f.write("----------------------\n")
+            for addr in sorted(instruction_map.keys()):
+                f.write(f"{instruction_map[addr]}\n\n")
+                
+            f.write("\n===========================================\n")
+            f.write("Annotated Trace Output:\n")
+            f.write("===========================================\n\n")
+            
+            for block in annotated_blocks:
+                f.write(f"{block}\n\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Analyze CPU trace output')
+    parser.add_argument('trace_file', help='Path to the trace file')
+    parser.add_argument('-o', '--output', help='Output file for annotated trace', default='trace/annotated_trace.txt')
+    
+    args = parser.parse_args()
+    
+    analyzer = TraceAnalyzer(args.trace_file)
+    analyzer.write_annotated_trace(args.output)
+    
+    print(f"Annotated trace written to {args.output}")
+
+
+if __name__ == '__main__':
+    main() 

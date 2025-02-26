@@ -14,6 +14,27 @@
                 "panel": "new"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "Run Chisel Tests",
+            "type": "shell",
+            "command": "sh",
+            "args": [
+                "-c",
+                "mill chisel-blinky.test && (echo \"Tests passed! Closing terminal in 2 seconds...\" && sleep 2 && exit 0) || (echo \"Tests failed!...\" && exit 1)"
+            ],
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new",
+                "close": true,
+                "showReuseMessage": false,
+                "clear": true,
+            },
+            "problemMatcher": []
         }
     ]
 } 

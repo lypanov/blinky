@@ -8,7 +8,7 @@ TARGET_DIR="/mnt/c/Gowin/Gowin_V1.9.11_x64/IDE/bin/Documents/blinky-test-1/src"
 
 # Generate Verilog using Mill
 echo "Generating Verilog..."
-mill chisel-blinky.runMain Blinky
+mill chisel-blinky.runMain gcd.Blinky
 
 # Check if generation was successful
 if [ ! -f "generated/Blinky.v" ]; then

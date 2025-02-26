@@ -1,0 +1,1 @@
+https://gist.githubusercontent.com/swetland/7f6968e26f39db8d8dd693da85f820d1/raw/451550ed442ce5f3c98a5d68abdfb538b173c703/project-oberon-risc5-architecture.txt

@@ -12,42 +12,45 @@ class Blinky(frequency: Int, clockFreq: Int) extends Module {
   val baseFreq = frequency.U
   val speedUpFactor = 2.U // Speed up by 2x when speed_up button is pressed
   
-  // Select frequency based on button state
   val currentFreq = Mux(io.speed_up_n, baseFreq, baseFreq * speedUpFactor)
-  
-  // Calculate toggle threshold
   val toggleFreq = clockFreq.U / (2.U * currentFreq)
   
   val counter = RegInit(0.U(32.W))
   val ledState = RegInit(false.B)
 
-  // Simple counter logic with >= comparison to prevent getting stuck
   counter := counter + 1.U
   when (counter >= toggleFreq) {
     counter := 0.U
     ledState := ~ledState
+    printf(cf"LED toggled to ${ledState} at frequency ${currentFreq} Hz\n")
+  }
+
+  when (counter === 0.U) {
+    printf(cf"Counter reset, current blink frequency: ${currentFreq} Hz\n")
   }
 
   io.led := ledState
 }
 
-object Blinky extends App {
-  System.out.println("Generating Blinky Verilog")
-  
-  val targetDir = "generated"
-  val outputFile = "Blinky.v"
-  
-  new java.io.File(targetDir).mkdirs()
-  
-  val verilogCode = ChiselStage.emitSystemVerilog(
-    gen = new Blinky(1, 27_000_000), // 1 Hz blink, 27 MHz Tang Nano 4K clock
-    firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info",
-       "--lowering-options=disallowLocalVariables")
-  )
-  
-  val writer = new java.io.PrintWriter(new java.io.File(s"$targetDir/$outputFile"))
-  writer.write(verilogCode)
-  writer.close()
-  
-  System.out.println(s"Verilog written to $targetDir/$outputFile")
+object Blinky {
+  def main(args: Array[String]): Unit = {
+    println("Generating Blinky Verilog")
+    
+    val targetDir = "generated"
+    val outputFile = "Blinky.v"
+    
+    new java.io.File(targetDir).mkdirs()
+    
+    val verilogCode = ChiselStage.emitSystemVerilog(
+      gen = new Blinky(1, 27_000_000), // 1 Hz blink, 27 MHz Tang Nano 4K clock
+      firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info",
+         "--lowering-options=disallowLocalVariables")
+    )
+    
+    val writer = new java.io.PrintWriter(new java.io.File(s"$targetDir/$outputFile"))
+    writer.write(verilogCode)
+    writer.close()
+    
+    println(s"Verilog written to $targetDir/$outputFile")
+  }
 }
