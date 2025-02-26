@@ -6,10 +6,16 @@
     - CPU raw trace: `trace/cpu_trace.txt`
     - Annotated trace: `trace/annotated_trace.txt`
 - If you want to build for the FPGA itself then run `bash build.sh`, on successful completion kindly ask the user to perform the "Gowin-fu"
+- Don't directly run sbt, we do not use sbt.
+- Don't try running mill directly for subsetting the test cases either, simply run the tests as mentioned in the first command so we get full trace output.
+
+## Important Notes
+- Ensure that when adding new instructions the `tools/trace_analyzer.py` script is updated accordingly or traces will stop making any sense.
 
 ## Architecture Notes
 - This CPU implements a subset of the 2018 RISC5 architecture (Project Oberon), it is NOT RELATED to the RISC-V architecture.
 - The ISA is described on the web here: https://gist.githubusercontent.com/swetland/7f6968e26f39db8d8dd693da85f820d1/raw/451550ed442ce5f3c98a5d68abdfb538b173c703/project-oberon-risc5-architecture.txt
+- When making references to the ISA, refer to the above link, do NOT make up your own interpretations of the instructions or use our current implementation as the reference!
 - The CPU is implemented in Scala using the Chisel library
 - The CPU is designed to be synthesized into an the Tang Nano 4K FPGA
 - Tests are written in Scala using the ChiselTest library, a good example test is `src/test/scala/gcd/CPUSubset0Spec.scala`

@@ -8,6 +8,9 @@ import java.io.{File, PrintWriter}
 class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends Module {
   val io = IO(new Bundle {
     val r0 = Output(UInt(32.W))  // Output register R0 for testing
+    val r1 = Output(UInt(32.W))  // Output register R1 for testing
+    val r2 = Output(UInt(32.W))  // Output register R2 for testing
+    val r3 = Output(UInt(32.W))  // Output register R3 for testing
     val halted = Output(Bool())  // Signal to indicate when the CPU has completed execution
     val led = Output(Bool())     // LED output for the Tang Nano 4K
   })
@@ -113,6 +116,31 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         // Set flags
         z := immediate === 0.U
         n := immediate(15)
+        
+        // Special case for MHI (Move High Immediate) which uses format=0x7
+        // According to RISC5 ISA, MHI is a MOV (op=0) with format=0x7
+        when (format === "b0110".U) {
+          // MHI: Move 16-bit immediate to upper half of register
+          // Encoding: 0111 a b 0000 imm
+          regWriteData := imm << 16
+          
+          // Debug output for MHI
+          printf(p"MHI: R$regA = ${imm} << 16 = ${imm << 16}\n")
+        }
+      }
+      
+      is(6.U) { // IOR - Bitwise OR with immediate
+        val result = regs(regB) | imm
+        regWrite := true.B
+        regWriteAddr := regA
+        regWriteData := result
+        
+        // Set flags
+        n := result(31)
+        z := result === 0.U
+        
+        // Debug output for IOR
+        printf(p"IOR: R$regA = R$regB(${regs(regB)}) | ${imm} = $result\n")
       }
       
       is(7.U) { // XOR - Exclusive OR
@@ -195,6 +223,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   
   // Connect outputs
   io.r0 := regs(0)
+  io.r1 := regs(1)
+  io.r2 := regs(2)
+  io.r3 := regs(3)
   io.halted := halted
   io.led := regs(0)(0)  // Connect the least significant bit of R0 to the LED
 }
@@ -213,11 +244,14 @@ class CPUMinimalWrapper extends Module {
 object CPUSubset0 {
   // Move the blinkProgram to a place where it can be shared
   val blinkProgram = Seq(
-    "41000000", // MOV R1, 0       ; Initialize counter
-    "42FFFFF0", // MOV R2, 0xFFF0  ; Set a large iteration count for visible blinking (65,520)
+    "40000001", // MOV R0, 1       ; light on
+    "41000001", // MOV R1, 0       ; Initialize counter
+    // "47020033", // MHI R2, 0x0100  ; Set high part of loop count (0x01000000)
+    "42260005", // IOR R2, R2, 0xA120 ; Set low part of loop count (0x0100A120 = ~16,842,016 iterations)
     "03190202", // SUB R3, R1, R2  ; Compare counter to max iterations
     "E9000002", // B NE, skip_toggle, off=2
-    "40070001", // XOR R0, R0, 1   ; Toggle LED
+    // "40070001", // XOR R0, R0, 1   ; Toggle LED
+    "47020033", // MHI R2, 0x0100  ; Set high part of loop count (0x01000000)
     "41000000", // MOV R1, 0       ; Reset counter
     "41180001", // ADD R1, R1, 1   ; Increment counter
     "E7FFFFFA"  // B always, loop, off=-6

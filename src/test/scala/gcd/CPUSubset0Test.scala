@@ -18,7 +18,8 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
   // Define test program instructions here (single source of truth)
   val testInstructions = Seq(
     "41000000", // MOV R1, 0
-    "42000005", // MOV R2, 5 
+    "47020000", // MHI R2, 0x0000  ; Set high part of loop count (0x00000000)
+    "42260005", // IOR R2, R2, 0x0005 ; Set low part (5) for the test (same value as before)
     "03190202", // SUB R3, R1, R2
     "E9000002", // B NE, skip_toggle, off=2
     "40070001", // XOR R0, R0, 1
@@ -139,6 +140,54 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       }
       
       ledChanged should be (true)
+    }
+  }
+  
+  it should "correctly execute MHI and IOR instructions" in {
+    // Define a specific test program for MHI and IOR instructions
+    val mhiIorTestInstructions = Seq(
+      "6300CAFE", // MHI R3, 0xCAFE     ; R3 = 0xCAFE0000
+      "4336F00D", // IOR R3, R3, 0xF00D  ; R3 = 0xCAFE0000 | 0x0000F00D = 0xCAFEF00D
+      "41005555", // MOV R1, 0x5555      ; Load 0x5555 into R1
+      "4116AAAA", // IOR R1, R1, 0xAAAA  ; R1 = 0x00005555 | 0x0000AAAA = 0x0000FFFF
+      "E7000000"  // B always, halt      ; Branch to self (halt)
+    )
+    
+    // Print the MHI/IOR test instructions to the trace file
+    CPUSubset0Companion.traceWriter.printf("\nMHI/IOR Test Instructions:\n")
+    for ((instr, idx) <- mhiIorTestInstructions.zipWithIndex) {
+      CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
+    }
+    CPUSubset0Companion.traceWriter.printf("\n")
+    
+    test(new CPUSubset0(mhiIorTestInstructions)) { dut =>
+      dut.clock.setTimeout(100) // Small timeout is sufficient for this test
+      
+      // Step through each instruction
+      dut.clock.step() // Execute MHI R3, 0xCAFE
+      dut.clock.step() // Execute IOR R3, R3, 0xF00D
+      dut.clock.step() // Execute MOV R1, 0x5555
+      dut.clock.step() // Execute IOR R1, R1, 0xAAAA 
+      
+      // Step one more time to let any pending register writes complete
+      dut.clock.step()
+      
+      // Verify R3 value directly using the exposed register
+      val r3Value = dut.io.r3.peek().litValue
+      println(s"After MHI+IOR, R3 = 0x${r3Value.toString(16).toUpperCase()}")
+      
+      // Check the expected value - 0xCAFEF00D = 3405705229 decimal
+      assert(r3Value.toString(16).toUpperCase() == "CAFEF00D", 
+             s"R3 value ${r3Value.toString(16).toUpperCase()} should be CAFEF00D")
+      
+      // Verify R1 value directly using the exposed register
+      val r1Value = dut.io.r1.peek().litValue
+      println(s"After IOR, R1 = 0x${r1Value.toString(16).toUpperCase()}")
+      
+      // Check the expected value - 0xFFFF = 65535 decimal
+      assert(r1Value.toInt == 0xFFFF, s"R1 value ${r1Value.toInt} should be 65535 (0xFFFF)")
+      
+      println("MHI/IOR test completed successfully")
     }
   }
 }
