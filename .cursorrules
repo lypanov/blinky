@@ -1,0 +1,14 @@
+# CPU Project Rules and Important Information
+
+## Commands
+- Run CPU tests with trace output: `bash tools/run_cpu_with_trace.sh`
+  - This generates trace files at:
+    - CPU raw trace: `trace/cpu_trace.txt`
+    - Annotated trace: `trace/annotated_trace.txt`
+
+## Architecture Notes
+- This CPU implements a subset of the 2018 RISC5 architecture (Project Oberon), it is NOT RELATED to the RISC-V architecture.
+- The ISA is described on the web here: https://gist.githubusercontent.com/swetland/7f6968e26f39db8d8dd693da85f820d1/raw/451550ed442ce5f3c98a5d68abdfb538b173c703/project-oberon-risc5-architecture.txt
+- The CPU is implemented in Scala using the Chisel library
+- The CPU is designed to be synthesized into an the Tang Nano 4K FPGA
+- Tests are written in Scala using the ChiselTest library, a good example test is `src/test/scala/gcd/CPUSubset0Spec.scala`
