@@ -15,13 +15,33 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
   new File(traceDir).mkdirs()
   val traceFile = s"$traceDir/cpu_trace.txt"
   
+  // Define test program instructions here (single source of truth)
+  val testInstructions = Seq(
+    "41000000", // MOV R1, 0
+    "42000005", // MOV R2, 5 
+    "03190202", // SUB R3, R1, R2
+    "E9000002", // B NE, skip_toggle, off=2
+    "40070001", // XOR R0, R0, 1
+    "41000000", // MOV R1, 0
+    "41180001", // ADD R1, R1, 1
+    "E7FFFFFA"  // B always, loop, off=-6
+  )
+  
   // Call the CPUSubset0Companion to initialize the trace file
   CPUSubset0Companion.initializeTraceWriter()
   
   println(s"CPU tests will output trace to $traceFile")
+  println(s"Using ${testInstructions.length} test instructions")
+  
+  // Print instruction list to trace file for analysis
+  CPUSubset0Companion.traceWriter.printf("CPU Instructions:\n")
+  for ((instr, idx) <- testInstructions.zipWithIndex) {
+    CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
+  }
+  CPUSubset0Companion.traceWriter.printf("\n")
 
   it should "execute the test program and toggle R0 after correctly completing loop iterations" in {
-    test(new CPUSubset0()) { dut =>
+    test(new CPUSubset0(testInstructions)) { dut =>
       // Set a reasonable timeout
       dut.clock.setTimeout(1000)
       

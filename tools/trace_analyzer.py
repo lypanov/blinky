@@ -119,6 +119,7 @@ class TraceAnalyzer:
         self.trace_file = trace_file
         self.instructions = {}
         self.trace_blocks = []
+        self.instruction_list = []  # Will hold instructions discovered in trace
         self.load_trace_file()
         
     def load_trace_file(self):
@@ -134,12 +135,29 @@ class TraceAnalyzer:
         reg_pattern = r"R0:\s+(\d+), R1:\s+(\d+), R2:\s+(\d+), R3:\s+(\d+), Z:\s+([01])"
         format_pattern = r"Format:\s+(\d+), A:\s+(\d+), B:\s+(\d+), OP:\s+(\d+), IMM:\s+(\d+)"
         write_pattern = r"Writing\s+(\d+) to register\s+(\d+)"
+        instr_mem_pattern = r"INSTR_MEM\[(\d+)\] = 0x([0-9a-fA-F]+)"
         
         # Read the trace file
         with open(self.trace_file, 'r') as f:
             lines = f.readlines()
+        
+        # First pass - extract the instruction memory contents
+        for line in lines:
+            instr_match = re.search(instr_mem_pattern, line.strip())
+            if instr_match:
+                idx = int(instr_match.group(1))
+                hex_code = instr_match.group(2).upper()
+                # Store in the instruction list (will expand if needed)
+                while len(self.instruction_list) <= idx:
+                    self.instruction_list.append(None)
+                self.instruction_list[idx] = hex_code
+                
+                # Also create an instruction object at the appropriate address
+                addr = idx * 4  # 4 bytes per instruction
+                if addr not in self.instructions:
+                    self.instructions[addr] = Instruction(addr, hex_code)
             
-        # Process the lines into instruction blocks
+        # Second pass - process the trace blocks
         current_block = []
         pending_writes = []  # Store pending register writes for next instruction
         
@@ -152,6 +170,10 @@ class TraceAnalyzer:
             if line.startswith('['):
                 line = line[line.find(']')+1:].strip()
             
+            # Skip instruction memory lines
+            if re.search(instr_mem_pattern, line):
+                continue
+                
             # If we see a register write, store it for the next instruction block
             write_match = re.search(write_pattern, line)
             if write_match:
@@ -188,6 +210,24 @@ class TraceAnalyzer:
                     if pc not in self.instructions:
                         self.instructions[pc] = Instruction(pc, instr_hex)
                     break
+                    
+    def _format_value_with_sign(self, value_str):
+        """Convert a value to both unsigned and signed representations"""
+        try:
+            value = int(value_str)
+            unsigned_value = value
+            # If the most significant bit is set (value > 2^31-1), interpret as negative
+            if value > 0x7FFFFFFF:
+                signed_value = value - 0x100000000  # 2^32
+            else:
+                signed_value = value
+                
+            # Only show both formats if they're different (value is negative)
+            if signed_value < 0:
+                return f"{unsigned_value}U | {signed_value}"
+            return str(value)
+        except ValueError:
+            return value_str
         
     def analyze_trace(self):
         """Analyze the trace data and add annotations"""
@@ -254,17 +294,18 @@ class TraceAnalyzer:
                     annotated.append("Execution Effects:")
                     has_reg_write = True
                 value = write_match.group(1)
+                formatted_value = self._format_value_with_sign(value)
                 reg = write_match.group(2)
-                annotated.append(f"  Writing R{reg} = {value}")
+                annotated.append(f"  Writing R{reg} = {formatted_value}")
             
         # Add register state after execution
         for line in block:
             reg_match = re.search(reg_pattern, line)
             if reg_match:
-                r0 = reg_match.group(1)
-                r1 = reg_match.group(2)
-                r2 = reg_match.group(3)
-                r3 = reg_match.group(4)
+                r0 = self._format_value_with_sign(reg_match.group(1))
+                r1 = self._format_value_with_sign(reg_match.group(2))
+                r2 = self._format_value_with_sign(reg_match.group(3))
+                r3 = self._format_value_with_sign(reg_match.group(4))
                 z = reg_match.group(5)
                 annotated.append("Register State:")
                 annotated.append(f"  R0={r0}, R1={r1}, R2={r2}, R3={r3}, Z={z}")
@@ -276,22 +317,21 @@ class TraceAnalyzer:
         """Write the annotated trace to a file"""
         annotated_blocks = self.analyze_trace()
         
-        # Create instruction map for hardcoded instructions
-        instruction_map = {
-            0x0: Instruction(0x0, "41000000", "MOV R1, 0"),
-            0x4: Instruction(0x4, "42000005", "MOV R2, 5"),
-            0x8: Instruction(0x8, "03190202", "SUB R3, R1, R2"),
-            0xC: Instruction(0xC, "E9000002", "B NE, skip_toggle, off=2"),
-            0x10: Instruction(0x10, "40070001", "XOR R0, R0, 1"),
-            0x14: Instruction(0x14, "41000000", "MOV R1, 0"),
-            0x18: Instruction(0x18, "41180001", "ADD R1, R1, 1"),
-            0x1C: Instruction(0x1C, "E7FFFFFA", "B always, loop, off=-6")
-        }
+        # Create instruction map from the instructions we extracted from the trace
+        instruction_map = {}
+        for idx, instr in enumerate(self.instruction_list):
+            if instr:
+                addr = idx * 4
+                if addr not in self.instructions:
+                    self.instructions[addr] = Instruction(addr, instr)
+                instruction_map[addr] = self.instructions[addr]
         
-        # Add any missing instructions
-        for addr, instr in instruction_map.items():
-            if addr not in self.instructions:
-                self.instructions[addr] = instr
+        # If we didn't find any instructions in the trace, handle gracefully
+        if not instruction_map:
+            print("Warning: No instructions found in trace file. Analysis may be incomplete.")
+            # Check if we have any instructions from trace blocks
+            for pc, instr in self.instructions.items():
+                instruction_map[pc] = instr
         
         with open(output_file, 'w') as f:
             f.write("===========================================\n")

@@ -5,7 +5,7 @@ import chisel3.util._
 import _root_.circt.stage.ChiselStage
 import java.io.{File, PrintWriter}
 
-class CPUSubset0 extends Module {
+class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends Module {
   val io = IO(new Bundle {
     val r0 = Output(UInt(32.W))  // Output register R0 for testing
     val halted = Output(Bool())  // Signal to indicate when the CPU has completed execution
@@ -23,24 +23,20 @@ class CPUSubset0 extends Module {
   val v = RegInit(false.B)  // Overflow
   val z = RegInit(false.B)  // Zero
   
-  // Hardcoded instruction memory for the test program
-  val instructionMemory = VecInit(
-    // Instruction sequence from the problem statement
-    "h41000000".U(32.W),  // MOV R1, 0
-    "h42000005".U(32.W),  // MOV R2, 5
-    "h03190202".U(32.W),  // SUB R3, R1, R2
-    "hE9000002".U(32.W),  // B NE, skip_toggle, off=2
-    "h40070001".U(32.W),  // XOR R0, R0, 1
-    "h41000000".U(32.W),  // MOV R1, 0
-    "h41180001".U(32.W),  // ADD R1, R1, 1
-    "hE7FFFFFA".U(32.W)   // B always, loop, off=-6
-  )
+  // Instruction memory from provided hex strings or default to empty
+  val instructionMemory = if (instructionHexStrings.nonEmpty) {
+    VecInit(instructionHexStrings.map(hex => s"h$hex".U(32.W)))
+  } else {
+    // Default empty instruction memory
+    VecInit(Seq.fill(1)(0.U(32.W)))
+  }
   
   // Instruction fetch
   val instructionAddr = (pc >> 2).asUInt  // Divide by 4 to get word address
   // Use a safe index to avoid out-of-bounds access
-  val safeAddr = WireDefault(0.U(3.W))  // 3 bits can address up to 8 instructions
-  safeAddr := instructionAddr(2, 0)  // Take only the 3 LSBs - enough for our 8 instructions
+  val addrBits = log2Ceil(instructionMemory.length).max(1)
+  val safeAddr = WireDefault(0.U(addrBits.W))
+  safeAddr := instructionAddr(addrBits-1, 0)  // Take only the necessary LSBs
   val instruction = instructionMemory(safeAddr)
   
   // Instruction decode
@@ -211,7 +207,7 @@ object CPUSubset0 {
     new java.io.File(targetDir).mkdirs()
     
     val verilogCode = ChiselStage.emitSystemVerilog(
-      gen = new CPUSubset0(),
+      gen = new CPUSubset0(), // Using default empty instruction set for Verilog generation
       firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info",
          "--lowering-options=disallowLocalVariables")
     )
@@ -264,26 +260,10 @@ object CPUSubset0Companion {
       _traceWriter.printf("CPU Simulation Trace\n")
       _traceWriter.printf("==================\n\n")
       
-      // List the instructions with their addresses and disassembly
-      val instructions = Array(
-        "41000000", // MOV R1, 0
-        "42000005", // MOV R2, 5
-        "03190202", // SUB R3, R1, R2
-        "E9000002", // B NE, skip_toggle, off=2
-        "40070001", // XOR R0, R0, 1
-        "41000000", // MOV R1, 0
-        "41180001", // ADD R1, R1, 1
-        "E7FFFFFA"  // B always, loop, off=-6
-      )
+      // We no longer list instructions here - they will be output during CPU execution
+      // and read by the trace analyzer
       
-      _traceWriter.printf("Instructions:\n")
-      for ((instr, idx) <- instructions.zipWithIndex) {
-        // Display disassembly
-        val disasm = disassemble(instr)
-        _traceWriter.printf("0x%08x: 0x%s - %s\n", idx * 4, instr, disasm)
-      }
-      
-      _traceWriter.printf("\nTrace Output:\n")
+      _traceWriter.printf("Trace Output:\n")
       _traceWriter.printf("=============\n\n")
       
       println(s"CPU trace initialized to $traceFileName")
@@ -299,59 +279,5 @@ object CPUSubset0Companion {
   
   def printTrace(msg: String): Unit = {
     traceWriter.printf(msg)
-  }
-  
-  // Simple disassembler for the instruction set
-  def disassemble(instrHex: String): String = {
-    try {
-      val instr = java.lang.Long.parseLong(instrHex, 16)
-      val format = (instr >>> 28) & 0xF
-      
-      format match {
-        case 0x4 | 0x5 => // F1 format (immediate operations)
-          val a = (instr >>> 24) & 0xF
-          val b = (instr >>> 20) & 0xF
-          val op = (instr >>> 16) & 0xF
-          val imm = instr & 0xFFFF
-          
-          op match {
-            case 0 => s"MOV R$a, $imm"
-            case 7 => s"XOR R$a, R$b, $imm"
-            case 8 => s"ADD R$a, R$b, $imm"
-            case 9 => s"SUB R$a, R$b, $imm"
-            case _ => s"Unknown F1 operation: $op"
-          }
-          
-        case 0x0 | 0x1 => // F0 format (register operations)
-          val a = (instr >>> 24) & 0xF
-          val b = (instr >>> 20) & 0xF
-          val op = (instr >>> 16) & 0xF
-          val c = instr & 0xF
-          
-          op match {
-            case 9 => s"SUB R$a, R$b, R$c"
-            case _ => s"Unknown F0 operation: $op"
-          }
-          
-        case 0xE | 0xF => // F3 format (branch)
-          val cond = (instr >>> 24) & 0xF
-          val off = instr & 0xFFFFFF
-          // Sign extend the offset for display
-          val signedOff = if ((off & 0x800000) != 0) off | 0xFF000000 else off
-          
-          cond match {
-            case 0x1 => s"BEQ offset=${signedOff}"
-            case 0x9 => s"BNE offset=${signedOff}"
-            case 0x7 => s"B offset=${signedOff}"
-            case _ => s"Unknown branch condition: $cond"
-          }
-          
-        case _ => s"Unknown instruction format: $format"
-      }
-    } catch {
-      case e: Exception => 
-        println(s"Error disassembling instruction: $instrHex - ${e.getMessage}")
-        s"Error disassembling: $instrHex"
-    }
   }
 }
