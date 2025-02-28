@@ -30,7 +30,10 @@ def disassemble(instr):
         op = (instr >> 16) & 0xF
         n = instr & 0xFFFF
         if u == 0:
-            return f"{op_names[op]} R{a}, R{b}, {n:#x}"
+            if op == 0:
+                return f"MOV R{a}, {n:#x}"
+            else:
+                return f"{op_names[op]} R{a}, R{b}, {n:#x}"
         else:
             if op == 0:
                 return f"MHI R{a}, {n:#x}"

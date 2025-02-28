@@ -18,9 +18,9 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
   // Define test program instructions here (single source of truth)
   val testInstructions = Seq(
     "41000000", // MOV R1, 0
-    "47020000", // MHI R2, 0x0000  ; Set high part of loop count (0x00000000)
+    "62000000", // MHI R2, 0x0000  ; Set high part of loop count (0x00000000)
     "42260005", // IOR R2, R2, 0x0005 ; Set low part (5) for the test (same value as before)
-    "03190202", // SUB R3, R1, R2
+    "03190002", // SUB R3, R1, R2
     "E9000002", // B NE, skip_toggle, off=2
     "40070001", // XOR R0, R0, 1
     "41000000", // MOV R1, 0

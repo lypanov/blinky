@@ -6,111 +6,177 @@ import os
 from collections import defaultdict
 import argparse
 
+# Constants from instruction_parser.py
+op_names = ["MOV", "LSL", "ASR", "ROR", "AND", "ANN", "IOR", "XOR", "ADD", "SUB", "MUL", "DIV", "FAD", "FSB", "FML", "FDV"]
+cond_names = ["MI", "EQ", "CS", "VS", "LS", "LT", "LE", "T", "PL", "NE", "CC", "VC", "HI", "GE", "GT", "F"]
+
+# Disassemble function from instruction_parser.py
+def disassemble(instr):
+    type_bits = (instr >> 30) & 0x3
+    if type_bits == 0:  # F0
+        u = (instr >> 29) & 1
+        a = (instr >> 24) & 0xF
+        b = (instr >> 20) & 0xF
+        op = (instr >> 16) & 0xF
+        c = instr & 0xF
+        if (instr >> 4) & 0xFFF != 0:
+            return "Invalid F0 instruction"
+        if u == 0:
+            return f"{op_names[op]} R{a}, R{b}, R{c}"
+        else:
+            if op == 8:
+                return f"ADC R{a}, R{b}, R{c}"
+            elif op == 9:
+                return f"SBC R{a}, R{b}, R{c}"
+            elif op == 10:
+                return f"UMUL R{a}, R{b}, R{c}"
+            else:
+                return f"Unknown F0 u=1 op={op}"
+    elif type_bits == 1:  # F1
+        u = (instr >> 29) & 1
+        v = (instr >> 28) & 1
+        a = (instr >> 24) & 0xF
+        b = (instr >> 20) & 0xF
+        op = (instr >> 16) & 0xF
+        n = instr & 0xFFFF
+        if u == 0:
+            if op == 0:
+                return f"MOV R{a}, {n:#x}"
+            else:
+                return f"{op_names[op]} R{a}, R{b}, {n:#x}"
+        else:
+            if op == 0:
+                return f"MHI R{a}, {n:#x}"
+            elif op == 8:
+                return f"ADC R{a}, R{b}, {n:#x}"
+            elif op == 9:
+                return f"SBC R{a}, R{b}, {n:#x}"
+            elif op == 10:
+                return f"UMUL R{a}, R{b}, {n:#x}"
+            else:
+                return f"Unknown F1 u=1 op={op}"
+    elif type_bits == 2:  # F2
+        u = (instr >> 29) & 1
+        v = (instr >> 28) & 1
+        a = (instr >> 24) & 0xF
+        b = (instr >> 20) & 0xF
+        off = instr & 0xFFFFF
+        if u == 0:  # Load
+            return f"LD{'B' if v else 'W'} R{a}, [R{b}, {off:#x}]"
+        else:  # Store
+            return f"ST{'B' if v else 'W'} R{a}, [R{b}, {off:#x}]"
+    elif type_bits == 3:  # F3
+        bit29 = (instr >> 29) & 1
+        v = (instr >> 28) & 1
+        cond = (instr >> 24) & 0xF
+        if bit29 == 0:  # Branch to register
+            if (instr >> 4) & 0xFFFFF != 0:
+                return "Invalid F3 instruction"
+            c = instr & 0xF
+            if v == 0 and cond == 7 and c == 1:
+                return "RTI"
+            elif v == 0 and cond == 15 and (instr & 0xFF0) == 0x020:
+                e = instr & 1
+                return "STI" if e else "CLI"
+            else:
+                cond_name = cond_names[cond]
+                return f"B{'L' if v else ''}{cond_name} R{c}"
+        else:  # Branch to offset
+            off = instr & 0xFFFFFF
+            if off & 0x800000:
+                off -= 0x1000000  # Sign extend
+            cond_name = cond_names[cond]
+            return f"B{'L' if v else ''}{cond_name}, off={off}"
+    return "Unknown instruction format"
+
 class Instruction:
     def __init__(self, addr, hex_code, disasm=""):
         self.addr = addr
         self.hex_code = hex_code.replace("0x", "").upper()
         self.disasm = disasm
+        self.instr_int = int(self.hex_code, 16)
         self.format = self._get_format()
         self.fields = self._parse_fields()
         
     def _get_format(self):
-        instr = int(self.hex_code, 16)
-        format_bits = (instr >> 28) & 0xF
-        
-        if format_bits in [0x4, 0x5]:
-            return "F1"  # Immediate operations
-        elif format_bits in [0x0, 0x1]:
+        type_bits = (self.instr_int >> 30) & 0x3
+        if type_bits == 0:
             return "F0"  # Register operations
-        elif format_bits in [0xE, 0xF]:
+        elif type_bits == 1:
+            return "F1"  # Immediate operations
+        elif type_bits == 2:
+            return "F2"  # Memory operations
+        elif type_bits == 3:
             return "F3"  # Branch operations
-        else:
-            return "Unknown"
+        return "Unknown"
             
     def _parse_fields(self):
-        instr = int(self.hex_code, 16)
+        instr = self.instr_int
         fields = {}
         
         # Common fields for all formats
-        fields["format"] = (instr >> 28) & 0xF
+        fields["type"] = (instr >> 30) & 0x3
         
-        if self.format == "F1":  # Immediate operations
-            fields["a"] = (instr >> 24) & 0xF  # Destination register
-            fields["b"] = (instr >> 20) & 0xF  # Source register
-            fields["op"] = (instr >> 16) & 0xF  # Operation code
-            fields["imm"] = instr & 0xFFFF  # Immediate value
+        if self.format == "F0":  # Register operations
+            fields["u"] = (instr >> 29) & 1
+            fields["a"] = (instr >> 24) & 0xF
+            fields["b"] = (instr >> 20) & 0xF
+            fields["op"] = (instr >> 16) & 0xF
+            fields["c"] = instr & 0xF
             
-        elif self.format == "F0":  # Register operations
-            fields["a"] = (instr >> 24) & 0xF  # Destination register
-            fields["b"] = (instr >> 20) & 0xF  # Source register 1
-            fields["op"] = (instr >> 16) & 0xF  # Operation code
-            fields["c"] = instr & 0xF  # Source register 2
+        elif self.format == "F1":  # Immediate operations
+            fields["u"] = (instr >> 29) & 1
+            fields["v"] = (instr >> 28) & 1
+            fields["a"] = (instr >> 24) & 0xF
+            fields["b"] = (instr >> 20) & 0xF
+            fields["op"] = (instr >> 16) & 0xF
+            fields["imm"] = instr & 0xFFFF
+            
+        elif self.format == "F2":  # Memory operations
+            fields["u"] = (instr >> 29) & 1
+            fields["v"] = (instr >> 28) & 1
+            fields["a"] = (instr >> 24) & 0xF
+            fields["b"] = (instr >> 20) & 0xF
+            fields["off"] = instr & 0xFFFFF
             
         elif self.format == "F3":  # Branch operations
-            fields["cond"] = (instr >> 24) & 0xF  # Branch condition
-            fields["off"] = instr & 0xFFFFFF  # Offset
-            # Sign extend the offset for display
-            if fields["off"] & 0x800000:
-                fields["off"] = fields["off"] | 0xFF000000
-                
+            fields["bit29"] = (instr >> 29) & 1
+            fields["v"] = (instr >> 28) & 1
+            fields["cond"] = (instr >> 24) & 0xF
+            if fields["bit29"] == 0:  # Branch to register
+                fields["c"] = instr & 0xF
+            else:  # Branch to offset
+                fields["off"] = instr & 0xFFFFFF
+                if fields["off"] & 0x800000:
+                    fields["off"] -= 0x1000000  # Sign extend
+            
         return fields
     
     def get_disassembly(self):
         """Generate disassembly if not provided"""
         if self.disasm:
             return self.disasm
-            
-        if self.format == "F1":  # Immediate operations
-            op = self.fields["op"]
-            a = self.fields["a"]
-            b = self.fields["b"]
-            imm = self.fields["imm"]
-            
-            if op == 0:
-                return f"MOV R{a}, {imm}"
-            elif op == 7:
-                return f"XOR R{a}, R{b}, {imm}"
-            elif op == 8:
-                return f"ADD R{a}, R{b}, {imm}"
-            elif op == 9:
-                return f"SUB R{a}, R{b}, {imm}"
-            else:
-                return f"Unknown F1 op: {op}"
-                
-        elif self.format == "F0":  # Register operations
-            op = self.fields["op"]
-            a = self.fields["a"]
-            b = self.fields["b"]
-            c = self.fields["c"]
-            
-            if op == 9:
-                return f"SUB R{a}, R{b}, R{c}"
-            else:
-                return f"Unknown F0 op: {op}"
-                
-        elif self.format == "F3":  # Branch operations
-            cond = self.fields["cond"]
-            off = self.fields["off"]
-            
-            if cond == 1:
-                return f"BEQ offset={off}"
-            elif cond == 9:
-                return f"BNE offset={off}"
-            elif cond == 7:
-                return f"B offset={off}"
-            else:
-                return f"Unknown branch condition: {cond}"
-                
-        return "Unknown instruction format"
+        
+        return disassemble(self.instr_int)
         
     def __str__(self):
         result = f"0x{self.addr:08x}: 0x{self.hex_code} - {self.get_disassembly()} (Format: {self.format})"
-        if self.format == "F1":
-            result += f"\n  Dest: R{self.fields['a']}, Src: R{self.fields['b']}, Op: {self.fields['op']}, Imm: {self.fields['imm']}"
-        elif self.format == "F0":
+        
+        if self.format == "F0":
             result += f"\n  Dest: R{self.fields['a']}, Src1: R{self.fields['b']}, Op: {self.fields['op']}, Src2: R{self.fields['c']}"
+        elif self.format == "F1":
+            result += f"\n  Dest: R{self.fields['a']}, Src: R{self.fields['b']}, Op: {self.fields['op']}, Imm: {self.fields['imm']:#x}"
+        elif self.format == "F2":
+            op_type = "Store" if self.fields['u'] else "Load"
+            size = "Byte" if self.fields['v'] else "Word"
+            result += f"\n  {op_type} {size}: R{self.fields['a']}, [R{self.fields['b']}, {self.fields['off']:#x}]"
         elif self.format == "F3":
-            result += f"\n  Cond: {self.fields['cond']}, Offset: {self.fields['off']} (Target: 0x{(self.addr + 4 + (self.fields['off'] * 4)) & 0xFFFFFFFF:08x})"
+            if self.fields["bit29"] == 0:  # Branch to register
+                result += f"\n  Branch to register: Cond: {self.fields['cond']} ({cond_names[self.fields['cond']]}), Reg: R{self.fields['c']}"
+            else:  # Branch to offset
+                target = (self.addr + 4 + (self.fields['off'] * 4)) & 0xFFFFFFFF
+                result += f"\n  Branch: Cond: {self.fields['cond']} ({cond_names[self.fields['cond']]}), Offset: {self.fields['off']} (Target: 0x{target:08x})"
+        
         return result
 
 
@@ -279,15 +345,49 @@ class TraceAnalyzer:
             
         # Create annotated output
         annotated = [f"===== PC: 0x{pc:08x} - {instr.get_disassembly()} ====="]
-        annotated.append(f"Instruction: 0x{instr_hex} - Format: {instr.format}")
+        annotated.append(f"Raw instruction: 0x{instr_hex} (32-bit: 0x{int(instr_hex, 16):08x})")
+        annotated.append(f"Format: {instr.format} (type bits: 0x{instr.fields['type']:x})")
         
-        if instr.format == "F1":
-            annotated.append(f"  Dest: R{instr.fields['a']}, Src: R{instr.fields['b']}, Op: {instr.fields['op']}, Imm: {instr.fields['imm']}")
-        elif instr.format == "F0":
-            annotated.append(f"  Dest: R{instr.fields['a']}, Src1: R{instr.fields['b']}, Op: {instr.fields['op']}, Src2: R{instr.fields['c']}")
+        # Add decoded fields based on format
+        if instr.format == "F0":
+            annotated.extend([
+                f"Decoded fields:",
+                f"  A (dest): R{instr.fields['a']}",
+                f"  B (src1): R{instr.fields['b']}",
+                f"  OP: {instr.fields['op']} ({op_names[instr.fields['op']]})",
+                f"  C (src2): R{instr.fields['c']}",
+                f"  u: {instr.fields['u']}"
+            ])
+        elif instr.format == "F1":
+            annotated.extend([
+                f"Decoded fields:",
+                f"  A (dest): R{instr.fields['a']}",
+                f"  B (src): R{instr.fields['b']}",
+                f"  OP: {instr.fields['op']} ({op_names[instr.fields['op']]})",
+                f"  IMM: 0x{instr.fields['imm']:04x} ({instr.fields['imm']})",
+                f"  u/v: {instr.fields['u']}/{instr.fields['v']}"
+            ])
+        elif instr.format == "F2":
+            op_type = "Store" if instr.fields['u'] else "Load"
+            size = "Byte" if instr.fields['v'] else "Word"
+            annotated.extend([
+                f"Decoded fields:",
+                f"  A (reg): R{instr.fields['a']}",
+                f"  B (base): R{instr.fields['b']}",
+                f"  Offset: 0x{instr.fields['off']:05x} ({instr.fields['off']})",
+                f"  u/v: {instr.fields['u']}/{instr.fields['v']} ({op_type}/{size})"
+            ])
         elif instr.format == "F3":
-            target = pc + 4 + (instr.fields['off'] * 4)
-            annotated.append(f"  Cond: {instr.fields['cond']}, Offset: {instr.fields['off']} (Target: 0x{target & 0xFFFFFFFF:08x})")
+            annotated.extend([
+                f"Decoded fields:",
+                f"  Condition: {instr.fields['cond']} ({cond_names[instr.fields['cond']]})",
+                f"  v (link): {instr.fields['v']}"
+            ])
+            if instr.fields["bit29"] == 0:  # Branch to register
+                annotated.append(f"  C (reg): R{instr.fields['c']}")
+            else:  # Branch to offset
+                target = (pc + 4 + (instr.fields['off'] * 4)) & 0xFFFFFFFF
+                annotated.append(f"  Offset: {instr.fields['off']} (Target: 0x{target:08x})")
         
         # Check for register writes - these are the actual effects of THIS instruction
         has_reg_write = False

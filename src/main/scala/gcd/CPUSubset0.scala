@@ -244,19 +244,18 @@ class CPUMinimalWrapper extends Module {
 object CPUSubset0 {
   // Move the blinkProgram to a place where it can be shared
   val blinkProgram = Seq(
-    "40000001", // MOV R0, 1       ; light on
+    "40000000", // MOV R0, 1       ; light off
     "41000001", // MOV R1, 0       ; Initialize counter
-    // "47020033", // MHI R2, 0x0100  ; Set high part of loop count (0x01000000)
-    "42260005", // IOR R2, R2, 0xA120 ; Set low part of loop count (0x0100A120 = ~16,842,016 iterations)
-    "03190202", // SUB R3, R1, R2  ; Compare counter to max iterations
-    "E9000002", // B NE, skip_toggle, off=2
-    // "40070001", // XOR R0, R0, 1   ; Toggle LED
-    "47020033", // MHI R2, 0x0100  ; Set high part of loop count (0x01000000)
+    "62000040", // MHI R2, 0x0040  ; Set high part of loop count
+    "42260001", // IOR R2, R2, 0x0001 ; Set low part of loop count (0x01000001 = ~16,777,216 iterations)
+    "03190002", // SUB R3, R1, R2  ; Compare counter to max iterations
+    "E9000002", // B NE, skip_toggle, off=2 (NOTE offset takes into account our random MHI instruction!)
+    "40070001", // XOR R0, R0, 1   ; Toggle LED
     "41000000", // MOV R1, 0       ; Reset counter
     "41180001", // ADD R1, R1, 1   ; Increment counter
     "E7FFFFFA"  // B always, loop, off=-6
   )
-  
+
   def main(args: Array[String]): Unit = {
     println("Generating CPUSubset0 Verilog")
     
