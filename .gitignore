@@ -345,3 +345,4 @@ trace/cpu_trace.txt
 generated/
 *.rsc
 *.smb
+input.txt
