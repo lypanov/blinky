@@ -343,3 +343,5 @@ trace/annotated_trace.txt
 trace/cpu_trace.txt
 
 generated/
+*.rsc
+*.smb
