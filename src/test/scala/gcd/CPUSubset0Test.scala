@@ -556,6 +556,42 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     }
   }
 
+  it should "correctly execute compiled Oberon code from Blink2.code file" in {
+    val testId = "blink2_code_test"
+    checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
+    
+    // Read instructions from Blink2.code file
+    val codeFile = new File(projectRoot, "tests/Blink2.code")
+    val blink2Instructions = scala.io.Source.fromFile(codeFile)
+      .getLines()
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .map(line => line.stripPrefix("0x"))
+      .toSeq
+    
+    println(s"Loaded ${blink2Instructions.length} instructions from Blink2.code")
+    
+    // Print instruction list to trace file for analysis
+    printInstructionsToTrace("Blink2 Code Instructions", blink2Instructions)
+    
+    test(new CPUTestbenchWrapper(blink2Instructions)).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
+      // Set a reasonable timeout
+      dut.clock.setTimeout(1000)
+      
+      // Run until halted or max cycles
+      val cyclesRun = runTillHalt(dut, 500)
+      println(s"Blink2 code test ran for $cyclesRun cycles")
+      
+      // Verify R0 value - should be 0xBEEF after execution
+      val r0Value = dut.io.r0.peek().litValue.toInt
+      println(s"After Blink2 code execution, R0 = 0x${r0Value.toHexString.toUpperCase()}")
+      
+      // Check the expected value - should be 0xBEEF
+      assert(r0Value == 0xBEEF, s"R0 value 0x${r0Value.toHexString.toUpperCase()} should be 0xBEEF")
+    }
+  }
+
   // Helper method to print instructions to trace file
   private def printInstructionsToTrace(title: String, instructions: Seq[String]): Unit = {
     try {
