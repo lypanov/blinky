@@ -1,0 +1,30 @@
+SUB R14, R14, 0x4
+STW R15, [R14, 0x0]
+MOV R0, 0x0
+LDW R13, [R0, 0x3]
+STW R0, [R13, 0x0]
+MOV R0, 0x2
+STW R0, [R13, 0x4]
+MHI R0, 0x100
+STW R0, [R13, 0x8]
+BF, off=17
+LDW R13, [R0, 0x7]
+ADD R0, R13, 0x4
+LDW R1, [R0, 0x0]
+ADD R1, R1, 0x1
+STW R1, [R0, 0x0]
+LDW R0, [R13, 0x4]
+LDW R1, [R13, 0x8]
+SUB R0, R0, R1
+BLT, off=7
+MOV R0, 0x1
+LDW R13, [R0, 0xa]
+LDW R1, [R13, 0x0]
+SUB R0, R0, R1
+STW R0, [R13, 0x0]
+MOV R0, 0x0
+STW R0, [R13, 0x4]
+BT, off=-18
+LDW R15, [R14, 0x0]
+ADD R14, R14, 0x4
+BT R15
