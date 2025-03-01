@@ -4,16 +4,26 @@ import chisel3._
 import chiseltest._
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
+import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 import scala.util.control.Breaks._
 import java.io.{File, PrintWriter}
 
-class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matchers {
+class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matchers 
+    with BeforeAndAfterAll with BeforeAndAfterEach {
   behavior of "CPUSubset0"
 
-  // Initialize the CPU trace file before tests
-  val traceDir = "trace"
+  // Initialize the trace directory using absolute path from environment variable
+  val projectRoot = Option(System.getenv("CHISEL_CPU_PROJECT_ROOT")).getOrElse {
+    // Attempt to find project root by looking for a marker file/directory
+    var current = new File(sys.props("user.dir"))
+    while (current != null && !new File(current, "build.sc").exists()) {
+      current = current.getParentFile
+    }
+    if (current != null) current.getAbsolutePath
+    else sys.props("user.dir")
+  }
+  val traceDir = new File(projectRoot, "trace").getAbsolutePath
   new File(traceDir).mkdirs()
-  val traceFile = s"$traceDir/cpu_trace.txt"
   
   // Define test program instructions here (single source of truth)
   val testInstructions = Seq(
@@ -28,16 +38,49 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     "E7FFFFFA"  // B always, loop, off=-6
   )
   
-  // Call the CPUSubset0Companion to initialize the trace file
-  CPUSubset0Companion.initializeTraceWriter()
+  // Helper method to initialize a test with a specific ID
+  private def initializeTest(testId: String): String = {
+    // Add a clear BEGIN marker with test ID for easy extraction by trace_analyzer
+    println(s"<<<BEGIN_TEST_OUTPUT:$testId<<<")
+    
+    CPUSubset0Companion.initializeTraceWriter(testId, traceDir)
+    
+    val traceFile = new File(traceDir, s"cpu_trace_${CPUSubset0Companion.currentTestId}.txt").getAbsolutePath
+    traceFile
+  }
   
-  println(s"CPU tests will output trace to $traceFile")
-  println(s"Using ${testInstructions.length} test instructions")
+  // Helper method to check test filter
+  private def checkTestFilter(testId: String): Unit = {
+    // Parse JAVA_OPTS to extract TEST_FILTER if present
+    val javaOpts = sys.env.getOrElse("JAVA_OPTS", "")
+    val javaOptsFilter = if (javaOpts.contains("-DTEST_FILTER=")) {
+      val pattern = "-DTEST_FILTER=([^\\s]+)".r
+      pattern.findFirstMatchIn(javaOpts).map(_.group(1))
+    } else None
+    
+    // Use the first available filter: direct property, environment variable, or from JAVA_OPTS
+    val filter = sys.props.get("TEST_FILTER")
+      .orElse(sys.env.get("TEST_FILTER"))
+      .orElse(javaOptsFilter)
+    
+    filter match {
+      case Some(f) =>
+        println(s"[TEST_FILTER] Checking if '$testId' contains '$f'")
+        assume(testId.contains(f), s"Skipping test $testId because it does not match filter: $f")
+      case None =>
+    }
+  }
   
-  // Print instruction list to trace file for analysis
-  printInstructionsToTrace("CPU Instructions", testInstructions)
-
   it should "execute the test program and toggle R0 after correctly completing loop iterations" in {
+    val testId = "main_loop_test"
+    checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
+    
+    println(s"Using ${testInstructions.length} test instructions")
+    
+    // Print instruction list to trace file for analysis
+    printInstructionsToTrace("CPU Instructions", testInstructions)
+
     test(new CPUTestbenchWrapper(testInstructions)) { dut =>
       // Set a reasonable timeout
       dut.clock.setTimeout(1000)
@@ -114,6 +157,13 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
   }
   
   it should "toggle the LED output" in {
+    val testId = "led_toggle_test"
+    checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
+    
+    // Print instruction list to trace file for analysis
+    printInstructionsToTrace("CPU Instructions", testInstructions)
+    
     test(new CPUTestbenchWrapper(testInstructions)) { dut =>
       // Set a reasonable timeout
       dut.clock.setTimeout(1000)
@@ -140,6 +190,10 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
   }
   
   it should "correctly execute MHI and IOR instructions" in {
+    val testId = "mhi_ior_test"
+    checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
+    
     // Define a specific test program for MHI and IOR instructions
     val mhiIorTestInstructions = Seq(
       "6300CAFE", // MHI R3, 0xCAFE     ; R3 = 0xCAFE0000
@@ -178,12 +232,14 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       
       // Check the expected value - 0xFFFF = 65535 decimal
       assert(r1Value.toInt == 0xFFFF, s"R1 value ${r1Value.toInt} should be 65535 (0xFFFF)")
-      
-      println("MHI/IOR test completed successfully")
     }
   }
   
   it should "correctly handle BF (Branch False/Never) instruction" in {
+    val testId = "bf_test"
+    checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
+    
     // Define a specific test program for BF instruction
     val bfTestInstructions = Seq(
       "40000001", // MOV R0, 1          ; Initialize R0 to 1
@@ -209,12 +265,14 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       
       // Check the expected value - should be 2 if BF correctly didn't branch
       assert(r0Value == 2, s"R0 value $r0Value should be 2, indicating BF didn't branch")
-      
-      println("BF test completed successfully")
     }
   }
   
   it should "correctly handle BLT (Branch if Less Than) instruction" in {
+    val testId = "blt_test"
+    checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
+    
     // Define a specific test program for BLT instruction - only testing V=0 cases
     val bltTestInstructions = Seq(
       // Case 1: N=0, V=0 (not less than) - Use positive numbers
@@ -263,8 +321,6 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       r2Value = dut.io.r2.peek().litValue.toInt
       println(s"After Case 2 (N=1, V=0): R2 = $r2Value")
       assert(r2Value == 1, s"R2 should still be 1 after Case 2, indicating BLT did branch when N=1,V=0")
-      
-      println("BLT test completed successfully")
     }
   }
 
@@ -276,6 +332,10 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     // [3] MOV R1, 0xDEAD   : This forbidden instruction should be skipped due to the branch.
     // [4] BF: Branch false instruction; since BF never takes the branch, it simply advances the PC.
     // Result: R0 remains 0x10 and R1 remains 0xBEEF.
+    val testId = "bt_test"
+    checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
+    
     val btTestInstructions = Seq(
       "40000010", // MOV R0, 0x10: Write 0x10 into R0 (sets branch target address).
       "4100BEEF", // MOV R1, 0xBEEF: Write 0xBEEF into R1.
@@ -301,7 +361,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       // Check final register values.
       val finalR0 = dut.io.r0.peek().litValue.toInt
       val finalR1 = dut.io.r1.peek().litValue.toInt
-      println(s"BT Test Completed: R0 = 0x${finalR0.toHexString.toUpperCase()}, R1 = 0x${finalR1.toHexString.toUpperCase()}")
+      println(s"BT Test : R0 = 0x${finalR0.toHexString.toUpperCase()}, R1 = 0x${finalR1.toHexString.toUpperCase()}")
       
       // Verify that the branch took place:
       // R0 must still hold 0x10 and R1 remains 0xBEEF,
@@ -315,6 +375,10 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     // Test program for LDW instruction
     // The memory pattern is 0x0000BEE0 to 0x0000BEE7 at addresses 0-7
     // This pattern is defined in the MockGowinSP class
+    val testId = "ldw_test"
+    checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
+    
     val ldwTestInstructions = Seq(
       "40000000", // MOV R0, 0          ; Initialize R0 to 0 (base address)
       "8300000C", // LDW R3, R0, 12     ; Load from address 12 (0x0000BEEF)
@@ -363,6 +427,10 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
   it should "correctly execute STW (Store Word) instruction" in {
     // Test program for STW instruction
     // We'll store specific values to memory, then load them back to verify
+    val testId = "stw_test"
+    checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
+    
     val stwTestInstructions = Seq(
       // First, set values in registers to store
       "40000000", // MOV R0, 0x0000     ; Set the base address for reads to 0x0
@@ -421,6 +489,10 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
 
   it should "correctly execute Oberon function preamble and outro pattern" in {
     // Define a specific test program for Oberon function preamble and outro
+    val testId = "function_preamble_test"
+    checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
+    
     val functionPreambleOutroInstructions = Seq(
       "4ee90004", // SUB R14, R14, 0x4  ; Decrement stack pointer
       "afe00000", // STW R15, [R14, 0x0] ; Store link register on stack
@@ -451,17 +523,47 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       
       // Check the expected value - should be 0xAA
       assert(r0Value == 0xAA, s"R0 value $r0Value should be 0xAA (170)")
-      
-      println("Oberon function preamble/outro test completed successfully")
     }
   }
 
   // Helper method to print instructions to trace file
   private def printInstructionsToTrace(title: String, instructions: Seq[String]): Unit = {
-    CPUSubset0Companion.traceWriter.printf(s"\n$title:\n")
-    for ((instr, idx) <- instructions.zipWithIndex) {
-      CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
+    try {
+      CPUSubset0Companion.printTrace(s"\n$title:\n")
+      for ((instr, idx) <- instructions.zipWithIndex) {
+        val line = s"INSTR_MEM[$idx] = 0x$instr\n"
+        CPUSubset0Companion.printTrace(line)
+      }
+      CPUSubset0Companion.printTrace("\n")
+    } catch {
+      case e: Exception =>
+        println(s"[ERROR] Failed to write instructions to trace: ${e.getMessage}")
+        e.printStackTrace()
     }
-    CPUSubset0Companion.traceWriter.printf("\n")
+  }
+
+  override def beforeEach(): Unit = {
+    super.beforeEach()
+  }
+
+  override def afterEach(): Unit = {
+    super.afterEach()
+    CPUSubset0Companion.finalizeTraceWriter()
+    // Add clear END marker for test output extraction
+    println(">>>END_TEST_OUTPUT>>>")
+  }
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    val traceDirFile = new File(traceDir)
+    if (!traceDirFile.exists()) {
+      traceDirFile.mkdirs()
+    }
+  }
+
+  override def afterAll(): Unit = {
+    super.afterAll()
+    CPUSubset0Companion.finalizeTraceWriter()
   }
 }
+

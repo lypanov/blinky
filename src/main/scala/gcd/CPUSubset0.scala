@@ -335,6 +335,19 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
 }
 
 object CPUSubset0 {
+  // Get project root using environment variable or marker file
+  private def getProjectRoot(): String = {
+    Option(System.getenv("CHISEL_CPU_PROJECT_ROOT")).getOrElse {
+      // Attempt to find project root by looking for a marker file/directory
+      var current = new File(sys.props("user.dir"))
+      while (current != null && !new File(current, "build.sc").exists()) {
+        current = current.getParentFile
+      }
+      if (current != null) current.getAbsolutePath
+      else sys.props("user.dir")
+    }
+  }
+
   // Move the blinkProgram to a place where it can be shared
   val blinkProgram = Seq(
     "40000000", // MOV R0, 1       ; light off
@@ -407,12 +420,13 @@ object CPUSubset0 {
     println(s"Simulation wrapper written to $targetDir/CPUMinimalWrapper_sim.v")
     
     // Also create a trace directory if it doesn't exist
-    val traceDir = "trace"
+    val projectRoot = getProjectRoot()
+    val traceDir = new File(projectRoot, "trace").getAbsolutePath
     new java.io.File(traceDir).mkdirs()
     println(s"Created trace directory at $traceDir")
     
     // Initialize the trace file
-    CPUSubset0Companion.initializeTraceWriter()
+    CPUSubset0Companion.initializeTraceWriter("default", traceDir)
   }
 }
 
@@ -436,25 +450,37 @@ class TeePrintWriter(fileName: String) {
 object CPUSubset0Companion {
   // Create a trace file writer for simulations
   private var _traceWriter: TeePrintWriter = _
+  private var _currentTestId: String = "default"
+  private var _traceDir: String = _
   
-  def initializeTraceWriter(): Unit = {
-    if (_traceWriter == null) {
-      val traceDir = "trace"
-      new java.io.File(traceDir).mkdirs()
-      val traceFileName = s"$traceDir/cpu_trace.txt"
-      _traceWriter = new TeePrintWriter(traceFileName)
-      
-      // Write header
-      _traceWriter.printf("CPU Simulation Trace\n")
-      _traceWriter.printf("==================\n\n")
-      
-      // We no longer list instructions here - they will be output during CPU execution
-      // and read by the trace analyzer
-      
-      _traceWriter.printf("Trace Output:\n")
-      _traceWriter.printf("=============\n\n")
-      
-      println(s"CPU trace initialized to $traceFileName")
+  def initializeTraceWriter(testId: String = "default", traceDirPath: String = null): Unit = {
+    if (_traceWriter != null) {
+      finalizeTraceWriter() // Close any existing writer
+    }
+    
+    // Set the current test ID and trace directory
+    _currentTestId = testId.replaceAll("[^a-zA-Z0-9_-]", "_") // Make filename-safe
+    _traceDir = if (traceDirPath != null) traceDirPath else "trace"
+    
+    val traceDirFile = new java.io.File(_traceDir)
+    
+    if (!traceDirFile.exists()) {
+      traceDirFile.mkdirs()
+    }
+    
+    val traceFileName = new java.io.File(_traceDir, s"cpu_trace_${_currentTestId}.txt").getAbsolutePath
+    
+    _traceWriter = new TeePrintWriter(traceFileName)
+    _traceWriter.printf("CPU Simulation Trace - Test ID: %s\n", _currentTestId)
+    _traceWriter.printf("==================\n\n")
+    _traceWriter.printf("Trace Output:\n")
+    _traceWriter.printf("=============\n\n")
+  }
+  
+  def finalizeTraceWriter(): Unit = {
+    if (_traceWriter != null) {
+      _traceWriter.close()
+      _traceWriter = null
     }
   }
   
@@ -465,7 +491,12 @@ object CPUSubset0Companion {
     _traceWriter
   }
   
+  def currentTestId: String = _currentTestId
+  
   def printTrace(msg: String): Unit = {
+    if (_traceWriter == null) {
+      initializeTraceWriter()
+    }
     traceWriter.printf(msg)
   }
 }

@@ -194,8 +194,6 @@ class TraceAnalyzer:
             print(f"Error: Trace file {self.trace_file} not found")
             sys.exit(1)
             
-        print(f"Analyzing trace file: {self.trace_file}")
-        
         # Define patterns for parsing
         pc_pattern = r"PC:\s+(\d+), Instruction: ([0-9a-fA-F]+)"
         reg_pattern = r"R0:\s+(\d+), R1:\s+(\d+), R2:\s+(\d+), R3:\s+(\d+), Z:\s+([01])"
@@ -232,6 +230,16 @@ class TraceAnalyzer:
             if not line:
                 continue
             
+            # Preserve the original line before removing any prefixes
+            original_line = line
+            
+            # Save any lines with FAILED for later inclusion - preserve prefix
+            if "*** FAILED ***" in original_line:
+                if current_block:
+                    # Output failed messages immediately to the current block
+                    current_block.append(original_line)
+                continue
+                
             # Remove the [120] prefix if present
             if line.startswith('['):
                 line = line[line.find(']')+1:].strip()
@@ -258,6 +266,11 @@ class TraceAnalyzer:
                 re.search(format_pattern, line)
             ):
                 current_block.append(line)
+            else:
+                # If line doesn't match any known pattern, add it directly to current_block
+                # Only add if we have a current block to add to
+                if current_block:
+                    current_block.append(original_line)
                 
         # Add the last block if not empty
         if current_block:
@@ -323,6 +336,23 @@ class TraceAnalyzer:
         format_pattern = r"Format:\s+(\d+), A:\s+(\d+), B:\s+(\d+), OP:\s+(\d+), IMM:\s+(\d+)"
         write_pattern = r"Writing\s+(\d+) to register\s+(\d+)"
         
+        # Create lists to track parsed and unparsed lines with their original positions
+        parsed_lines = []
+        unparsed_lines = []
+        positions = {}
+        
+        for i, line in enumerate(block):
+            positions[line] = i
+            # Check if line matches any of our known patterns
+            if (re.search(pc_pattern, line) or 
+                re.search(reg_pattern, line) or 
+                re.search(format_pattern, line) or 
+                re.search(write_pattern, line)):
+                parsed_lines.append(line)
+            else:
+                # Unparsed line (error message, etc.)
+                unparsed_lines.append(line)
+        
         pc_line = None
         for line in block:
             pc_match = re.search(pc_pattern, line)
@@ -331,7 +361,8 @@ class TraceAnalyzer:
                 break
                 
         if not pc_line:
-            return "\n".join(block)  # Return unchanged if no PC found
+            # If there's no PC line, just return the block as is
+            return "\n".join(block)
             
         pc_match = re.search(pc_pattern, pc_line)
         pc = int(pc_match.group(1))
@@ -411,10 +442,16 @@ class TraceAnalyzer:
                 r2 = self._format_value_with_sign(reg_match.group(3))
                 r3 = self._format_value_with_sign(reg_match.group(4))
                 z = reg_match.group(5)
-                annotated.append("Register State:")
+                annotated.append("Register State: (does not include execution effects)")
                 annotated.append(f"  R0={r0}, R1={r1}, R2={r2}, R3={r3}, Z={z}")
                 break
         
+        # After the standard annotation, we add all unparsed lines
+        # This keeps them in the same block but at the end of the annotations
+        if unparsed_lines:
+            for line in unparsed_lines:
+                annotated.append(line)
+                
         return "\n".join(annotated)
         
     def write_annotated_trace(self, output_file):
@@ -433,9 +470,7 @@ class TraceAnalyzer:
         # If we didn't find any instructions in the trace, handle gracefully
         if not instruction_map:
             print("Warning: No instructions found in trace file. Analysis may be incomplete.")
-            # Check if we have any instructions from trace blocks
-            for pc, instr in self.instructions.items():
-                instruction_map[pc] = instr
+            instruction_map = {}
         
         with open(output_file, 'w') as f:
             f.write("===========================================\n")
@@ -456,17 +491,31 @@ class TraceAnalyzer:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Analyze CPU trace output')
-    parser.add_argument('trace_file', help='Path to the trace file')
-    parser.add_argument('-o', '--output', help='Output file for annotated trace', default='trace/annotated_trace.txt')
-    
+    parser = argparse.ArgumentParser(description='Analyze CPU trace files')
+    parser.add_argument('trace_file', help='Path to the CPU trace file')
+    parser.add_argument('output_file', nargs='?', help='Path to the output annotated trace file (optional)')
     args = parser.parse_args()
     
-    analyzer = TraceAnalyzer(args.trace_file)
-    analyzer.write_annotated_trace(args.output)
+    # If output file not specified, generate one based on input file
+    if not args.output_file:
+        # Extract base name without extension
+        base_name = os.path.splitext(os.path.basename(args.trace_file))[0]
+        # Replace cpu_trace with annotated_trace
+        if base_name.startswith('cpu_trace'):
+            output_base = base_name.replace('cpu_trace', 'annotated_trace')
+        else:
+            output_base = f"annotated_{base_name}"
+        
+        # Create output path
+        output_dir = os.path.dirname(args.trace_file)
+        args.output_file = os.path.join(output_dir, f"{output_base}.txt")
     
-    print(f"Annotated trace written to {args.output}")
+    analyzer = TraceAnalyzer(args.trace_file)
+    analyzer.analyze_trace()
+    analyzer.write_annotated_trace(args.output_file)
+    
+    print(f"Annotated trace written to {args.output_file}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main() 
