@@ -604,13 +604,29 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     printInstructionsToTrace("Blink2 Code Instructions", blink2Instructions)
     
     test(new CPUTestbenchWrapper(blink2Instructions)).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
-      dut.clock.setTimeout(10000000)
+      dut.clock.setTimeout(1000)
       
-      val cyclesRun = runTillMemoryWrite(dut, 0x10, 0, 10000)
-      println(s"Blink2 code test detected memory write after $cyclesRun cycles")
+      val expectedBlinks = 3
+      var blinkPeriods = Seq.empty[Int]
+      var lastR0 = dut.io.r0.peek().litValue.toInt
       
-      val r0Value = dut.io.r0.peek().litValue.toInt
-      assert(r0Value == 0x01, s"R0 value 0x${r0Value.toHexString.toUpperCase()} should be 0x01")
+      while (blinkPeriods.size < expectedBlinks) {
+        // Wait for a memory write at address 0x10, which indicates a blink event
+        val cyclesForBlink = runTillMemoryWrite(dut, 0x10, lastR0, 10000)
+        blinkPeriods :+= cyclesForBlink
+        println(s"Blink ${blinkPeriods.size} occurred after $cyclesForBlink cycles")
+        
+        // Check we toggled
+        val currentR0 = dut.io.r0.peek().litValue.toInt
+        println(s"R0 toggled to $currentR0")
+        assert((currentR0 == 0 || currentR0 == 1), s"R0 value $currentR0 is not 0 or 1")
+        assert(currentR0 != lastR0, s"R0 did not toggle: previous = $lastR0, current = $currentR0")
+        
+        lastR0 = currentR0
+      }
+
+      val avgPeriod = blinkPeriods.sum / blinkPeriods.size
+      assert(avgPeriod == 81, s"Average blink period $avgPeriod is expected period of 81")
     }
   }
 
