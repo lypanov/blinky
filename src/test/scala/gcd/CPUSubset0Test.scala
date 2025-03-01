@@ -337,9 +337,9 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     val traceFile = initializeTest(testId)
     
     val btTestInstructions = Seq(
-      "40000010", // MOV R0, 0x10: Write 0x10 into R0 (sets branch target address).
+      "42000010", // MOV R2, 0x10: Write 0x10 into R2 (sets branch target address).
       "4100BEEF", // MOV R1, 0xBEEF: Write 0xBEEF into R1.
-      "E7000000", // BT: Branch always (cond=7) with off==0; branches to address in register specified by regC (R0).
+      "C7000002", // BT R1: Branch always address in register R2.
       "4100DEAD", // MOV R1, 0xDEAD: This instruction should be skipped if BT transfers control.
       "FF000001"  // BF: Branch false; since condition is always false, no branch occurs, PC increments normally.
     )
@@ -359,15 +359,15 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       }
       
       // Check final register values.
-      val finalR0 = dut.io.r0.peek().litValue.toInt
       val finalR1 = dut.io.r1.peek().litValue.toInt
-      println(s"BT Test : R0 = 0x${finalR0.toHexString.toUpperCase()}, R1 = 0x${finalR1.toHexString.toUpperCase()}")
+      val finalR2 = dut.io.r2.peek().litValue.toInt
+      println(s"BT Test : R1 = 0x${finalR1.toHexString.toUpperCase()}, R2 = 0x${finalR2.toHexString.toUpperCase()}")
       
       // Verify that the branch took place:
-      // R0 must still hold 0x10 and R1 remains 0xBEEF,
+      // R2 must still hold 0x10 and R1 remains 0xBEEF,
       // confirming that the forbidden instruction (setting R1 to 0xDEAD) was skipped.
-      finalR0 should be (0x10)
       finalR1 should be (0xBEEF)
+      finalR2 should be (0x10)
     }
   }
 
@@ -496,7 +496,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     val functionPreambleOutroInstructions = Seq(
       "4ee90004", // SUB R14, R14, 0x4  ; Decrement stack pointer
       "afe00000", // STW R15, [R14, 0x0] ; Store link register on stack
-      "40000aa0", // MOV R0, 0xAA       ; Set R0 to 0xAA (function body)
+      "400000aa", // MOV R0, 0xAA        ; Set R0 to 0xAA (function body)
       "8fe00000", // LDW R15, [R14, 0x0] ; Restore link register from stack
       "4ee80004", // ADD R14, R14, 0x4   ; Restore stack pointer
       "c700000f"  // BT R15              ; Return to caller
@@ -523,6 +523,13 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       
       // Check the expected value - should be 0xAA
       assert(r0Value == 0xAA, s"R0 value $r0Value should be 0xAA (170)")
+      
+      // Verify PC value - should be 0x60 after returning from the subroutine
+      val pcValue = dut.io.pc.peek().litValue.toInt
+      println(s"Final PC value = 0x${pcValue.toHexString.toUpperCase()}")
+      
+      // Check that the PC is at the expected address 0x60
+      assert(pcValue == 0x60, s"PC value $pcValue should be 0x60 (96), confirming return from subroutine")
     }
   }
 

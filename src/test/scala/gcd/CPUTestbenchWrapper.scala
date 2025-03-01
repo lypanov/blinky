@@ -14,6 +14,7 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
     val r2 = Output(UInt(32.W))
     val r3 = Output(UInt(32.W))
     val cpuHalted = Output(Bool())
+    val pc = Output(UInt(32.W))  // Expose the program counter
   })
   
   // Create CPU with the provided instructions
@@ -35,4 +36,5 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
   io.r2 := cpu.io.r2
   io.r3 := cpu.io.r3
   io.cpuHalted := cpu.io.halted
+  io.pc := cpu.io.pc  // Connect PC to the output
 } 

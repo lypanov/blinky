@@ -13,6 +13,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
     val r3 = Output(UInt(32.W))  // Output register R3 for testing
     val halted = Output(Bool())  // Signal to indicate when the CPU has completed execution
     val led = Output(Bool())     // LED output for the Tang Nano 4K
+    val pc = Output(UInt(32.W))  // Program counter value for testing
     
     // Memory interface - allows the CPU to access external memory
     val memAddr = Output(UInt(32.W))
@@ -23,7 +24,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   })
   
   // Program counter
-  val pc = RegInit(0.U(32.W))
+  // Initialize PC to 0x40 (byte address) to start at the setup instructions
+  val pc = RegInit(0x40.U(32.W))
   
   // Registers (we'll implement R0-R3 as required by the test program)
   val regs = RegInit(VecInit(Seq.fill(4)(0.U(32.W))))
@@ -34,16 +36,55 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   val v = RegInit(false.B)  // Overflow
   val z = RegInit(false.B)  // Zero
   
-  // Memory access state
   val memoryAccessPending = RegInit(false.B)
   val memoryTargetReg = RegInit(0.U(2.W))
   
-  // Instruction memory from provided hex strings or default to empty
-  val instructionMemory = if (instructionHexStrings.nonEmpty) {
-    VecInit(instructionHexStrings.map(hex => s"h$hex".U(32.W)))
-  } else {
-    // Default empty instruction memory
-    VecInit(Seq.fill(1)(0.U(32.W)))
+  val instructionMemory = {
+    // Define memory sections by byte address and convert to word addresses
+    val userProgEndAddr = 0x40 / 4     // User program ends at byte address 0x40 (word address 0x10)
+    val setupStartAddr = 0x40 / 4      // Setup instructions start at byte address 0x40 (word address 0x10)
+    val setupEndAddr = 0x60 / 4        // Setup instructions end at byte address 0x60 (word address 0x18)
+    val haltStartAddr = 0x60 / 4       // Halt instructions start at byte address 0x60 (word address 0x18)
+    val haltEndAddr = 0x70 / 4         // Halt instructions end at byte address 0x70 (word address 0x1C)
+    
+    // Ensure the provided hex strings don't extend beyond address 0x40 (word address 0x10)
+    if (instructionHexStrings.length > userProgEndAddr) {
+      throw new RuntimeException(s"Provided hex strings (${instructionHexStrings.length}) exceed the maximum allowed length ($userProgEndAddr)")
+    }
+    
+    // Section A: User program (0x00-0x40)
+    // Calculate how many "beef" instructions we need to fill up to address 0x40
+    val userBeefCount = userProgEndAddr - instructionHexStrings.length
+    val userBeefFiller = Seq.fill(userBeefCount)("0000BEEF")
+    
+    // Section B: Setup instructions (0x40-0x60)
+    // Define the setup instructions
+    val setupInstructions = Seq(
+      "4e000040", // MOV R14, 0x0040     ; Top of stack
+      "4f000060", // MOV R15, 0x0060     ; Halt instruction at end of instruction memory
+      "40000000", // MOV R0, 0x0000      ; Set R0 to 0x0000 (function body)
+      "c7000000"  // BT R0               ; Jump to user code
+    )
+    
+    // Ensure the setup instructions don't exceed their allocated space
+    val setupSize = setupEndAddr - setupStartAddr
+    if (setupInstructions.length > setupSize) {
+      throw new RuntimeException(s"Setup instructions (${setupInstructions.length}) exceed the maximum allowed length ($setupSize)")
+    }
+    
+    // Calculate how many "beef" instructions we need to fill the remainder of the setup section
+    val setupBeefCount = setupSize - setupInstructions.length
+    val setupBeefFiller = Seq.fill(setupBeefCount)("0000BEEF")
+    
+    // Section C: Halt instructions (0x60-0x70)
+    val haltCount = haltEndAddr - haltStartAddr
+    val haltFiller = Seq.fill(haltCount)("E7FFFFFF")
+    
+    // Combine all sections to create the full program
+    val fullProgram = instructionHexStrings ++ userBeefFiller ++ setupInstructions ++ setupBeefFiller ++ haltFiller
+    
+    // Create the instruction memory from the full program
+    VecInit(fullProgram.map(hex => s"h$hex".U(32.W)))
   }
   
   // Instruction fetch
@@ -74,6 +115,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   val isBranch = format(3, 2) === "b11".U
   val isMemory = format(3, 2) === "b10".U
   val isF1Format = format(3, 2) === "b01".U  // For immediate operations
+  
+  // Branch subtypes
+  val isBranchToReg = format(3, 1) === "b110".U  // Branch to register (BT R)
+  val isBranchWithOffset = format(3, 1) === "b111".U  // Branch with offset
   
   // Memory access parameters
   val isLoad = isMemory && !format(1)  // u=0 for load
@@ -132,19 +177,30 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
       }
       
       when (takeBranch) {
-        // Check if this is a branch to register (off == 0) or branch with offset
-        when (off === 0.U) {
+        // Check if this is a branch to register or branch with offset based on format bits
+        when (isBranchToReg) {
           // Branch to register: Use register c as the branch target
+          // For now, we're still using only 4 registers, so we'll mask to 2 bits
+          // But we're using the correct field from the instruction
+          val targetReg = c_reg(1, 0)  // Still limiting to 4 registers
+          
           // Make sure the low 2 bits are 0 (word-aligned)
-          pc := regs(regC) & ~(3.U(32.W))
+          pc := regs(targetReg) & ~(3.U(32.W))
           
           // Debug output for branch to register
-          printf(p"BT R$regC: Branching to address ${regs(regC) & ~(3.U(32.W))}\n")
-        } .otherwise {
+          printf(p"BT R$targetReg: Branching to address ${regs(targetReg) & ~(3.U(32.W))} vs ${regs(targetReg)}\n")
+        } .elsewhen (isBranchWithOffset) {
           // Calculate branch target address: PC + 4 + off * 4
           // For a 24-bit signed offset, extend sign to 32 bits
           val signedOff = Cat(Fill(8, off(23)), off)
           pc := pc + 4.U + (signedOff << 2)
+          
+          // Debug output for branch with offset
+          printf(p"Branch with offset: PC + 4 + (${signedOff} << 2) = ${pc + 4.U + (signedOff << 2)}\n")
+        } .otherwise {
+          // Invalid branch format
+          printf(p"WARNING: Invalid branch format detected: ${format}\n")
+          pc := nextPC
         }
       } .otherwise {
         pc := nextPC
@@ -332,6 +388,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   io.r3 := regs(3)
   io.halted := halted
   io.led := regs(0)(0)  // Connect the least significant bit of R0 to the LED
+  io.pc := pc  // Connect the program counter to the output
 }
 
 object CPUSubset0 {
