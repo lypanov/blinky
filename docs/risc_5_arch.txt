@@ -140,12 +140,7 @@ irq handler is thus unsafe).
 CRITICAL PROJECT SPECIFIC ADDENDUM:
 
 Any load operations (eg, LDW) with destination R13 using R0 as the base
-    address should ALWAYS read 0 as the content of R0 and any offsets
+    address should ALWAYS read 0x10 as the content of R0 and any offsets
     should be ignored.
   example: LDW R13, [R0, 0x3]
-  result: R13 == 0x0
-
-Any ALU operations (F0/F1) reading from R13 should ALWAYS read the value 0 as
-    the register content.
-  example: ADD R0, R13, 0x4
-  result: R0 == 0x4
+  result: R13 == 0x10

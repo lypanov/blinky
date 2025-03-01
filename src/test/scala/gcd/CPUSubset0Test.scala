@@ -521,6 +521,41 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     }
   }
 
+  it should "behave correctly when loading into R13 from R0" in {
+    val testId = "r13_source_hack"
+    checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
+    
+    // Define the test program instructions
+    val r13SourceHackInstructions = Seq(
+      "4000DEAD", // MOV R0, 0xDEAD      ; Initialize R0 to 0xDEAD
+      "8D000003", // LDW R13, [R0, 0x3]  ; Hacked: Load value from address R0+3 into R13 -> should read address 0x10
+      "A0D00000", // STW R0, [R13, 0x0]  ; Store R0 value at address in R13
+      "41000010", // MOV R1, 0x10        ; Set R1 to 0
+      "81000000", // LDW R1, [R1, 0x0]   ; Load from address 0x10 into R1 (should be 0xDEAD)
+      "E7FFFFFF"  // B always, halt      ; Branch to self (halt)
+    )
+    
+    // Print the R13 source hack test instructions to the trace file
+    printInstructionsToTrace("R13 Source Hack Test Instructions", r13SourceHackInstructions)
+    
+    test(new CPUTestbenchWrapper(r13SourceHackInstructions)).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
+      dut.clock.setTimeout(100)
+      
+      val cyclesRun = runTillHalt(dut, 30)
+      println(s"R13 source hack test ran for $cyclesRun cycles")
+      
+      val r0Value = dut.io.r0.peek().litValue.toInt
+      val r1Value = dut.io.r1.peek().litValue.toInt
+      println(s"After R13 source hack test, R0 = 0x${r0Value.toHexString.toUpperCase()}, R1 = 0x${r1Value.toHexString.toUpperCase()}")
+      
+      // Check the expected value - should be 0xBEEF
+      assert(r1Value == 0xDEAD, s"R1 value $r1Value should be 0xDEAD, indicating successful R13 source hack")
+      // TODO this will be the ADD variant
+      // assert(r0Value == 0xBEEF, s"R0 value $r0Value should be 0xBEEF, indicating successful R13 source hack")
+    }
+  }
+
   // Helper method to print instructions to trace file
   private def printInstructionsToTrace(title: String, instructions: Seq[String]): Unit = {
     try {

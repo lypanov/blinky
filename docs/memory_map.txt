@@ -3,7 +3,7 @@ we have split code / data memory / address spaces for now
 data memory (BSRAM currently)
 -----------
 
-00 : variable memory begins here, pre-initialized with DEADBEEFs until ...
+10 : variable memory begins here, pre-initialized with DEADBEEFs until ...
 20 : stack should begin here probably, but no logic for overflowing etc just yet
 40 : stack begins pointing here, but grows upwards ^^^
 50 - fin, this address doesn't exist
