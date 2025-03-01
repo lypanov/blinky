@@ -317,13 +317,13 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     // This pattern is defined in the MockGowinSP class
     val ldwTestInstructions = Seq(
       "40000000", // MOV R0, 0          ; Initialize R0 to 0 (base address)
-      "8300000C", // LDW R3, R0, 12     ; Load from address 12 (0x0000BEE3)
+      "8300000C", // LDW R3, R0, 12     ; Load from address 12 (0x0000BEEF)
       "40000000", // MOV R0, 0          ; Reset R0 to 0
-      "82000008", // LDW R2, R0, 8      ; Load from address 8 (0x0000BEE2)
+      "82000008", // LDW R2, R0, 8      ; Load from address 8 (0x0000BEEF)
       "40000000", // MOV R0, 0          ; Reset R0 to 0
-      "81000004", // LDW R1, R0, 4      ; Load from address 4 (0x0000BEE1)
+      "81000004", // LDW R1, R0, 4      ; Load from address 4 (0x0000BEEF)
       "40000000", // MOV R0, 0          ; Reset R0 to 0
-      "80000000", // LDW R0, R0, 0      ; Load from address 0 (0x0000BEE0)
+      "80000000", // LDW R0, R0, 0      ; Load from address 0 (0x0000BEEF)
       "E7FFFFFF"  // B always, halt     ; Branch to self (halt)
     )
     
@@ -353,10 +353,10 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
               s"R2 = 0x${r2Value.toHexString}, R3 = 0x${r3Value.toHexString}")
       
       // Verify we loaded the correct values
-      r0Value should be (0x0000BEE0)
-      r1Value should be (0x0000BEE1)
-      r2Value should be (0x0000BEE2)
-      r3Value should be (0x0000BEE3)
+      r0Value should be (0x0000BEEF)
+      r1Value should be (0x0000BEEF)
+      r2Value should be (0x0000BEEF)
+      r3Value should be (0x0000BEEF)
     }
   }
 

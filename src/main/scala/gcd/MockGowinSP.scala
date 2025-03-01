@@ -18,13 +18,7 @@ class MockGowinSP extends Module with RAMInterface {
   
   // Create a small memory array for testing (64 entries, 32 bits each)
   val mem = RegInit(VecInit(Seq.tabulate(64) { i => 
-    if (i < 8) {
-      // Only for indices 0-7, use 0x0000BEEn pattern
-      ("h0000BEE" + i.toHexString).U(32.W)
-    } else {
-      // All other memory locations are zeros
-      0.U(32.W)
-    }
+    0x0000BEEF.U(32.W)
   }))
   
   // Write logic
