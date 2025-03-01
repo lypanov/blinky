@@ -12,10 +12,10 @@ instruction memory
 ------------------
 
 00 : current program begins
-40 : PC begins here, setup instructions
-..   (setup instructions continue, every instruction until 60 should be a halt instruction)
-60   halt instruction (*1)
-70 - fin, this address doesn't exist
+80 : PC initially set here, setup instructions
+..   (setup instructions continue, every instruction until a0 should be a halt instruction)
+A0   halt instruction (*1)
+B0 - fin, this address doesn't exist
 
 notes: *1: after completing setup CPU will jump to 00, on completion of user code
              if the user code does not halt and instead returns, we'll return

@@ -512,12 +512,12 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       // Check the expected value - should be 0xAA
       assert(r0Value == 0xAA, s"R0 value $r0Value should be 0xAA (170)")
       
-      // Verify PC value - should be 0x60 after returning from the subroutine
+      // Verify PC value - should be 0xA0 after returning from the subroutine
       val pcValue = dut.io.pc.peek().litValue.toInt
       println(s"Final PC value = 0x${pcValue.toHexString.toUpperCase()}")
       
-      // Check that the PC is at the expected address 0x60
-      assert(pcValue == 0x60, s"PC value $pcValue should be 0x60 (96), confirming return from subroutine")
+      // Check that the PC is at the expected address 0xA0
+      assert(pcValue == 0xA0, s"PC value $pcValue should be 0xA0 (160), confirming return from subroutine")
     }
   }
 

@@ -24,8 +24,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   })
   
   // Program counter
-  // Initialize PC to 0x40 (byte address) to start at the setup instructions
-  val pc = RegInit(0x40.U(32.W))
+  // Initialize PC to 0x80 (byte address) to start at the setup instructions
+  val pc = RegInit(0x80.U(32.W))
   
   // Registers
   val regs = RegInit(VecInit(Seq.fill(16)(0.U(32.W))))
@@ -41,27 +41,27 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   
   val instructionMemory = {
     // Define memory sections by byte address and convert to word addresses
-    val userProgEndAddr = 0x40 / 4     // User program ends at byte address 0x40 (word address 0x10)
-    val setupStartAddr = 0x40 / 4      // Setup instructions start at byte address 0x40 (word address 0x10)
-    val setupEndAddr = 0x60 / 4        // Setup instructions end at byte address 0x60 (word address 0x18)
-    val haltStartAddr = 0x60 / 4       // Halt instructions start at byte address 0x60 (word address 0x18)
-    val haltEndAddr = 0x70 / 4         // Halt instructions end at byte address 0x70 (word address 0x1C)
+    val userProgEndAddr = 0x80 / 4     // User program ends at byte address 0x80 (word address 0x20)
+    val setupStartAddr = 0x80 / 4      // Setup instructions start at byte address 0x80 (word address 0x20)
+    val setupEndAddr = 0xA0 / 4        // Setup instructions end at byte address 0xA0 (word address 0x28)
+    val haltStartAddr = 0xA0 / 4       // Halt instructions start at byte address 0xA0 (word address 0x28)
+    val haltEndAddr = 0xB0 / 4         // Halt instructions end at byte address 0xB0 (word address 0x2C)
     
-    // Ensure the provided hex strings don't extend beyond address 0x40 (word address 0x10)
+    // Ensure the provided hex strings don't extend beyond address 0x80 (word address 0x20)
     if (instructionHexStrings.length > userProgEndAddr) {
       throw new RuntimeException(s"Provided hex strings (${instructionHexStrings.length}) exceed the maximum allowed length ($userProgEndAddr)")
     }
     
-    // Section A: User program (0x00-0x40)
-    // Calculate how many "beef" instructions we need to fill up to address 0x40
+    // Section A: User program (0x00-0x80)
+    // Calculate how many "beef" instructions we need to fill up to address 0x80
     val userBeefCount = userProgEndAddr - instructionHexStrings.length
     val userBeefFiller = Seq.fill(userBeefCount)("0000BEEF")
     
-    // Section B: Setup instructions (0x40-0x60)
+    // Section B: Setup instructions (0x80-0xA0)
     // Define the setup instructions
     val setupInstructions = Seq(
-      "4e000040", // MOV R14, 0x0040     ; Top of stack
-      "4f000060", // MOV R15, 0x0060     ; Halt instruction at end of instruction memory
+      "4e000080", // MOV R14, 0x0080     ; Top of stack
+      "4f0000A0", // MOV R15, 0x00A0     ; Halt instruction at end of instruction memory
       "40000000", // MOV R0, 0x0000      ; Set R0 to 0x0000 (function body)
       "c7000000"  // BT R0               ; Jump to user code
     )
@@ -76,7 +76,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
     val setupBeefCount = setupSize - setupInstructions.length
     val setupBeefFiller = Seq.fill(setupBeefCount)("0000BEEF")
     
-    // Section C: Halt instructions (0x60-0x70)
+    // Section C: Halt instructions (0xA0-0xB0)
     val haltCount = haltEndAddr - haltStartAddr
     val haltFiller = Seq.fill(haltCount)("E7FFFFFF")
     
