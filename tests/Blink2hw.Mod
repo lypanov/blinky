@@ -7,7 +7,7 @@ VAR light: INTEGER;
 BEGIN
     light := 0;
     counter := 0;
-    maxIterations := 16777216;
+    maxIterations := 524288;
 
     WHILE TRUE DO
         INC(counter);

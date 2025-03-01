@@ -142,6 +142,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   // Flag to track if CPU should halt (for simulation purposes)
   val halted = RegInit(false.B)
   
+  // LED state register for memory-mapped LED control
+  val ledState = RegInit(false.B)
+  
   // Main execution state machine
   when (memoryAccessPending) {
     // We're waiting for memory read to complete
@@ -250,6 +253,16 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         io.memAddr := effectiveAddr
         io.memWriteData := regs(regA)
         io.memWrite := true.B
+        
+        // Check if this is a write to the memory-mapped LED address (0x10)
+        when (effectiveAddr === 0x10.U) {
+          // Update LED state with bit 0 of the value being stored
+          ledState := regs(regA)(0)
+          
+          // Debug output
+          printf(p"Memory-mapped LED write detected at address 0x10: Setting LED to ${regs(regA)(0)}\n")
+          CPUSubset0Companion.printTrace(s"Memory-mapped LED write detected at address 0x10: Setting LED to ${regs(regA)(0)}\n")
+        }
         
         // Debug output
         printf(p"STW: Storing R${regA}(${regs(regA)}) to address ${effectiveAddr}\n")
@@ -405,7 +418,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   io.r2 := regs(2)
   io.r3 := regs(3)
   io.halted := halted
-  io.led := regs(0)(0)  // Connect the least significant bit of R0 to the LED
+  io.led := ledState  // Connect LED output to our memory-mapped LED state
   io.pc := pc  // Connect the program counter to the output
 }
 
@@ -423,19 +436,26 @@ object CPUSubset0 {
     }
   }
 
-  // Move the blinkProgram to a place where it can be shared
-  val blinkProgram = Seq(
-    "40000000", // MOV R0, 1       ; light off
-    "41000001", // MOV R1, 0       ; Initialize counter
-    "62000040", // MHI R2, 0x0040  ; Set high part of loop count
-    "42260001", // IOR R2, R2, 0x0001 ; Set low part of loop count (0x01000001 = ~16,777,216 iterations)
-    "03190002", // SUB R3, R1, R2  ; Compare counter to max iterations
-    "E9000002", // B NE, skip_toggle, off=2 (NOTE offset takes into account our random MHI instruction!)
-    "40070001", // XOR R0, R0, 1   ; Toggle LED
-    "41000000", // MOV R1, 0       ; Reset counter
-    "41180001", // ADD R1, R1, 1   ; Increment counter
-    "E7FFFFFA"  // B always, loop, off=-6
-  )
+  // Load instructions from a code file
+  def loadInstructionsFromFile(filePath: String): Seq[String] = {
+    try {
+      val source = scala.io.Source.fromFile(filePath)
+      val instructions = source.getLines()
+        .map(_.trim)
+        .filter(_.nonEmpty)
+        .map(line => line.stripPrefix("0x"))
+        .toSeq
+      source.close()
+      println(s"Successfully loaded ${instructions.length} instructions from $filePath")
+      instructions
+    } catch {
+      case e: Exception =>
+        println(s"Error loading instructions from $filePath: ${e.getMessage}")
+        e.printStackTrace()
+        // Return empty sequence if file can't be loaded
+        Seq.empty[String]
+    }
+  }
 
   def main(args: Array[String]): Unit = {
     println("Generating CPUSubset0 Verilog")
@@ -446,9 +466,16 @@ object CPUSubset0 {
     
     new java.io.File(targetDir).mkdirs()
     
+    // Get project root
+    val projectRoot = getProjectRoot()
+    
+    // Load instructions from Blink2hw.code
+    val blink2hwCodePath = new File(projectRoot, "tests/Blink2hw.code").getAbsolutePath
+    val programInstructions = loadInstructionsFromFile(blink2hwCodePath)
+    
     // Generate the base CPU Verilog for testing and debugging
     val verilogCode = ChiselStage.emitSystemVerilog(
-      gen = new CPUSubset0(blinkProgram),
+      gen = new CPUSubset0(programInstructions),
       firtoolOpts = Array(
         "-disable-all-randomization",
         "-strip-debug-info",
@@ -458,7 +485,7 @@ object CPUSubset0 {
     
     // Generate the top-level wrapper for FPGA synthesis (with real Gowin RAM)
     val topVerilogCode = ChiselStage.emitSystemVerilog(
-      gen = new CPUMinimalWrapper(useRealGowin = true),
+      gen = new CPUMinimalWrapper(useRealGowin = true, programInstructions),
       firtoolOpts = Array(
         "-disable-all-randomization",
         "-strip-debug-info",
@@ -468,7 +495,7 @@ object CPUSubset0 {
     
     // Generate a simulation-friendly version (with mock RAM)
     val simVerilogCode = ChiselStage.emitSystemVerilog(
-      gen = new CPUMinimalWrapper(useRealGowin = false),
+      gen = new CPUMinimalWrapper(useRealGowin = false, programInstructions),
       firtoolOpts = Array(
         "-disable-all-randomization",
         "-strip-debug-info",
@@ -493,15 +520,8 @@ object CPUSubset0 {
     println(s"Verilog written to $targetDir/$outputFile")
     println(s"Top-level wrapper written to $targetDir/$topOutputFile")
     println(s"Simulation wrapper written to $targetDir/CPUMinimalWrapper_sim.v")
-    
-    // Also create a trace directory if it doesn't exist
-    val projectRoot = getProjectRoot()
-    val traceDir = new File(projectRoot, "trace").getAbsolutePath
-    new java.io.File(traceDir).mkdirs()
-    println(s"Created trace directory at $traceDir")
-    
     // Initialize the trace file
-    CPUSubset0Companion.initializeTraceWriter("default", traceDir)
+    // CPUSubset0Companion.initializeTraceWriter("default", traceDir)
   }
 }
 

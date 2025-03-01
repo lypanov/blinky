@@ -5,7 +5,7 @@ LDW R13, [R0, 0x3]
 STW R0, [R13, 0x0]
 MOV R0, 0x0
 STW R0, [R13, 0x4]
-MHI R0, 0x100
+MHI R0, 0x8
 STW R0, [R13, 0x8]
 BF, off=17
 LDW R13, [R0, 0x7]

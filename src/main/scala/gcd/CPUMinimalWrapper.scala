@@ -3,15 +3,15 @@ package gcd
 import chisel3._
 import chisel3.util._
 
-class CPUMinimalWrapper(useRealGowin: Boolean = true) extends Module {
+class CPUMinimalWrapper(useRealGowin: Boolean = true, programInstructions: Seq[String]) extends Module {
   val io = IO(new Bundle {
     val led = Output(Bool())         // LED output
     val deadbeef = Output(UInt(16.W)) // RAM value
     val addr = Output(UInt(3.W))     // Address counter
   })
   
-  // Internal CPU with the blink program
-  val cpu = Module(new CPUSubset0(CPUSubset0.blinkProgram))
+  // Internal CPU with the provided program instructions
+  val cpu = Module(new CPUSubset0(programInstructions))
   io.led := cpu.io.led
   
   // Use the abstracted RAM controller for cycling display
