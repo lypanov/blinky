@@ -4,7 +4,7 @@ import chisel3._
 import chisel3.util._
 
 // Module to encapsulate RAM access
-class RAMController extends Module {
+class RAMController(val useRealGowin: Boolean = true) extends Module {
   val io = IO(new Bundle {
     // Simple interface that exposes the RAM value and address counter
     val value = Output(UInt(16.W))  // Reduced to 16 bits
@@ -20,18 +20,24 @@ class RAMController extends Module {
   // Connect address counter to output
   io.addr := addrCounter
   
-  // Instantiate the Gowin Single-Port RAM
-  val ram = Module(new GowinSP())
+  // Use the appropriate RAM implementation based on parameter
+  val ramInterface = if (useRealGowin) {
+    val ram = Module(new GowinSP())
+    ram.io
+  } else {
+    val ram = Module(new MockGowinSP())
+    ram.io
+  }
   
   // Connect RAM signals
-  ram.io.clk := clock
-  ram.io.ce := true.B  // Clock enable always active
-  ram.io.reset := false.B  // Reset permanently disabled
-  ram.io.wre := false.B  // Write enable permanently disabled (read only)
-  ram.io.ad := addrCounter  // Use the cycling counter as address
-  ram.io.din := 0.U(32.W)  // No writing, so this doesn't matter
-  ram.io.oce := true.B  // Output clock enable always active
+  ramInterface.clk := clock
+  ramInterface.ce := true.B  // Clock enable always active
+  ramInterface.reset := false.B  // Reset permanently disabled
+  ramInterface.wre := false.B  // Write enable permanently disabled (read only)
+  ramInterface.ad := addrCounter  // Use the cycling counter as address
+  ramInterface.din := 0.U(32.W)  // No writing, so this doesn't matter
+  ramInterface.oce := true.B  // Output clock enable always active
   
   // Connect only the lower 16 bits of the RAM output to our simplified interface
-  io.value := ram.io.dout(15, 0)  // Take only the lower 16 bits
+  io.value := ramInterface.dout(15, 0)  // Take only the lower 16 bits
 } 

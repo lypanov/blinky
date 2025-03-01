@@ -239,7 +239,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
 }
 
 // Add this class after the CPUSubset0 class
-class CPUMinimalWrapper extends Module {
+class CPUMinimalWrapper(useRealGowin: Boolean = true) extends Module {
   val io = IO(new Bundle {
     val led = Output(Bool())         // LED output
     val deadbeef = Output(UInt(16.W)) // RAM value
@@ -250,8 +250,8 @@ class CPUMinimalWrapper extends Module {
   val cpu = Module(new CPUSubset0(CPUSubset0.blinkProgram))
   io.led := cpu.io.led
   
-  // Use the abstracted RAM controller
-  val ramController = Module(new RAMController())
+  // Use the abstracted RAM controller with appropriate implementation
+  val ramController = Module(new RAMController(useRealGowin))
   
   // Connect RAM value and address to outputs
   io.deadbeef := ramController.io.value
@@ -292,15 +292,30 @@ object CPUSubset0 {
       )
     )
     
-    // Also generate the minimal top-level wrapper for FPGA synthesis
+    // Generate the top-level wrapper for FPGA synthesis (with real Gowin RAM)
     val topVerilogCode = ChiselStage.emitSystemVerilog(
-      gen = new CPUMinimalWrapper(),
+      gen = new CPUMinimalWrapper(useRealGowin = true),
       firtoolOpts = Array(
         "-disable-all-randomization",
         "-strip-debug-info",
         "--lowering-options=disallowLocalVariables,disallowPackedArrays,noAlwaysComb"
       )
     )
+    
+    // Generate a simulation-friendly version (with mock RAM)
+    val simVerilogCode = ChiselStage.emitSystemVerilog(
+      gen = new CPUMinimalWrapper(useRealGowin = false),
+      firtoolOpts = Array(
+        "-disable-all-randomization",
+        "-strip-debug-info",
+        "--lowering-options=disallowLocalVariables,disallowPackedArrays,noAlwaysComb"
+      )
+    )
+    
+    // Write the simulation version
+    val simWriter = new java.io.PrintWriter(new java.io.File(s"$targetDir/CPUMinimalWrapper_sim.v"))
+    simWriter.write(simVerilogCode)
+    simWriter.close()
     
     // Write both Verilog files
     val writer = new java.io.PrintWriter(new java.io.File(s"$targetDir/$outputFile"))
@@ -313,6 +328,7 @@ object CPUSubset0 {
     
     println(s"Verilog written to $targetDir/$outputFile")
     println(s"Top-level wrapper written to $targetDir/$topOutputFile")
+    println(s"Simulation wrapper written to $targetDir/CPUMinimalWrapper_sim.v")
     
     // Also create a trace directory if it doesn't exist
     val traceDir = "trace"
