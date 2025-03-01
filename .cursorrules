@@ -1,12 +1,16 @@
 # CPU Project Rules and Important Information
 
+## Environment basics
+- Don't directly run sbt, we do not use sbt.
+- Mill build tool is installed and available on the users PATH, do not run it with ./mill. But simply 'mill ...'.
+- The CPU is implemented in Scala using the Chisel library
+
 ## Commands
 - Run CPU tests with trace output: `bash tools/run_cpu_with_trace.sh`
   - This generates trace files at:
     - CPU raw trace: `trace/cpu_trace.txt`
     - Annotated trace: `trace/annotated_trace.txt`
 - If you want to build for the FPGA itself then run `bash build.sh`, on successful completion kindly ask the user to perform the "Gowin-fu"
-- Don't directly run sbt, we do not use sbt.
 - Don't try running mill directly for subsetting the test cases either, simply run the tests as mentioned in the first command so we get full trace output.
 
 ## Important Notes
@@ -17,6 +21,5 @@
 - The ISA is described in the file `docs/risc_5_arch.txt`
 - The memory map is described in the file `docs/memory_map.txt`
 - When making references to the ISA, refer to the above link, do NOT make up your own interpretations of the instructions or use our current implementation as the reference!
-- The CPU is implemented in Scala using the Chisel library
 - The CPU is designed to be synthesized into an the Tang Nano 4K FPGA
 - Tests are written in Scala using the ChiselTest library, a good example test is `src/test/scala/gcd/CPUSubset0Spec.scala`

@@ -20,5 +20,8 @@
         "terminal.ansiRed": "#C7AE95",
         "terminal.ansiWhite": "#C7CCD1",
         "terminal.ansiYellow": "#AEC795"
+    },
+    "files.watcherExclude": {
+        "**/target": true
     }
 }

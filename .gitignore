@@ -339,10 +339,10 @@ project/plugins/project/
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 
-trace/annotated_trace.txt
-trace/cpu_trace.txt
-
 generated/
 *.rsc
 *.smb
-input.txt
+input.*
+.bloop
+.metals
+trace/
