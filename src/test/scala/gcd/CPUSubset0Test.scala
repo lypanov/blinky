@@ -360,6 +360,65 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     }
   }
 
+  it should "correctly execute STW (Store Word) instruction" in {
+    // Test program for STW instruction
+    // We'll store specific values to memory, then load them back to verify
+    val stwTestInstructions = Seq(
+      // First, set values in registers to store
+      "40000000", // MOV R0, 0x0000     ; Set the base address for reads to 0x0
+      "4100CAFE", // MOV R1, 0xBABE     ; Value to store at address 4
+      "4200BEEF", // MOV R2, 0xBEEF     ; Value to store at address 8
+      "4300DEAD", // MOV R3, 0xDEAD     ; Value to store at address 12
+      
+      // Store values using STW (v=0)
+      "A1000004", // STW R1, R0, 4       ; Store R1 (0xCAFE) at address 4
+      "A2000008", // STW R2, R0, 8       ; Store R2 (0xBEEF) at address 8
+      "A300000C", // STW R3, R0, 12      ; Store R3 (0xDEAD) at address 12
+      
+      // Clear registers to make sure we're actually reading from memory
+      "41000000", // MOV R1, 0          ; Clear R1
+      "42000000", // MOV R2, 0          ; Clear R2
+      "43000000", // MOV R3, 0          ; Clear R3
+      
+      // Read values back using LDW
+      "81000004", // LDW R1, R0, 4      ; Load from address 4 (should be 0xCAFE)
+      "82000008", // LDW R2, R0, 8      ; Load from address 8 (should be 0xBEEF)
+      "8300000C", // LDW R3, R0, 12     ; Load from address 12 (should be 0xDEAD)
+      
+      "E7FFFFFF"  // B always, halt     ; Branch to self (halt)
+    )
+    
+    // Print the STW test instructions to the trace file
+    printInstructionsToTrace("STW Test Instructions", stwTestInstructions)
+    
+    test(new CPUTestbenchWrapper(stwTestInstructions)).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
+      // Set timeout
+      dut.clock.setTimeout(100)
+      
+      // Run until halted or max cycles
+      var cycle = 0
+      val maxCycles = 50
+      
+      while (!dut.io.cpuHalted.peek().litToBoolean && cycle < maxCycles) {
+        dut.clock.step()
+        cycle += 1
+      }
+      
+      // Check that registers have the correct values loaded back from memory
+      val r1Value = dut.io.r1.peek().litValue.toInt
+      val r2Value = dut.io.r2.peek().litValue.toInt
+      val r3Value = dut.io.r3.peek().litValue.toInt
+      
+      println(s"After STW/LDW test: R1 = 0x${r1Value.toHexString}, " + 
+              s"R2 = 0x${r2Value.toHexString}, R3 = 0x${r3Value.toHexString}")
+      
+      // Verify we loaded the same values we stored
+      r1Value should be (0xCAFE)
+      r2Value should be (0xBEEF)
+      r3Value should be (0xDEAD)
+    }
+  }
+
   // Helper method to print instructions to trace file
   private def printInstructionsToTrace(title: String, instructions: Seq[String]): Unit = {
     CPUSubset0Companion.traceWriter.printf(s"\n$title:\n")

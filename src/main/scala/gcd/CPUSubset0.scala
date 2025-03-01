@@ -168,6 +168,20 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         // LDB - Load Byte not implemented yet
       }
     } .otherwise {  // Store instructions not implemented yet
+      when (!isByte) {  // STW - Store Word
+        // Start a memory write operation
+        io.memAddr := effectiveAddr
+        io.memWriteData := regs(regA)
+        io.memWrite := true.B
+        
+        // Debug output
+        printf(p"STW: Storing R${regA}(${regs(regA)}) to address ${effectiveAddr}\n")
+        
+        // For store operations, we don't need to wait for completion
+        memoryAccessPending := false.B
+      } .otherwise {
+        // STB - Store Byte not implemented yet
+      }
     }
     
     // For memory operations, we only advance PC after completing the operation
