@@ -71,6 +71,26 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     }
   }
   
+  // Helper method to run simulation until CPU halts or max cycles reached
+  private def runTillHalt(dut: CPUTestbenchWrapper, maxCycles: Int = 100): Int = {
+    var cycle = 0
+    while (!dut.io.cpuHalted.peek().litToBoolean && cycle < maxCycles) {
+      dut.clock.step()
+      cycle += 1
+    }
+    cycle
+  }
+
+  private def runTillAddr(dut: CPUTestbenchWrapper, addr: Int, maxCycles: Int = 100): Int = {
+    var cycle = 0
+    println(s"Running until PC = 0x${addr.toHexString.toUpperCase()}")
+    while (dut.io.pc.peek().litValue.toInt != addr && cycle < maxCycles) {
+      dut.clock.step()
+      cycle += 1
+    }
+    cycle
+  }
+  
   it should "execute the test program and toggle R0 after correctly completing loop iterations" in {
     val testId = "main_loop_test"
     checkTestFilter(testId)
@@ -209,14 +229,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     test(new CPUTestbenchWrapper(mhiIorTestInstructions)) { dut =>
       dut.clock.setTimeout(100) // Small timeout is sufficient for this test
       
-      // Step through each instruction
-      dut.clock.step() // Execute MHI R3, 0xCAFE
-      dut.clock.step() // Execute IOR R3, R3, 0xF00D
-      dut.clock.step() // Execute MOV R1, 0x5555
-      dut.clock.step() // Execute IOR R1, R1, 0xAAAA 
-      
-      // Step one more time to let any pending register writes complete
-      dut.clock.step()
+      runTillHalt(dut)
       
       // Verify R3 value directly using the exposed register
       val r3Value = dut.io.r3.peek().litValue
@@ -254,10 +267,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     test(new CPUTestbenchWrapper(bfTestInstructions)) { dut =>
       dut.clock.setTimeout(100) // Small timeout is sufficient for this test
       
-      // Step through each instruction
-      dut.clock.step() // Execute MOV R0, 1
-      dut.clock.step() // Execute BF always, skip, 1 (should not branch)
-      dut.clock.step() // Execute MOV R0, 2
+      runTillHalt(dut)
       
       // Verify R0 value - if BF worked correctly, R0 should be 2
       val r0Value = dut.io.r0.peek().litValue.toInt
@@ -298,19 +308,15 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     test(new CPUTestbenchWrapper(bltTestInstructions)) { dut =>
       dut.clock.setTimeout(100) // Small timeout for this test
       
-      // Case 1: N=0, V=0 (not less than)
-      dut.clock.step() // MOV R0, 5
-      dut.clock.step() // MOV R1, 3
-      dut.clock.step() // SUB R0, R0, R1 - Result positive, no branch expected
-      dut.clock.step() // BLT skip1, 2 - Should NOT branch
-      dut.clock.step() // MOV R2, 1 - Should execute
+      runTillAddr(dut, 0x00000014) // run up till last instruction in case 1
       
       // Verify R2 value after case 1
       var r2Value = dut.io.r2.peek().litValue.toInt
       println(s"After Case 1 (N=0, V=0): R2 = $r2Value")
       assert(r2Value == 1, s"R2 should be 1 after Case 1, indicating BLT didn't branch when N=0,V=0")
       
-      // Case 2: N=1, V=0 (less than)
+      // TODO why can't we use runTillHalt(dut) here?
+
       dut.clock.step() // MOV R0, 3
       dut.clock.step() // MOV R1, 5
       dut.clock.step() // SUB R0, R0, R1 - Result negative, branch expected
@@ -341,7 +347,8 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       "4100BEEF", // MOV R1, 0xBEEF: Write 0xBEEF into R1.
       "C7000002", // BT R1: Branch always address in register R2.
       "4100DEAD", // MOV R1, 0xDEAD: This instruction should be skipped if BT transfers control.
-      "FF000001"  // BF: Branch false; since condition is always false, no branch occurs, PC increments normally.
+      "FF000001", // BF: Branch false; since condition is always false, no branch occurs, PC increments normally.
+      "E7FFFFFF"  // B always, halt: Branch to self (halt)
     )
     
     // Print the BT test instructions to the trace file for analysis.
@@ -351,12 +358,8 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       dut.clock.setTimeout(100)
       
       // Run the simulation until the CPU signals it is halted or until a maximum cycle count.
-      var cycle = 0
-      val MAX_CYCLES = 100
-      while (!dut.io.cpuHalted.peek().litToBoolean && cycle < MAX_CYCLES) {
-        dut.clock.step()
-        cycle += 1
-      }
+      val cyclesRun = runTillHalt(dut)
+      println(s"BT test ran for $cyclesRun cycles")
       
       // Check final register values.
       val finalR1 = dut.io.r1.peek().litValue.toInt
@@ -399,13 +402,8 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       dut.clock.setTimeout(100)
       
       // Run until halted or max cycles
-      var cycle = 0
-      val maxCycles = 30
-      
-      while (!dut.io.cpuHalted.peek().litToBoolean && cycle < maxCycles) {
-        dut.clock.step()
-        cycle += 1
-      }
+      val cyclesRun = runTillHalt(dut, 30)
+      println(s"LDW test ran for $cyclesRun cycles")
       
       // Check that registers have correct values from memory
       val r0Value = dut.io.r0.peek().litValue.toInt
@@ -464,13 +462,8 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       dut.clock.setTimeout(100)
       
       // Run until halted or max cycles
-      var cycle = 0
-      val maxCycles = 50
-      
-      while (!dut.io.cpuHalted.peek().litToBoolean && cycle < maxCycles) {
-        dut.clock.step()
-        cycle += 1
-      }
+      val cyclesRun = runTillHalt(dut, 50)
+      println(s"STW test ran for $cyclesRun cycles")
       
       // Check that registers have the correct values loaded back from memory
       val r1Value = dut.io.r1.peek().litValue.toInt
@@ -509,13 +502,8 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       dut.clock.setTimeout(100) // Small timeout is sufficient for this test
       
       // Run until halted or max cycles
-      var cycle = 0
-      val maxCycles = 20
-      
-      while (!dut.io.cpuHalted.peek().litToBoolean && cycle < maxCycles) {
-        dut.clock.step()
-        cycle += 1
-      }
+      val cyclesRun = runTillHalt(dut, 20)
+      println(s"Function preamble test ran for $cyclesRun cycles")
       
       // Verify R0 value - should be 0xAA after function execution
       val r0Value = dut.io.r0.peek().litValue.toInt
