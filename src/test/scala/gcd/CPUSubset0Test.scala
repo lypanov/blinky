@@ -331,4 +331,87 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     }
   }
 
+  it should "correctly execute LDW (Load Word) instruction" in {
+    // Test program for LDW instruction
+    // The memory pattern is 0x0000BEE0 to 0x0000BEE7 at addresses 0-7
+    // This pattern is defined in the MockGowinSP class
+    val ldwTestInstructions = Seq(
+      "40000000", // MOV R0, 0          ; Initialize R0 to 0 (base address)
+      "80000000", // LDW R0, R0, 0      ; Load from address 0 (0x0000BEE0)
+      "40000000", // MOV R0, 0          ; Reset R0 to 0
+      "81000004", // LDW R1, R0, 4      ; Load from address 4 (0x0000BEE1)
+      "40000000", // MOV R0, 0          ; Reset R0 to 0
+      "82000008", // LDW R2, R0, 8      ; Load from address 8 (0x0000BEE2)
+      "40000000", // MOV R0, 0          ; Reset R0 to 0
+      "8300000C", // LDW R3, R0, 12     ; Load from address 12 (0x0000BEE3)
+      "E7000000"  // B always, halt     ; Branch to self (halt)
+    )
+    
+    // Print the LDW test instructions to the trace file
+    CPUSubset0Companion.traceWriter.printf("\nLDW Test Instructions:\n")
+    for ((instr, idx) <- ldwTestInstructions.zipWithIndex) {
+      CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
+    }
+    CPUSubset0Companion.traceWriter.printf("\n")
+    
+    test(new CPUMemoryTestbench(ldwTestInstructions)).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
+      // Set timeout
+      dut.clock.setTimeout(100)
+      
+      // Run until halted or max cycles
+      var cycle = 0
+      val maxCycles = 20
+      
+      while (!dut.io.cpuHalted.peek().litToBoolean && cycle < maxCycles) {
+        dut.clock.step()
+        cycle += 1
+      }
+      
+      // Check that registers have correct values from memory
+      val r0Value = dut.io.r0.peek().litValue.toInt
+      val r1Value = dut.io.r1.peek().litValue.toInt
+      val r2Value = dut.io.r2.peek().litValue.toInt
+      val r3Value = dut.io.r3.peek().litValue.toInt
+      
+      println(s"After LDW test: R0 = 0x${r0Value.toHexString}, R1 = 0x${r1Value.toHexString}, " + 
+              s"R2 = 0x${r2Value.toHexString}, R3 = 0x${r3Value.toHexString}")
+      
+      // Verify we loaded the correct values
+      r0Value should be (0x0000BEE0)
+      r1Value should be (0x0000BEE1)
+      r2Value should be (0x0000BEE2)
+      r3Value should be (0x0000BEE3)
+    }
+  }
+}
+
+// Special testbench for memory testing
+class CPUMemoryTestbench(instructionHexStrings: Seq[String] = Seq.empty[String]) extends Module {
+  val io = IO(new Bundle {
+    val r0 = Output(UInt(32.W))
+    val r1 = Output(UInt(32.W)) 
+    val r2 = Output(UInt(32.W))
+    val r3 = Output(UInt(32.W))
+    val cpuHalted = Output(Bool())
+  })
+  
+  // Create CPU
+  val cpu = Module(new CPUSubset0(instructionHexStrings))
+  
+  // Create memory controller (use mock version for tests)
+  val memoryController = Module(new MemoryController(useRealGowin = false))
+  
+  // Connect CPU to memory
+  memoryController.io.cpuAddr := cpu.io.memAddr
+  memoryController.io.cpuWriteData := cpu.io.memWriteData
+  memoryController.io.cpuWrite := cpu.io.memWrite
+  memoryController.io.cpuRead := cpu.io.memRead
+  cpu.io.memReadData := memoryController.io.cpuReadData
+  
+  // Connect outputs
+  io.r0 := cpu.io.r0
+  io.r1 := cpu.io.r1
+  io.r2 := cpu.io.r2
+  io.r3 := cpu.io.r3
+  io.cpuHalted := cpu.io.halted
 }
