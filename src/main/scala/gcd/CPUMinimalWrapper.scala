@@ -33,10 +33,12 @@ class CPUMinimalWrapper(useRealGowin: Boolean = true, programInstructions: Seq[S
   io.deadbeef := ramController.io.value
   io.addr := ramController.io.addr
 
-  // Create and properly initialize the UART test module
-  val uartTest = Module(new UartTest())
-  uartTest.io.clk := clock
-  uartTest.io.rst_n := ~reset.asBool
-  uartTest.io.uart_rx := io.uart_rx
-  io.uart_tx := uartTest.io.uart_tx
+  // Create and properly initialize the Logger module
+  val logger = Module(new Logger())
+  logger.io.clk := clock
+  logger.io.rst_n := ~reset.asBool
+  logger.io.uart_rx := io.uart_rx
+  logger.io.messageCode := cpu.io.messageCode
+  logger.io.trigger := cpu.io.trigger
+  io.uart_tx := logger.io.uart_tx
 } 

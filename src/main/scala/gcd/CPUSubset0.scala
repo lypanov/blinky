@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import _root_.circt.stage.ChiselStage
 import java.io.{File, PrintWriter}
+import gcd.Logger
 
 class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends Module {
   val io = IO(new Bundle {
@@ -21,6 +22,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
     val memReadData = Input(UInt(32.W))
     val memWrite = Output(Bool())
     val memRead = Output(Bool())
+
+    // Logger boilerplate
+    val messageCode = Output(UInt(4.W))
+    val trigger = Output(Bool())
   })
   
   // Program counter
@@ -138,6 +143,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   io.memWriteData := 0.U
   io.memWrite := false.B
   io.memRead := false.B
+
+  // Logger boilerplate
+  io.messageCode := 0.U
+  io.trigger := false.B
   
   // Flag to track if CPU should halt (for simulation purposes)
   val halted = RegInit(false.B)
@@ -258,6 +267,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         when (effectiveAddr === 0x10.U) {
           // Update LED state with bit 0 of the value being stored
           ledState := regs(regA)(0)
+          Logger.log(io, Logger.Codes.LedToggled)
           
           // Debug output
           printf(p"Memory-mapped LED write detected at address 0x10: Setting LED to ${regs(regA)(0)}\n")
@@ -280,7 +290,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
     }
   } .elsewhen (isF1Format || (format(3, 2) === "b00".U)) {
     // Unified handling for immediate (F1) and register (F0) operations
-    // Determine if we are using the immediate operand (F1) or register operand (F0)
+    // Determine if we are using the immediate operand (F1) or register operand (F0).
     val useImmediate = isF1Format
     // Select the second operand: immediate if F1, else register from 'c' if F0.
     val operand = Mux(useImmediate, imm, regs(regC))
