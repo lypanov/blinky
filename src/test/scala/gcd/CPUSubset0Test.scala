@@ -150,7 +150,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       "4336F00D", // IOR R3, R3, 0xF00D  ; R3 = 0xCAFE0000 | 0x0000F00D = 0xCAFEF00D
       "41005555", // MOV R1, 0x5555      ; Load 0x5555 into R1
       "4116AAAA", // IOR R1, R1, 0xAAAA  ; R1 = 0x00005555 | 0x0000AAAA = 0x0000FFFF
-      "E7000000"  // B always, halt      ; Branch to self (halt)
+      "E7FFFFFF"  // B always, halt      ; Branch to self (halt)
     )
     
     // Print the MHI/IOR test instructions to the trace file
@@ -197,7 +197,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       "40000001", // MOV R0, 1          ; Initialize R0 to 1
       "FF000001", // BF always, skip, 1  ; This branch should NEVER be taken
       "40000002", // MOV R0, 2          ; R0 should become 2 (BF doesn't branch)
-      "E7000000"  // B always, halt      ; Branch to self (halt)
+      "E7FFFFFF"  // B always, halt      ; Branch to self (halt)
     )
     
     // Print the BF test instructions to the trace file
@@ -243,7 +243,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       "D5000002", // BLT skip2, 2       ; Should branch (N^V = 1^0 = 1)
       "42000002", // MOV R2, 2          ; Will be skipped if branch taken
       
-      "E7000000"  // B always, halt     ; Branch to self (halt)
+      "E7FFFFFF"  // B always, halt     ; Branch to self (halt)
     )
     
     // Print the BLT test instructions to the trace file
@@ -344,7 +344,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       "81000004", // LDW R1, R0, 4      ; Load from address 4 (0x0000BEE1)
       "40000000", // MOV R0, 0          ; Reset R0 to 0
       "80000000", // LDW R0, R0, 0      ; Load from address 0 (0x0000BEE0)
-      "E7000000"  // B always, halt     ; Branch to self (halt)
+      "E7FFFFFF"  // B always, halt     ; Branch to self (halt)
     )
     
     // Print the LDW test instructions to the trace file
