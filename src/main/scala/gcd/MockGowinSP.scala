@@ -27,20 +27,18 @@ class MockGowinSP extends Module with RAMInterface {
     }
   }))
   
-  // Read logic with 1-cycle delay
-  val readAddr = RegNext(io.ad)
-  
   // Write logic
   when (io.ce && io.wre) {
     mem(io.ad) := io.din
   }
   
-  // Output logic with clock enable
-  val dataOut = RegInit(0.U(32.W))
+  // Read logic with 1-cycle delay on the output instead of the address
+  // Immediately sample the memory at the current address and then register the value
+  val dataOutReg = RegInit(0.U(32.W))
   when (io.ce && !io.wre) {
-    dataOut := mem(readAddr)
+    dataOutReg := mem(io.ad)
   }
   
   // Apply output clock enable
-  io.dout := Mux(io.oce, dataOut, 0.U)
+  io.dout := Mux(io.oce, dataOutReg, 0.U)
 } 

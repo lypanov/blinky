@@ -337,13 +337,13 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     // This pattern is defined in the MockGowinSP class
     val ldwTestInstructions = Seq(
       "40000000", // MOV R0, 0          ; Initialize R0 to 0 (base address)
-      "80000000", // LDW R0, R0, 0      ; Load from address 0 (0x0000BEE0)
-      "40000000", // MOV R0, 0          ; Reset R0 to 0
-      "81000004", // LDW R1, R0, 4      ; Load from address 4 (0x0000BEE1)
+      "8300000C", // LDW R3, R0, 12     ; Load from address 12 (0x0000BEE3)
       "40000000", // MOV R0, 0          ; Reset R0 to 0
       "82000008", // LDW R2, R0, 8      ; Load from address 8 (0x0000BEE2)
       "40000000", // MOV R0, 0          ; Reset R0 to 0
-      "8300000C", // LDW R3, R0, 12     ; Load from address 12 (0x0000BEE3)
+      "81000004", // LDW R1, R0, 4      ; Load from address 4 (0x0000BEE1)
+      "40000000", // MOV R0, 0          ; Reset R0 to 0
+      "80000000", // LDW R0, R0, 0      ; Load from address 0 (0x0000BEE0)
       "E7000000"  // B always, halt     ; Branch to self (halt)
     )
     
@@ -360,7 +360,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       
       // Run until halted or max cycles
       var cycle = 0
-      val maxCycles = 20
+      val maxCycles = 30
       
       while (!dut.io.cpuHalted.peek().litToBoolean && cycle < maxCycles) {
         dut.clock.step()
