@@ -5,7 +5,7 @@ VAR light: INTEGER;
     maxIterations: INTEGER;
 
 BEGIN
-    light := 1;  (* Start with light off, equivalent to MOV R0, 0 *)
+    light := 0;  (* Start with light off, equivalent to MOV R0, 0 *)
     counter := 2;  (* Initialize counter, though assembly shows MOV R1, 1, we'll start at 0 for clarity *)
     maxIterations := 16777216;  (* About 16M, matching 0x01000001 *)
 
