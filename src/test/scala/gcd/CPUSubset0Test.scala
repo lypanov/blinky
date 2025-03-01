@@ -38,7 +38,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
   printInstructionsToTrace("CPU Instructions", testInstructions)
 
   it should "execute the test program and toggle R0 after correctly completing loop iterations" in {
-    test(new CPUMemoryTestbench(testInstructions)) { dut =>
+    test(new CPUTestbenchWrapper(testInstructions)) { dut =>
       // Set a reasonable timeout
       dut.clock.setTimeout(1000)
       
@@ -114,7 +114,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
   }
   
   it should "toggle the LED output" in {
-    test(new CPUMemoryTestbench(testInstructions)) { dut =>
+    test(new CPUTestbenchWrapper(testInstructions)) { dut =>
       // Set a reasonable timeout
       dut.clock.setTimeout(1000)
       
@@ -152,7 +152,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     // Print the MHI/IOR test instructions to the trace file
     printInstructionsToTrace("MHI/IOR Test Instructions", mhiIorTestInstructions)
     
-    test(new CPUMemoryTestbench(mhiIorTestInstructions)) { dut =>
+    test(new CPUTestbenchWrapper(mhiIorTestInstructions)) { dut =>
       dut.clock.setTimeout(100) // Small timeout is sufficient for this test
       
       // Step through each instruction
@@ -195,7 +195,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     // Print the BF test instructions to the trace file
     printInstructionsToTrace("BF Test Instructions", bfTestInstructions)
     
-    test(new CPUMemoryTestbench(bfTestInstructions)) { dut =>
+    test(new CPUTestbenchWrapper(bfTestInstructions)) { dut =>
       dut.clock.setTimeout(100) // Small timeout is sufficient for this test
       
       // Step through each instruction
@@ -237,7 +237,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     // Print the BLT test instructions to the trace file
     printInstructionsToTrace("BLT Test Instructions", bltTestInstructions)
     
-    test(new CPUMemoryTestbench(bltTestInstructions)) { dut =>
+    test(new CPUTestbenchWrapper(bltTestInstructions)) { dut =>
       dut.clock.setTimeout(100) // Small timeout for this test
       
       // Case 1: N=0, V=0 (not less than)
@@ -287,7 +287,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     // Print the BT test instructions to the trace file for analysis.
     printInstructionsToTrace("BT (Branch to Register) Test Instructions (with final BF)", btTestInstructions)
     
-    test(new CPUMemoryTestbench(btTestInstructions)) { dut =>
+    test(new CPUTestbenchWrapper(btTestInstructions)) { dut =>
       dut.clock.setTimeout(100)
       
       // Run the simulation until the CPU signals it is halted or until a maximum cycle count.
@@ -330,7 +330,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     // Print the LDW test instructions to the trace file
     printInstructionsToTrace("LDW Test Instructions", ldwTestInstructions)
     
-    test(new CPUMemoryTestbench(ldwTestInstructions)).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
+    test(new CPUTestbenchWrapper(ldwTestInstructions)).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
       // Set timeout
       dut.clock.setTimeout(100)
       
@@ -368,34 +368,4 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     }
     CPUSubset0Companion.traceWriter.printf("\n")
   }
-}
-
-class CPUMemoryTestbench(instructionHexStrings: Seq[String] = Seq.empty[String]) extends Module {
-  val io = IO(new Bundle {
-    val r0 = Output(UInt(32.W))
-    val r1 = Output(UInt(32.W)) 
-    val r2 = Output(UInt(32.W))
-    val r3 = Output(UInt(32.W))
-    val cpuHalted = Output(Bool())
-  })
-  
-  // Create CPU
-  val cpu = Module(new CPUSubset0(instructionHexStrings))
-  
-  // Create memory controller (use mock version for tests)
-  val memoryController = Module(new MemoryController(useRealGowin = false))
-  
-  // Connect CPU to memory
-  memoryController.io.cpuAddr := cpu.io.memAddr
-  memoryController.io.cpuWriteData := cpu.io.memWriteData
-  memoryController.io.cpuWrite := cpu.io.memWrite
-  memoryController.io.cpuRead := cpu.io.memRead
-  cpu.io.memReadData := memoryController.io.cpuReadData
-  
-  // Connect outputs
-  io.r0 := cpu.io.r0
-  io.r1 := cpu.io.r1
-  io.r2 := cpu.io.r2
-  io.r3 := cpu.io.r3
-  io.cpuHalted := cpu.io.halted
 }
