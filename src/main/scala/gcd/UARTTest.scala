@@ -210,9 +210,15 @@ class UartRx(val CLK_FRE: Int = 50, val BAUD_RATE: Int = 115200) extends Module 
       cycle_cnt := cycle_cnt + 1.U
     }
 
-    // rx_bits logic
+    // rx_bits logic - fix the bit assignment
     when(state === rx_rec_byte && cycle_cnt === (HALF_CYCLE - 1.U)) {
-      rx_bits(bit_cnt) := io.rx_pin
+      // Create a new value for rx_bits by setting a specific bit
+      val new_rx_bits = rx_bits
+      when(io.rx_pin) {
+        rx_bits := new_rx_bits | (1.U(8.W) << bit_cnt)
+      }.otherwise {
+        rx_bits := new_rx_bits & ~(1.U(8.W) << bit_cnt)
+      }
     }
   }
 
@@ -244,7 +250,7 @@ class UartTest extends Module {
   // Registers
   val tx_data = RegInit(0.U(8.W))
   val tx_data_valid = RegInit(false.B)
-  val tx_cnt = RegInit(0.U(8.W))
+  val tx_cnt = RegInit(0.U(4.W))
   val wait_cnt = RegInit(0.U(32.W))
   val state = RegInit(idle)
 
@@ -264,9 +270,9 @@ class UartTest extends Module {
   uartTx.io.tx_data_valid := tx_data_valid
   io.uart_tx := uartTx.io.tx_pin
 
-  // Send data
+  // correctly convert the string into a form suitable for the fpga
   val send_data = "你好  GOWIN".getBytes("UTF-8") ++ Array[Byte](0x0d, 0x0a)
-  val tx_str = VecInit(send_data.map(_.U(8.W)))
+  val tx_str = VecInit(send_data.toIndexedSeq.map(b => (b & 0xFF).U(8.W)))
   
   // State Machine
   when(!io.rst_n) {
@@ -282,7 +288,7 @@ class UartTest extends Module {
       }
       is(send) {
         wait_cnt := 0.U
-        tx_data := tx_str(DATA_NUM.U - 1.U - tx_cnt)
+        tx_data := tx_str(tx_cnt)
 
         when(tx_data_valid && uartTx.io.tx_data_ready && tx_cnt < (DATA_NUM - 1).U) {
           tx_cnt := tx_cnt + 1.U
@@ -309,8 +315,3 @@ class UartTest extends Module {
     }
   }
 }
-
-// // Object to generate Verilog
-// object UartTest extends App {
-//   (new chisel3.stage.ChiselStage).emitVerilog(new UartTest())
-// }
