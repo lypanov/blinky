@@ -419,6 +419,43 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     }
   }
 
+  it should "correctly execute Oberon function preamble and outro pattern" in {
+    // Define a specific test program for Oberon function preamble and outro
+    val functionPreambleOutroInstructions = Seq(
+      "4ee90004", // SUB R14, R14, 0x4  ; Decrement stack pointer
+      "afe00000", // STW R15, [R14, 0x0] ; Store link register on stack
+      "40000aa0", // MOV R0, 0xAA       ; Set R0 to 0xAA (function body)
+      "8fe00000", // LDW R15, [R14, 0x0] ; Restore link register from stack
+      "4ee80004", // ADD R14, R14, 0x4   ; Restore stack pointer
+      "c700000f"  // BT R15              ; Return to caller
+    )
+    
+    // Print the function preamble/outro test instructions to the trace file
+    printInstructionsToTrace("Oberon Function Preamble/Outro Test Instructions", functionPreambleOutroInstructions)
+    
+    test(new CPUTestbenchWrapper(functionPreambleOutroInstructions)) { dut =>
+      dut.clock.setTimeout(100) // Small timeout is sufficient for this test
+      
+      // Run until halted or max cycles
+      var cycle = 0
+      val maxCycles = 20
+      
+      while (!dut.io.cpuHalted.peek().litToBoolean && cycle < maxCycles) {
+        dut.clock.step()
+        cycle += 1
+      }
+      
+      // Verify R0 value - should be 0xAA after function execution
+      val r0Value = dut.io.r0.peek().litValue.toInt
+      println(s"After function execution, R0 = 0x${r0Value.toHexString.toUpperCase()}")
+      
+      // Check the expected value - should be 0xAA
+      assert(r0Value == 0xAA, s"R0 value $r0Value should be 0xAA (170)")
+      
+      println("Oberon function preamble/outro test completed successfully")
+    }
+  }
+
   // Helper method to print instructions to trace file
   private def printInstructionsToTrace(title: String, instructions: Seq[String]): Unit = {
     CPUSubset0Companion.traceWriter.printf(s"\n$title:\n")
