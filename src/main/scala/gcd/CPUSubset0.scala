@@ -27,8 +27,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   // Initialize PC to 0x40 (byte address) to start at the setup instructions
   val pc = RegInit(0x40.U(32.W))
   
-  // Registers (we'll implement R0-R3 as required by the test program)
-  val regs = RegInit(VecInit(Seq.fill(4)(0.U(32.W))))
+  // Registers
+  val regs = RegInit(VecInit(Seq.fill(16)(0.U(32.W))))
   
   // Flags
   val n = RegInit(false.B)  // Negative
@@ -37,7 +37,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   val z = RegInit(false.B)  // Zero
   
   val memoryAccessPending = RegInit(false.B)
-  val memoryTargetReg = RegInit(0.U(2.W))
+  val memoryTargetReg = RegInit(0.U(4.W))
   
   val instructionMemory = {
     // Define memory sections by byte address and convert to word addresses
@@ -106,10 +106,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   val cond = instruction(27, 24) // Branch condition (for F3 format)
   val memOffset = instruction(19, 0) // Memory offset (for F2 format)
   
-  // Safely access registers using only the necessary bits
-  val regA = a(1, 0)  // 2 bits for 4 registers
-  val regB = b(1, 0)  // 2 bits for 4 registers
-  val regC = c_reg(1, 0)  // 2 bits for 4 registers
+  // Extract register fields for accessing the register file
+  val regA = a
+  val regB = b
+  val regC = c_reg
   
   // Determine instruction type
   val isBranch = format(3, 2) === "b11".U
@@ -130,7 +130,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   
   // Default signal values
   val regWrite = WireDefault(false.B)
-  val regWriteAddr = WireDefault(0.U(2.W))  // 2 bits for 4 registers
+  val regWriteAddr = WireDefault(0.U(4.W))  // 4 bits for 16 registers
   val regWriteData = WireDefault(0.U(32.W))
   
   // Memory interface signals
@@ -180,9 +180,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         // Check if this is a branch to register or branch with offset based on format bits
         when (isBranchToReg) {
           // Branch to register: Use register c as the branch target
-          // For now, we're still using only 4 registers, so we'll mask to 2 bits
-          // But we're using the correct field from the instruction
-          val targetReg = c_reg(1, 0)  // Still limiting to 4 registers
+          val targetReg = c_reg
           
           // Make sure the low 2 bits are 0 (word-aligned)
           pc := regs(targetReg) & ~(3.U(32.W))
@@ -379,9 +377,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   // Debug output for each instruction
   printf(p"PC: ${pc}, Instruction: ${Hexadecimal(instruction)}\n")
   printf(p"Format: ${format}, A: ${a}, B: ${b}, OP: ${op}, IMM: ${imm}\n")
-  printf(p"R0: ${regs(0)}, R1: ${regs(1)}, R2: ${regs(2)}, R3: ${regs(3)}, Z: ${z}\n")
   
-  // Connect outputs
+  // Debug output: register and flag content
+  printf(p"R0: ${regs(0)}, R1: ${regs(1)}, R2: ${regs(2)}, R3: ${regs(3)}, R4: ${regs(4)}, R5: ${regs(5)}, R6: ${regs(6)}, R7: ${regs(7)}, R8: ${regs(8)}, R9: ${regs(9)}, R10: ${regs(10)}, R11: ${regs(11)}, R12: ${regs(12)}, R13: ${regs(13)}, R14: ${regs(14)}, R15: ${regs(15)}, Z: ${z}\n")
+  
+  // Connect outputs (we only export R0-R3 to not overwhelm the available ports on the FPGAs)
   io.r0 := regs(0)
   io.r1 := regs(1)
   io.r2 := regs(2)
