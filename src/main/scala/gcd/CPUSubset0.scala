@@ -241,12 +241,19 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
 // Add this class after the CPUSubset0 class
 class CPUMinimalWrapper extends Module {
   val io = IO(new Bundle {
-    val led = Output(Bool())  // Only expose the LED output
+    val led = Output(Bool())  // LED output
+    val deadbeef = Output(UInt(16.W))  // Reduced to 16 bits
   })
   
   // Internal CPU with the blink program
   val cpu = Module(new CPUSubset0(CPUSubset0.blinkProgram))
   io.led := cpu.io.led
+  
+  // Use the abstracted RAM controller
+  val ramController = Module(new RAMController())
+  
+  // Connect RAM value to output
+  io.deadbeef := ramController.io.value
 }
 
 object CPUSubset0 {
