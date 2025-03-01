@@ -113,6 +113,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
     
     // Don't advance PC again during memory completion
   } .elsewhen (isBranch) {
+    // Check for halt instruction (branch self with e7ffffff)
+    when (instruction === "hE7FFFFFF".U) {
+      halted := true.B
+      printf(p"Halt instruction detected (e7ffffff), halting CPU\n")
+    } .otherwise {
     // Handle branch instructions (F3 format)
     val takeBranch = Wire(Bool())
     takeBranch := false.B
@@ -141,10 +146,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         val signedOff = Cat(Fill(8, off(23)), off)
         pc := pc + 4.U + (signedOff << 2)
       }
-    } .otherwise {
-      pc := nextPC
+      } .otherwise {
+        pc := nextPC
+      }
     }
-    
   } .elsewhen (isMemory) {
     // F2 Format: Memory access instructions
     // Calculate effective address: reg(b) + offset
