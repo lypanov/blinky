@@ -30,4 +30,11 @@ class CPUMinimalWrapper(useRealGowin: Boolean = true, programInstructions: Seq[S
   // Connect cycling RAM controller to display output
   io.deadbeef := ramController.io.value
   io.addr := ramController.io.addr
+
+  val uartTx = Module(new UartTx())
+  uartTx.io.clk := clock
+  uartTx.io.rst_n := reset.asBool
+  // uartTx.io.tx_data := cpu.io.memReadData
+  // uartTx.io.tx_data_valid := cpu.io.memRead
+  // uartTx.io.tx_data_ready := io.addr
 } 
