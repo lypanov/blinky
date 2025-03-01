@@ -225,4 +225,62 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       println("BF test completed successfully")
     }
   }
+  
+  it should "correctly handle BLT (Branch if Less Than) instruction" in {
+    // Define a specific test program for BLT instruction - only testing V=0 cases
+    val bltTestInstructions = Seq(
+      // Case 1: N=0, V=0 (not less than) - Use positive numbers
+      "40000005", // MOV R0, 5          ; Initialize R0 to 5
+      "41000003", // MOV R1, 3          ; Initialize R1 to 3
+      "00090001", // SUB R0, R0, R1     ; R0 = 5-3 = 2 (positive, N=0, V=0)
+      "D5000002", // BLT skip1, 2       ; Should NOT branch (N^V = 0^0 = 0)
+      "42000001", // MOV R2, 1          ; Will execute if branch not taken
+      
+      // Case 2: N=1, V=0 (less than) - Use negative result
+      "40000003", // MOV R0, 3          ; Initialize R0 to 3
+      "41000005", // MOV R1, 5          ; Initialize R1 to 5
+      "00090001", // SUB R0, R0, R1     ; R0 = 3-5 = -2 (negative, N=1, V=0)
+      "D5000002", // BLT skip2, 2       ; Should branch (N^V = 1^0 = 1)
+      "42000002", // MOV R2, 2          ; Will be skipped if branch taken
+      
+      "E7000000"  // B always, halt     ; Branch to self (halt)
+    )
+    
+    // Print the BLT test instructions to the trace file
+    CPUSubset0Companion.traceWriter.printf("\nBLT Test Instructions:\n")
+    for ((instr, idx) <- bltTestInstructions.zipWithIndex) {
+      CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
+    }
+    CPUSubset0Companion.traceWriter.printf("\n")
+    
+    test(new CPUSubset0(bltTestInstructions)) { dut =>
+      dut.clock.setTimeout(100) // Small timeout for this test
+      
+      // Case 1: N=0, V=0 (not less than)
+      dut.clock.step() // MOV R0, 5
+      dut.clock.step() // MOV R1, 3
+      dut.clock.step() // SUB R0, R0, R1 - Result positive, no branch expected
+      dut.clock.step() // BLT skip1, 2 - Should NOT branch
+      dut.clock.step() // MOV R2, 1 - Should execute
+      
+      // Verify R2 value after case 1
+      var r2Value = dut.io.r2.peek().litValue.toInt
+      println(s"After Case 1 (N=0, V=0): R2 = $r2Value")
+      assert(r2Value == 1, s"R2 should be 1 after Case 1, indicating BLT didn't branch when N=0,V=0")
+      
+      // Case 2: N=1, V=0 (less than)
+      dut.clock.step() // MOV R0, 3
+      dut.clock.step() // MOV R1, 5
+      dut.clock.step() // SUB R0, R0, R1 - Result negative, branch expected
+      dut.clock.step() // BLT skip2, 2 - Should branch
+      dut.clock.step() // This should skip the MOV R2, 2 instruction
+      
+      // Verify R2 value after case 2
+      r2Value = dut.io.r2.peek().litValue.toInt
+      println(s"After Case 2 (N=1, V=0): R2 = $r2Value")
+      assert(r2Value == 1, s"R2 should still be 1 after Case 2, indicating BLT did branch when N=1,V=0")
+      
+      println("BLT test completed successfully")
+    }
+  }
 }
