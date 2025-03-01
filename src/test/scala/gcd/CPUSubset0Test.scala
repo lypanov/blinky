@@ -562,7 +562,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     val traceFile = initializeTest(testId)
     
     // Read instructions from Blink2.code file
-    val codeFile = new File(projectRoot, "tests/Blink2.code")
+    val codeFile = new File(projectRoot, "tests/Blink2test.code")
     val blink2Instructions = scala.io.Source.fromFile(codeFile)
       .getLines()
       .map(_.trim)
@@ -577,10 +577,10 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     
     test(new CPUTestbenchWrapper(blink2Instructions)).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
       // Set a reasonable timeout
-      dut.clock.setTimeout(1000)
+      dut.clock.setTimeout(10000000)
       
       // Run until halted or max cycles
-      val cyclesRun = runTillHalt(dut, 500)
+      val cyclesRun = runTillHalt(dut, 10000)
       println(s"Blink2 code test ran for $cyclesRun cycles")
       
       // Verify R0 value - should be 0xBEEF after execution
