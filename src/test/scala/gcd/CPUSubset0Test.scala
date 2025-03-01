@@ -35,11 +35,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
   println(s"Using ${testInstructions.length} test instructions")
   
   // Print instruction list to trace file for analysis
-  CPUSubset0Companion.traceWriter.printf("CPU Instructions:\n")
-  for ((instr, idx) <- testInstructions.zipWithIndex) {
-    CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
-  }
-  CPUSubset0Companion.traceWriter.printf("\n")
+  printInstructionsToTrace("CPU Instructions", testInstructions)
 
   it should "execute the test program and toggle R0 after correctly completing loop iterations" in {
     test(new CPUSubset0(testInstructions)) { dut =>
@@ -154,11 +150,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     )
     
     // Print the MHI/IOR test instructions to the trace file
-    CPUSubset0Companion.traceWriter.printf("\nMHI/IOR Test Instructions:\n")
-    for ((instr, idx) <- mhiIorTestInstructions.zipWithIndex) {
-      CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
-    }
-    CPUSubset0Companion.traceWriter.printf("\n")
+    printInstructionsToTrace("MHI/IOR Test Instructions", mhiIorTestInstructions)
     
     test(new CPUSubset0(mhiIorTestInstructions)) { dut =>
       dut.clock.setTimeout(100) // Small timeout is sufficient for this test
@@ -201,11 +193,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     )
     
     // Print the BF test instructions to the trace file
-    CPUSubset0Companion.traceWriter.printf("\nBF Test Instructions:\n")
-    for ((instr, idx) <- bfTestInstructions.zipWithIndex) {
-      CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
-    }
-    CPUSubset0Companion.traceWriter.printf("\n")
+    printInstructionsToTrace("BF Test Instructions", bfTestInstructions)
     
     test(new CPUSubset0(bfTestInstructions)) { dut =>
       dut.clock.setTimeout(100) // Small timeout is sufficient for this test
@@ -247,11 +235,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     )
     
     // Print the BLT test instructions to the trace file
-    CPUSubset0Companion.traceWriter.printf("\nBLT Test Instructions:\n")
-    for ((instr, idx) <- bltTestInstructions.zipWithIndex) {
-      CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
-    }
-    CPUSubset0Companion.traceWriter.printf("\n")
+    printInstructionsToTrace("BLT Test Instructions", bltTestInstructions)
     
     test(new CPUSubset0(bltTestInstructions)) { dut =>
       dut.clock.setTimeout(100) // Small timeout for this test
@@ -301,11 +285,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     )
     
     // Print the BT test instructions to the trace file for analysis.
-    CPUSubset0Companion.traceWriter.printf("\nBT (Branch to Register) Test Instructions (with final BF):\n")
-    for ((instr, idx) <- btTestInstructions.zipWithIndex) {
-      CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
-    }
-    CPUSubset0Companion.traceWriter.printf("\n")
+    printInstructionsToTrace("BT (Branch to Register) Test Instructions (with final BF)", btTestInstructions)
     
     test(new CPUSubset0(btTestInstructions)) { dut =>
       dut.clock.setTimeout(100)
@@ -348,11 +328,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     )
     
     // Print the LDW test instructions to the trace file
-    CPUSubset0Companion.traceWriter.printf("\nLDW Test Instructions:\n")
-    for ((instr, idx) <- ldwTestInstructions.zipWithIndex) {
-      CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
-    }
-    CPUSubset0Companion.traceWriter.printf("\n")
+    printInstructionsToTrace("LDW Test Instructions", ldwTestInstructions)
     
     test(new CPUMemoryTestbench(ldwTestInstructions)).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
       // Set timeout
@@ -382,6 +358,15 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       r2Value should be (0x0000BEE2)
       r3Value should be (0x0000BEE3)
     }
+  }
+
+  // Helper method to print instructions to trace file
+  private def printInstructionsToTrace(title: String, instructions: Seq[String]): Unit = {
+    CPUSubset0Companion.traceWriter.printf(s"\n$title:\n")
+    for ((instr, idx) <- instructions.zipWithIndex) {
+      CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
+    }
+    CPUSubset0Companion.traceWriter.printf("\n")
   }
 }
 
