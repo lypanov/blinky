@@ -228,22 +228,22 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         // No memory access pending
         memoryAccessPending := false.B
       } .otherwise {
-      // Normal load behavior
-      when (!isByte) {  // LDW - Load Word
-        // Start a memory read operation
-        io.memAddr := effectiveAddr
-        io.memRead := true.B
-        
-        // Set up state for memory completion next cycle
-        memoryAccessPending := true.B
-        memoryTargetReg := regA
-        
-        // Debug output
-        printf(p"LDW: Starting load from address ${effectiveAddr} to R${regA}\n")
-      } .otherwise {
-        // LDB - Load Byte not implemented yet
+        // Normal load behavior
+        when (!isByte) {  // LDW - Load Word
+          // Start a memory read operation
+          io.memAddr := effectiveAddr
+          io.memRead := true.B
+          
+          // Set up state for memory completion next cycle
+          memoryAccessPending := true.B
+          memoryTargetReg := regA
+          
+          // Debug output
+          printf(p"LDW: Starting load from address ${effectiveAddr} to R${regA}\n")
+        } .otherwise {
+          // LDB - Load Byte not implemented yet
+        }
       }
-    }
     } .otherwise {  // Store instructions
       when (!isByte) {  // STW - Store Word
         // Start a memory write operation
