@@ -4,7 +4,7 @@ import chisel3._
 import chisel3.util._
 
 // Mock implementation of GowinSP for simulation purposes
-class MockGowinSP extends Module {
+class MockGowinSP extends Module with RAMInterface {
   val io = IO(new Bundle {
     val dout = Output(UInt(32.W))
     val clk = Input(Clock())

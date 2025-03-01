@@ -5,7 +5,7 @@ import chisel3.experimental.{Analog, attach}
 import chisel3.util._
 
 // BlackBox wrapper for Gowin Single-Port RAM
-class GowinSP extends BlackBox with HasBlackBoxInline {
+class GowinSP extends BlackBox with HasBlackBoxInline with RAMInterface {
   val io = IO(new Bundle {
     val dout = Output(UInt(32.W))
     val clk = Input(Clock())

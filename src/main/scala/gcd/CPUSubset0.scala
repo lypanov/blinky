@@ -13,6 +13,13 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
     val r3 = Output(UInt(32.W))  // Output register R3 for testing
     val halted = Output(Bool())  // Signal to indicate when the CPU has completed execution
     val led = Output(Bool())     // LED output for the Tang Nano 4K
+    
+    // Memory interface - allows the CPU to access external memory
+    val memAddr = Output(UInt(32.W))
+    val memWriteData = Output(UInt(32.W))
+    val memReadData = Input(UInt(32.W))
+    val memWrite = Output(Bool())
+    val memRead = Output(Bool())
   })
   
   // Program counter
@@ -26,6 +33,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   val c = RegInit(false.B)  // Carry
   val v = RegInit(false.B)  // Overflow
   val z = RegInit(false.B)  // Zero
+  
+  // Memory access state
+  val memoryAccessPending = RegInit(false.B)
+  val memoryTargetReg = RegInit(0.U(2.W))
   
   // Instruction memory from provided hex strings or default to empty
   val instructionMemory = if (instructionHexStrings.nonEmpty) {
@@ -52,36 +63,56 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   val imm = instruction(15, 0) // Immediate value (for F1 format)
   val off = instruction(23, 0) // Branch offset (for F3 format)
   val cond = instruction(27, 24) // Branch condition (for F3 format)
+  val memOffset = instruction(19, 0) // Memory offset (for F2 format)
   
   // Safely access registers using only the necessary bits
   val regA = a(1, 0)  // 2 bits for 4 registers
   val regB = b(1, 0)  // 2 bits for 4 registers
   val regC = c_reg(1, 0)  // 2 bits for 4 registers
   
-  // Determine if this is a branch instruction (F3 format starts with 11xx)
+  // Determine instruction type
   val isBranch = format(3, 2) === "b11".U
+  val isMemory = format(3, 2) === "b10".U
   val isF1Format = format(3, 2) === "b01".U  // For immediate operations
+  
+  // Memory access parameters
+  val isLoad = isMemory && !format(1)  // u=0 for load
+  val isStore = isMemory && format(1)  // u=1 for store
+  val isByte = isMemory && format(0)   // v=1 for byte
   
   // By default, increment PC
   val nextPC = pc + 4.U
   
   // Default signal values
-  val regWrite = Wire(Bool())
-  val regWriteAddr = Wire(UInt(2.W))  // 2 bits for 4 registers
-  val regWriteData = Wire(UInt(32.W))
-  regWrite := false.B
-  regWriteAddr := 0.U
-  regWriteData := 0.U
+  val regWrite = WireDefault(false.B)
+  val regWriteAddr = WireDefault(0.U(2.W))  // 2 bits for 4 registers
+  val regWriteData = WireDefault(0.U(32.W))
+  
+  // Memory interface signals
+  io.memAddr := 0.U
+  io.memWriteData := 0.U
+  io.memWrite := false.B
+  io.memRead := false.B
   
   // Flag to track if CPU should halt (for simulation purposes)
   val halted = RegInit(false.B)
   
-  // ALU for operation results
-  val aluOut = Wire(UInt(32.W))
-  aluOut := 0.U
-  
-  // Execution logic
-  when (isBranch) {
+  // Main execution state machine
+  when (memoryAccessPending) {
+    // We're waiting for memory read to complete
+    // Data should be available now from RAM (after 1 cycle delay)
+    regWrite := true.B
+    regWriteAddr := memoryTargetReg
+    regWriteData := io.memReadData
+    
+    // Debug output
+    printf(p"LDW: Completed load to R${memoryTargetReg}, value: ${io.memReadData}\n")
+    
+    // Clear the pending memory operation
+    memoryAccessPending := false.B
+    
+    // Don't advance PC again during memory completion
+  } .elsewhen (isBranch) {
     // Handle branch instructions (F3 format)
     val takeBranch = Wire(Bool())
     takeBranch := false.B
@@ -114,6 +145,35 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
       pc := nextPC
     }
     
+  } .elsewhen (isMemory) {
+    // F2 Format: Memory access instructions
+    // Calculate effective address: reg(b) + offset
+    // Sign-extend the offset to 32 bits
+    val signExtOffset = Cat(Fill(12, memOffset(19)), memOffset)
+    val effectiveAddr = regs(regB) + signExtOffset
+    
+    when (isLoad) {  // Load instructions
+      when (!isByte) {  // LDW - Load Word
+        // Start a memory read operation
+        io.memAddr := effectiveAddr
+        io.memRead := true.B
+        
+        // Set up state for memory completion next cycle
+        memoryAccessPending := true.B
+        memoryTargetReg := regA
+        
+        // Debug output
+        printf(p"LDW: Starting load from address ${effectiveAddr} to R${regA}\n")
+      } .otherwise {
+        // LDB - Load Byte not implemented yet
+      }
+    } .otherwise {  // Store instructions not implemented yet
+    }
+    
+    // For memory operations, we only advance PC after completing the operation
+    when (!memoryAccessPending) {
+      pc := nextPC
+    }
   } .elsewhen (isF1Format || (format(3, 2) === "b00".U)) {
     // Unified handling for immediate (F1) and register (F0) operations
     // Determine if we are using the immediate operand (F1) or register operand (F0)
@@ -144,6 +204,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         // Set flags
         z := operand === 0.U
         n := operand(31)
+        
+        // IMPORTANT: After executing the instruction, update the PC.
+        pc := nextPC
       }
       
       is(6.U) { // IOR - Bitwise OR with immediate/register operand
@@ -158,6 +221,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         
         // Debug output for IOR
         printf(p"IOR: R$regA = R$regB(${regs(regB)}) | ${operand} = $result\n")
+        
+        // IMPORTANT: After executing the instruction, update the PC.
+        pc := nextPC
       }
       
       is(7.U) { // XOR - Exclusive OR with immediate/register operand
@@ -169,6 +235,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         // Set flags
         n := result(31)
         z := result === 0.U
+        
+        // IMPORTANT: After executing the instruction, update the PC.
+        pc := nextPC
       }
       
       is(8.U) { // ADD - Add immediate/register operand
@@ -183,6 +252,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         
         // Debug output for ADD
         printf(p"ADD: R$regA = R$regB(${regs(regB)}) + ${operand} = $result\n")
+        
+        // IMPORTANT: After executing the instruction, update the PC.
+        pc := nextPC
       }
       
       is(9.U) { // SUB - Subtract immediate/register operand
@@ -201,10 +273,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         } .otherwise {
           printf(p"SUB: R$regB(${regs(regB)}) - ${imm} = $result\n")
         }
+        
+        // IMPORTANT: After executing the instruction, update the PC.
+        pc := nextPC
       }
     }
-    
-    pc := nextPC
   } .otherwise {
     // For any other format (not implemented), just increment PC
     pc := nextPC
@@ -213,6 +286,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   // Register write logic
   when (regWrite) {
     regs(regWriteAddr) := regWriteData
+    
+    // Set flags
+    n := regWriteData(31)  // Negative flag from result MSB
+    z := regWriteData === 0.U  // Zero flag if result is zero
     
     // Debug output
     printf(p"Writing ${regWriteData} to register ${regWriteAddr} (R${regWriteAddr} = ${regWriteData})\n")
@@ -236,26 +313,6 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   io.r3 := regs(3)
   io.halted := halted
   io.led := regs(0)(0)  // Connect the least significant bit of R0 to the LED
-}
-
-// Add this class after the CPUSubset0 class
-class CPUMinimalWrapper(useRealGowin: Boolean = true) extends Module {
-  val io = IO(new Bundle {
-    val led = Output(Bool())         // LED output
-    val deadbeef = Output(UInt(16.W)) // RAM value
-    val addr = Output(UInt(3.W))     // Address counter
-  })
-  
-  // Internal CPU with the blink program
-  val cpu = Module(new CPUSubset0(CPUSubset0.blinkProgram))
-  io.led := cpu.io.led
-  
-  // Use the abstracted RAM controller with appropriate implementation
-  val ramController = Module(new RAMController(useRealGowin))
-  
-  // Connect RAM value and address to outputs
-  io.deadbeef := ramController.io.value
-  io.addr := ramController.io.addr
 }
 
 object CPUSubset0 {
