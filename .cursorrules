@@ -14,7 +14,8 @@
 
 ## Architecture Notes
 - This CPU implements a subset of the 2018 RISC5 architecture (Project Oberon), it is NOT RELATED to the RISC-V architecture.
-- The ISA is described on the web here: https://gist.githubusercontent.com/swetland/7f6968e26f39db8d8dd693da85f820d1/raw/451550ed442ce5f3c98a5d68abdfb538b173c703/project-oberon-risc5-architecture.txt
+- The ISA is described in the file `docs/risc_5_arch.txt`
+- The memory map is described in the file `docs/memory_map.txt`
 - When making references to the ISA, refer to the above link, do NOT make up your own interpretations of the instructions or use our current implementation as the reference!
 - The CPU is implemented in Scala using the Chisel library
 - The CPU is designed to be synthesized into an the Tang Nano 4K FPGA

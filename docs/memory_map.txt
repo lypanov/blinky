@@ -1,0 +1,20 @@
+we have split code / data memory / address spaces for now
+
+data memory (BSRAM currently)
+-----------
+
+00 : variable memory begins here, pre-initialized with DEADBEEFs until ...
+20 : stack should begin here probably, but no logic for overflowing etc just yet
+40 : stack begins pointing here, but grows upwards ^^^
+
+instruction memory
+------------------
+
+00 : current program begins
+40 : PC begins here, setup instructions
+..   (setup instructions continue)
+??   halt instruction (*1)
+
+notes: *1: after completing setup CPU will jump to 00, on completion of user code
+             if the user code does not halt and instead returns, we'll return
+             back to the halt instruction
