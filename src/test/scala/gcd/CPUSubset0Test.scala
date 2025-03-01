@@ -197,7 +197,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       "40000001", // MOV R0, 1          ; Initialize R0 to 1
       "FF000001", // BF always, skip, 1  ; This branch should NEVER be taken
       "40000002", // MOV R0, 2          ; R0 should become 2 (BF doesn't branch)
-      "E7000000"  // B always, halt     ; Branch to self (halt)
+      "E7000000"  // B always, halt      ; Branch to self (halt)
     )
     
     // Print the BF test instructions to the trace file
@@ -283,4 +283,52 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       println("BLT test completed successfully")
     }
   }
+
+  it should "correctly execute branch to register (BT) instruction and skip forbidden instruction with BF" in {
+    // Test program explanation:
+    // [0] MOV R0, 0x10     : Set R0 to 0x10 (i.e. branch target address in bytes, 0x10/4 = index 4).
+    // [1] MOV R1, 0xBEEF   : Set R1 to 0xBEEF, which is the value we want to persist.
+    // [2] BT: Branch to register with off==0; it takes the branch target from R0 (regC == 0).
+    // [3] MOV R1, 0xDEAD   : This forbidden instruction should be skipped due to the branch.
+    // [4] BF: Branch false instruction; since BF never takes the branch, it simply advances the PC.
+    // Result: R0 remains 0x10 and R1 remains 0xBEEF.
+    val btTestInstructions = Seq(
+      "40000010", // MOV R0, 0x10: Write 0x10 into R0 (sets branch target address).
+      "4100BEEF", // MOV R1, 0xBEEF: Write 0xBEEF into R1.
+      "E7000000", // BT: Branch always (cond=7) with off==0; branches to address in register specified by regC (R0).
+      "4100DEAD", // MOV R1, 0xDEAD: This instruction should be skipped if BT transfers control.
+      "FF000001"  // BF: Branch false; since condition is always false, no branch occurs, PC increments normally.
+    )
+    
+    // Print the BT test instructions to the trace file for analysis.
+    CPUSubset0Companion.traceWriter.printf("\nBT (Branch to Register) Test Instructions (with final BF):\n")
+    for ((instr, idx) <- btTestInstructions.zipWithIndex) {
+      CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
+    }
+    CPUSubset0Companion.traceWriter.printf("\n")
+    
+    test(new CPUSubset0(btTestInstructions)) { dut =>
+      dut.clock.setTimeout(100)
+      
+      // Run the simulation until the CPU signals it is halted or until a maximum cycle count.
+      var cycle = 0
+      val MAX_CYCLES = 100
+      while (!dut.io.halted.peek().litToBoolean && cycle < MAX_CYCLES) {
+        dut.clock.step()
+        cycle += 1
+      }
+      
+      // Check final register values.
+      val finalR0 = dut.io.r0.peek().litValue.toInt
+      val finalR1 = dut.io.r1.peek().litValue.toInt
+      println(s"BT Test Completed: R0 = 0x${finalR0.toHexString.toUpperCase()}, R1 = 0x${finalR1.toHexString.toUpperCase()}")
+      
+      // Verify that the branch took place:
+      // R0 must still hold 0x10 and R1 remains 0xBEEF,
+      // confirming that the forbidden instruction (setting R1 to 0xDEAD) was skipped.
+      finalR0 should be (0x10)
+      finalR1 should be (0xBEEF)
+    }
+  }
+
 }
