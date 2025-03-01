@@ -8,6 +8,8 @@ class CPUMinimalWrapper(useRealGowin: Boolean = true, programInstructions: Seq[S
     val led = Output(Bool())         // LED output
     val deadbeef = Output(UInt(16.W)) // RAM value
     val addr = Output(UInt(3.W))     // Address counter
+    val uart_rx = Input(Bool())      // UART receive pin
+    val uart_tx = Output(Bool())     // UART transmit pin
   })
   
   // Internal CPU with the provided program instructions
@@ -31,10 +33,19 @@ class CPUMinimalWrapper(useRealGowin: Boolean = true, programInstructions: Seq[S
   io.deadbeef := ramController.io.value
   io.addr := ramController.io.addr
 
+  // Create and properly initialize the UART transmitter
+  /*
   val uartTx = Module(new UartTx())
   uartTx.io.clk := clock
   uartTx.io.rst_n := reset.asBool
-  // uartTx.io.tx_data := cpu.io.memReadData
-  // uartTx.io.tx_data_valid := cpu.io.memRead
-  // uartTx.io.tx_data_ready := io.addr
+  uartTx.io.tx_data := cpu.io.memWriteData(7, 0)  // Use bottom 8 bits of CPU write data
+  uartTx.io.tx_data_valid := cpu.io.memWrite & (cpu.io.memAddr === "h1000".U)  // Map to memory address 0x1000
+  io.uart_tx := uartTx.io.tx_pin
+  */
+
+  val uartTest = Module(new UartTest())
+  uartTest.io.clk := clock
+  uartTest.io.rst_n := reset.asBool
+  uartTest.io.uart_rx := io.uart_rx
+  uartTest.io.uart_tx := io.uart_tx
 } 
