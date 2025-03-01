@@ -33,6 +33,10 @@ for mod_file in *.Mod; do
     module_name=$(grep -m 1 "MODULE" "$mod_file" | sed -E 's/MODULE\s+([^;]+);.*/\1/')
     
     echo "Compiling and disassembling $module_name"
+
+    # Clear up the stale .rsc file and .smb file
+    rm -f "$module_name.rsc"
+    rm -f "$module_name.smb"
     
     # Compile the module using norebo
     "$HOME_DIR/ob/project-norebo/norebo" ORP.Compile "$mod_file"
@@ -40,7 +44,7 @@ for mod_file in *.Mod; do
     # Check if compilation was successful by looking for .rsc file
     if [ ! -f "$module_name.rsc" ]; then
         echo "Error: Compilation failed for $mod_file"
-        continue
+        exit 1
     fi
     
     # Parse the .rsc file
