@@ -3,7 +3,6 @@ package gcd
 import chisel3._
 import chisel3.util._
 
-// UART Transmitter Module
 class UartTx(val CLK_FRE: Int = 50, val BAUD_RATE: Int = 115200) extends Module {
   val io = IO(new Bundle {
     val clk = Input(Clock())
@@ -224,94 +223,4 @@ class UartRx(val CLK_FRE: Int = 50, val BAUD_RATE: Int = 115200) extends Module 
 
   io.rx_data := rx_data_reg
   io.rx_data_valid := rx_data_valid_reg
-}
-
-// UART Test Module
-class UartTest extends Module {
-  val io = IO(new Bundle {
-    val clk = Input(Clock())
-    val rst_n = Input(Bool())
-    val uart_rx = Input(Bool())
-    val uart_tx = Output(Bool())
-  })
-
-  val CLK_FRE = 27
-  val UART_FRE = 115200
-  
-  // State enum as UInt values
-  val idle = 0.U(2.W)
-  val send = 1.U(2.W)
-  val wait_state = 2.U(2.W)
-  
-  val ENG_NUM = 9
-  val CHE_NUM = 3
-  val DATA_NUM = CHE_NUM * 2 + ENG_NUM
-
-  // Registers
-  val tx_data = RegInit(0.U(8.W))
-  val tx_data_valid = RegInit(false.B)
-  val tx_cnt = RegInit(0.U(4.W))
-  val wait_cnt = RegInit(0.U(32.W))
-  val state = RegInit(idle)
-
-  // UART instances
-  val uartRx = Module(new UartRx(CLK_FRE, UART_FRE))
-  val uartTx = Module(new UartTx(CLK_FRE, UART_FRE))
-
-  // Connections
-  uartRx.io.clk := io.clk
-  uartRx.io.rst_n := io.rst_n
-  uartRx.io.rx_pin := io.uart_rx
-  uartRx.io.rx_data_ready := true.B
-
-  uartTx.io.clk := io.clk
-  uartTx.io.rst_n := io.rst_n
-  uartTx.io.tx_data := tx_data
-  uartTx.io.tx_data_valid := tx_data_valid
-  io.uart_tx := uartTx.io.tx_pin
-
-  // correctly convert the string into a form suitable for the fpga
-  val send_data = "你好  GOWIN".getBytes("UTF-8") ++ Array[Byte](0x0d, 0x0a)
-  val tx_str = VecInit(send_data.toIndexedSeq.map(b => (b & 0xFF).U(8.W)))
-  
-  // State Machine
-  when(!io.rst_n) {
-    wait_cnt := 0.U
-    tx_data := 0.U
-    state := idle
-    tx_cnt := 0.U
-    tx_data_valid := false.B
-  }.otherwise {
-    switch(state) {
-      is(idle) {
-        state := send
-      }
-      is(send) {
-        wait_cnt := 0.U
-        tx_data := tx_str(tx_cnt)
-
-        when(tx_data_valid && uartTx.io.tx_data_ready && tx_cnt < (DATA_NUM - 1).U) {
-          tx_cnt := tx_cnt + 1.U
-        }.elsewhen(tx_data_valid && uartTx.io.tx_data_ready) {
-          tx_cnt := 0.U
-          tx_data_valid := false.B
-          state := wait_state
-        }.elsewhen(!tx_data_valid) {
-          tx_data_valid := true.B
-        }
-      }
-      is(wait_state) {
-        wait_cnt := wait_cnt + 1.U
-
-        when(uartRx.io.rx_data_valid) {
-          tx_data_valid := true.B
-          tx_data := uartRx.io.rx_data
-        }.elsewhen(tx_data_valid && uartTx.io.tx_data_ready) {
-          tx_data_valid := false.B
-        }.elsewhen(wait_cnt >= (CLK_FRE * 1000000).U) {
-          state := send
-        }
-      }
-    }
-  }
 }
