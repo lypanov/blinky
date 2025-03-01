@@ -118,34 +118,34 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
       halted := true.B
       printf(p"Halt instruction detected (e7ffffff), halting CPU\n")
     } .otherwise {
-    // Handle branch instructions (F3 format)
-    val takeBranch = Wire(Bool())
-    takeBranch := false.B
-    
-    // Decode branch condition
-    switch (cond) {
-      is("b0001".U) { takeBranch := z }                   // EQ
-      is("b1001".U) { takeBranch := !z }                  // NE
-      is("b0101".U) { takeBranch := n ^ v }               // LT (Less Than)
-      is("b0111".U) { takeBranch := true.B }              // Always
-      is("b1111".U) { takeBranch := false.B }             // Never (BF)
-    }
-    
-    when (takeBranch) {
-      // Check if this is a branch to register (off == 0) or branch with offset
-      when (off === 0.U) {
-        // Branch to register: Use register c as the branch target
-        // Make sure the low 2 bits are 0 (word-aligned)
-        pc := regs(regC) & ~(3.U(32.W))
-        
-        // Debug output for branch to register
-        printf(p"BT R$regC: Branching to address ${regs(regC) & ~(3.U(32.W))}\n")
-      } .otherwise {
-        // Calculate branch target address: PC + 4 + off * 4
-        // For a 24-bit signed offset, extend sign to 32 bits
-        val signedOff = Cat(Fill(8, off(23)), off)
-        pc := pc + 4.U + (signedOff << 2)
+      // Handle branch instructions (F3 format)
+      val takeBranch = Wire(Bool())
+      takeBranch := false.B
+      
+      // Decode branch condition
+      switch (cond) {
+        is("b0001".U) { takeBranch := z }                   // EQ
+        is("b1001".U) { takeBranch := !z }                  // NE
+        is("b0101".U) { takeBranch := n ^ v }               // LT (Less Than)
+        is("b0111".U) { takeBranch := true.B }              // Always
+        is("b1111".U) { takeBranch := false.B }             // Never (BF)
       }
+      
+      when (takeBranch) {
+        // Check if this is a branch to register (off == 0) or branch with offset
+        when (off === 0.U) {
+          // Branch to register: Use register c as the branch target
+          // Make sure the low 2 bits are 0 (word-aligned)
+          pc := regs(regC) & ~(3.U(32.W))
+          
+          // Debug output for branch to register
+          printf(p"BT R$regC: Branching to address ${regs(regC) & ~(3.U(32.W))}\n")
+        } .otherwise {
+          // Calculate branch target address: PC + 4 + off * 4
+          // For a 24-bit signed offset, extend sign to 32 bits
+          val signedOff = Cat(Fill(8, off(23)), off)
+          pc := pc + 4.U + (signedOff << 2)
+        }
       } .otherwise {
         pc := nextPC
       }
