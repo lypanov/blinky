@@ -190,4 +190,39 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       println("MHI/IOR test completed successfully")
     }
   }
+  
+  it should "correctly handle BF (Branch False/Never) instruction" in {
+    // Define a specific test program for BF instruction
+    val bfTestInstructions = Seq(
+      "40000001", // MOV R0, 1          ; Initialize R0 to 1
+      "FF000001", // BF always, skip, 1  ; This branch should NEVER be taken
+      "40000002", // MOV R0, 2          ; R0 should become 2 (BF doesn't branch)
+      "E7000000"  // B always, halt     ; Branch to self (halt)
+    )
+    
+    // Print the BF test instructions to the trace file
+    CPUSubset0Companion.traceWriter.printf("\nBF Test Instructions:\n")
+    for ((instr, idx) <- bfTestInstructions.zipWithIndex) {
+      CPUSubset0Companion.traceWriter.printf(s"INSTR_MEM[$idx] = 0x$instr\n")
+    }
+    CPUSubset0Companion.traceWriter.printf("\n")
+    
+    test(new CPUSubset0(bfTestInstructions)) { dut =>
+      dut.clock.setTimeout(100) // Small timeout is sufficient for this test
+      
+      // Step through each instruction
+      dut.clock.step() // Execute MOV R0, 1
+      dut.clock.step() // Execute BF always, skip, 1 (should not branch)
+      dut.clock.step() // Execute MOV R0, 2
+      
+      // Verify R0 value - if BF worked correctly, R0 should be 2
+      val r0Value = dut.io.r0.peek().litValue.toInt
+      println(s"After BF test, R0 = $r0Value")
+      
+      // Check the expected value - should be 2 if BF correctly didn't branch
+      assert(r0Value == 2, s"R0 value $r0Value should be 2, indicating BF didn't branch")
+      
+      println("BF test completed successfully")
+    }
+  }
 }

@@ -92,6 +92,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
       is("b0001".U) { takeBranch := z }                   // EQ
       is("b1001".U) { takeBranch := !z }                  // NE
       is("b0111".U) { takeBranch := true.B }              // Always
+      is("b1111".U) { takeBranch := false.B }             // Never (BF)
     }
     
     when (takeBranch) {
