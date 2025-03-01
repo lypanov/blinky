@@ -15,6 +15,12 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
     val r3 = Output(UInt(32.W))
     val cpuHalted = Output(Bool())
     val pc = Output(UInt(32.W))  // Expose the program counter
+    
+    // Expose memory interface signals for monitoring
+    val memAddr = Output(UInt(32.W))
+    val memWriteData = Output(UInt(32.W))
+    val memWrite = Output(Bool())
+    val memRead = Output(Bool())
   })
   
   // Create CPU with the provided instructions
@@ -37,4 +43,10 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
   io.r3 := cpu.io.r3
   io.cpuHalted := cpu.io.halted
   io.pc := cpu.io.pc  // Connect PC to the output
+  
+  // Connect memory interface signals to outputs for monitoring
+  io.memAddr := cpu.io.memAddr
+  io.memWriteData := cpu.io.memWriteData
+  io.memWrite := cpu.io.memWrite
+  io.memRead := cpu.io.memRead
 } 
