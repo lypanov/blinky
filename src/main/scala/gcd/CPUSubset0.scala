@@ -61,7 +61,6 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   // Determine if this is a branch instruction (F3 format starts with 11xx)
   val isBranch = format(3, 2) === "b11".U
   val isF1Format = format(3, 2) === "b01".U  // For immediate operations
-  val isLink = format(0)
   
   // By default, increment PC
   val nextPC = pc + 4.U
@@ -115,34 +114,40 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
       pc := nextPC
     }
     
-  } .elsewhen (isF1Format) {
-    // Handle immediate instructions (F1 format)
+  } .elsewhen (isF1Format || (format(3, 2) === "b00".U)) {
+    // Unified handling for immediate (F1) and register (F0) operations
+    // Determine if we are using the immediate operand (F1) or register operand (F0)
+    val useImmediate = isF1Format
+    // Select the second operand: immediate if F1, else register from 'c' if F0.
+    val operand = Mux(useImmediate, imm, regs(regC))
     
-    switch (op) {
-      is(0.U) { // MOV - Move immediate value to register
-        val immediate = imm
-        regWrite := true.B
-        regWriteAddr := regA
-        regWriteData := immediate
-        
-        // Set flags
-        z := immediate === 0.U
-        n := immediate(15)
-        
-        // Special case for MHI (Move High Immediate) which uses format=0x7
-        // According to RISC5 ISA, MHI is a MOV (op=0) with format=0x7
-        when (format === "b0110".U) {
-          // MHI: Move 16-bit immediate to upper half of register
+    switch(op) {
+      is(0.U) { // MOV - Move immediate value to register / MHI special-case
+        when(useImmediate && (format === "b0110".U)) {
+          // Special case for MHI (Move High Immediate)
           // Encoding: 0111 a b 0000 imm
+          regWrite := true.B
+          regWriteAddr := regA
           regWriteData := imm << 16
           
           // Debug output for MHI
           printf(p"MHI: R$regA = ${imm} << 16 = ${imm << 16}\n")
+        } .otherwise {
+          regWrite := true.B
+          regWriteAddr := regA
+          regWriteData := operand
+          
+          // Debug output for MOV
+          printf(p"MOV: R$regA = ${operand}\n")
         }
+        
+        // Set flags
+        z := operand === 0.U
+        n := operand(31)
       }
       
-      is(6.U) { // IOR - Bitwise OR with immediate
-        val result = regs(regB) | imm
+      is(6.U) { // IOR - Bitwise OR with immediate/register operand
+        val result = regs(regB) | operand
         regWrite := true.B
         regWriteAddr := regA
         regWriteData := result
@@ -152,22 +157,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         z := result === 0.U
         
         // Debug output for IOR
-        printf(p"IOR: R$regA = R$regB(${regs(regB)}) | ${imm} = $result\n")
+        printf(p"IOR: R$regA = R$regB(${regs(regB)}) | ${operand} = $result\n")
       }
       
-      is(7.U) { // XOR - Exclusive OR
-        val result = regs(regB) ^ imm
-        regWrite := true.B
-        regWriteAddr := regA
-        regWriteData := result
-        
-        // Set flags
-        n := result(31)
-        z := result === 0.U
-      }
-      
-      is(8.U) { // ADD - Add
-        val result = regs(regB) + imm
+      is(7.U) { // XOR - Exclusive OR with immediate/register operand
+        val result = regs(regB) ^ operand
         regWrite := true.B
         regWriteAddr := regA
         regWriteData := result
@@ -177,8 +171,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         z := result === 0.U
       }
       
-      is(9.U) { // SUB - Subtract
-        val result = regs(regB) - imm
+      is(8.U) { // ADD - Add immediate/register operand
+        val result = regs(regB) + operand
         regWrite := true.B
         regWriteAddr := regA
         regWriteData := result
@@ -186,15 +180,13 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         // Set flags
         n := result(31)
         z := result === 0.U
+        
+        // Debug output for ADD
+        printf(p"ADD: R$regA = R$regB(${regs(regB)}) + ${operand} = $result\n")
       }
-    }
-    
-    pc := nextPC
-  } .elsewhen (format(3, 2) === "b00".U) {
-    // Handle register operations (F0 format)
-    switch (op) {
-      is(9.U) { // SUB - Subtract register
-        val result = regs(regB) - regs(regC)
+      
+      is(9.U) { // SUB - Subtract immediate/register operand
+        val result = regs(regB) - operand
         regWrite := true.B
         regWriteAddr := regA
         regWriteData := result
@@ -203,8 +195,12 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         n := result(31)
         z := result === 0.U
         
-        // Debug output specific to register operations
-        printf(p"F0 SUB: R$regB(${regs(regB)}) - R$regC(${regs(regC)}) = $result, Z=$z\n")
+        // Debug output: differentiate between register (F0) and immediate (F1) SUB
+        when(!useImmediate) {
+          printf(p"F0 SUB: R$regB(${regs(regB)}) - R$regC(${regs(regC)}) = $result, Z=$z\n")
+        } .otherwise {
+          printf(p"SUB: R$regB(${regs(regB)}) - ${imm} = $result\n")
+        }
       }
     }
     
