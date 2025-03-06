@@ -40,5 +40,6 @@ class CPUMinimalWrapper(useRealGowin: Boolean = true, programInstructions: Seq[S
   logger.io.uart_rx := io.uart_rx
   logger.io.messageCode := cpu.io.messageCode
   logger.io.trigger := cpu.io.trigger
+  logger.io.logByte := cpu.io.logByte
   io.uart_tx := logger.io.uart_tx
 } 

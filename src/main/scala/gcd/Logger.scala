@@ -14,15 +14,19 @@ case class LogMessage(code: UInt, text: String)
 object Logger {
   // Centralized list of available messages.
   val messages: Seq[LogMessage] = Seq(
-    LogMessage(0.U(4.W), "led toggled"),
-    LogMessage(1.U(4.W), "你好  GOWIN3")
+    LogMessage(0.U(4.W), "led toggle: "),
+    LogMessage(1.U(4.W), "GOWIN 1234567"),
   )
 
   // Extracting named constants from our messages list.
   object Codes {
-    val LedToggled = messages(0).code
+    val LedToggle = messages(0).code  // Used for LED events (with an attached value)
     val PeriodicMessage = messages(1).code
   }
+
+  val maxMessageLength: Int = messages.map { msg =>
+    msg.text.getBytes("UTF-8").length + 2  // +2 for CR+LF
+  }.max
 
   /** Helper function to convert a message string into a vector of UInt bytes.
     * It appends a carriage return and newline.
@@ -31,7 +35,7 @@ object Logger {
     * @return a tuple of (vector of UInt, length as an Int)
     */
   def createMessage(str: String): (Vec[UInt], UInt) = {
-    val bytesWithNewline = (str.getBytes("UTF-8") ++ Array[Byte](0x0d, 0x0a))
+    val bytesWithNewline = (Array[Byte](0x0d, 0x0a) ++ str.getBytes("UTF-8"))
     val vec = VecInit(bytesWithNewline.iterator.map(b => (b & 0xFF).U(8.W)).toSeq)
     val len = bytesWithNewline.length.U
     (vec, len)
@@ -44,14 +48,17 @@ object Logger {
     *
     * @param io the IO bundle containing a "trigger" and "messageCode" signal.
     * @param messageCode the log message code from Logger.Codes.
+    * @param value the extra 8-bit value to be sent with the message
     */
-  def log(io: Bundle, messageCode: UInt): Unit = {
-    // Retrieve the "trigger" and "messageCode" sub-elements from the IO Bundle.
+  def log(io: Bundle, messageCode: UInt, value: UInt = 0.U(8.W)): Unit = {
+    // Retrieve the "trigger", "messageCode", and our new "logByte" signals from the IO Bundle.
     val trigger = io.elements.get("trigger").get.asInstanceOf[Bool]
     val msgCode = io.elements.get("messageCode").get.asInstanceOf[UInt]
+    val logByte = io.elements.get("logByte").get.asInstanceOf[UInt]
 
     trigger := true.B
     msgCode := messageCode
+    logByte := value
   }
 }
 
@@ -64,6 +71,7 @@ class Logger extends Module {
     // enqueues a LogMessage (or its code) based on a single consolidated signal.
     val messageCode = Input(UInt(4.W))
     val trigger = Input(Bool())
+    val logByte = Input(UInt(8.W))
     val uart_rx = Input(Bool())
     val uart_tx = Output(Bool())
   })
@@ -71,8 +79,9 @@ class Logger extends Module {
   val CLK_FRE = 27
   val UART_FRE = 115200
 
-  val sIdle = 0.U(2.W)
+  val sIdle    = 0.U(2.W)
   val sSending = 1.U(2.W)
+  val sAppending = 2.U(2.W)  // New state for appending the hex log byte
 
   val uartRx = Module(new UartRx(CLK_FRE, UART_FRE))
   val uartTx = Module(new UartTx(CLK_FRE, UART_FRE))
@@ -86,18 +95,27 @@ class Logger extends Module {
   uartTx.io.rst_n := io.rst_n
   io.uart_tx := uartTx.io.tx_pin
 
-  // FIFO for message codes. We enqueue log messages using io.trigger and messageCode.
-  val messageQueue = Module(new Queue(UInt(4.W), 16))
+  // Define a Bundle for queue entries that includes both messageCode and logByte
+  class LogEntry extends Bundle {
+    val messageCode = UInt(4.W)
+    val logByte = UInt(8.W)
+  }
+
+  // FIFO for message entries. We enqueue log messages using io.trigger, messageCode, and logByte.
+  val messageQueue = Module(new Queue(new LogEntry, 16))
   messageQueue.io.enq.valid := io.trigger
-  messageQueue.io.enq.bits := io.messageCode
+  messageQueue.io.enq.bits.messageCode := io.messageCode
+  messageQueue.io.enq.bits.logByte := io.logByte  // Capture logByte at enqueue time
   messageQueue.io.deq.ready := false.B
 
   // Registers for controlling UART transmission.
+  val logByteReg = RegInit(0.U(8.W)) // Register to hold the queued logByte value
   val state = RegInit(sIdle)
   val tx_data = RegInit(0.U(8.W))
   val tx_data_valid = RegInit(false.B)
   val tx_cnt = RegInit(0.U(4.W))
   val currentMessageCode = RegInit(0.U(4.W))
+  val appendCnt = RegInit(0.U(3.W)) // Counter for appended characters (we need 5 bytes)
 
   // Periodic timer.
   val periodicTimer = RegInit(0.U(32.W))
@@ -107,7 +125,8 @@ class Logger extends Module {
     periodicTimer := 0.U
     when(messageQueue.io.enq.ready) {
       messageQueue.io.enq.valid := true.B
-      messageQueue.io.enq.bits := Logger.Codes.PeriodicMessage
+      messageQueue.io.enq.bits.messageCode := Logger.Codes.PeriodicMessage
+      messageQueue.io.enq.bits.logByte := 0.U  // Default value for periodic messages
     }
   }
 
@@ -122,7 +141,8 @@ class Logger extends Module {
     switch(state) {
       is(sIdle) {
         when(messageQueue.io.deq.valid) {
-          currentMessageCode := messageQueue.io.deq.bits
+          currentMessageCode := messageQueue.io.deq.bits.messageCode
+          logByteReg := messageQueue.io.deq.bits.logByte  // Use the logByte from the queue
           messageQueue.io.deq.ready := true.B
           state := sSending
           tx_cnt := 0.U
@@ -132,9 +152,9 @@ class Logger extends Module {
         }
       }
       is(sSending) {
-        val msgVec = Wire(Vec(16, UInt(8.W)))
+        val msgVec = Wire(Vec(Logger.maxMessageLength, UInt(8.W)))
         val msgLen = WireDefault(0.U(5.W))
-        for (i <- 0 until 16) { msgVec(i) := 0.U }
+        for (i <- 0 until Logger.maxMessageLength) { msgVec(i) := 0.U }
         
         val messageData = Logger.messages.map { msg =>
           val (vec, len) = Logger.createMessage(msg.text)
@@ -152,12 +172,49 @@ class Logger extends Module {
         when(tx_data_valid && uartTx.io.tx_data_ready) {
           when(tx_cnt < (msgLen - 1.U)) {
             tx_cnt := tx_cnt + 1.U
-          }.otherwise {
-            tx_cnt := 0.U
+          } .otherwise {
+            // If the message requires an extra byte (e.g. LED toggle), transition to sAppending
+            when(currentMessageCode === Logger.Codes.LedToggle) {
+              state := sAppending
+              appendCnt := 0.U
+            } .otherwise {
+              tx_cnt := 0.U
+              tx_data_valid := false.B
+              state := sIdle
+            }
+          }
+        } .otherwise {
+          tx_data_valid := true.B
+        }
+      }
+      is(sAppending) {
+        // Create a vector for the appended output sequence (5 characters):
+        // [0] = space, [1] = '0', [2] = 'x', [3] = high nibble, [4] = low nibble
+        val appendedHex = Wire(Vec(5, UInt(8.W)))
+        appendedHex(0) := "h20".U  // space
+        appendedHex(1) := "h30".U  // '0'
+        appendedHex(2) := "h78".U  // 'x'
+        
+        // Extract high and low nibbles from the captured log byte
+        val highNibble = logByteReg(7, 4)
+        val lowNibble = logByteReg(3, 0)
+        
+        // Convert each nibble to its ASCII hex digit
+        appendedHex(3) := Mux(highNibble < 10.U, highNibble + "h30".U, highNibble + "h37".U)
+        appendedHex(4) := Mux(lowNibble < 10.U, lowNibble + "h30".U, lowNibble + "h37".U)  // Fixed typo here
+        
+        // Send the appended characters one by one
+        tx_data := appendedHex(appendCnt)
+        when(tx_data_valid && uartTx.io.tx_data_ready) {
+          when(appendCnt < 4.U) {
+            appendCnt := appendCnt + 1.U
+          } .otherwise {
+            // Finished appending extra characters; return to idle
+            appendCnt := 0.U
             tx_data_valid := false.B
             state := sIdle
           }
-        }.otherwise {
+        } .otherwise {
           tx_data_valid := true.B
         }
       }
