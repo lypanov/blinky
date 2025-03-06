@@ -10,8 +10,9 @@
   - This generates trace files at:
     - CPU raw trace: `trace/cpu_trace.txt`
     - Annotated trace: `trace/annotated_trace.txt`
-- If you want to build for the FPGA itself then run `bash build.sh`, on successful completion kindly ask the user to perform the "Gowin-fu"
+- If you want to build for the FPGA itself then run `./build.sh`, on successful completion kindly ask the user to perform the "Gowin-fu"
 - Don't try running mill directly for subsetting the test cases either, simply run the tests as mentioned in the first command so we get full trace output.
+- Whenever you want to verify the code you just wrote compiles, please make a call to `./build.sh` in the project directory.
 
 ## Important Notes
 - Ensure that when adding new instructions the `tools/trace_analyzer.py` script is updated accordingly or traces will stop making any sense.
