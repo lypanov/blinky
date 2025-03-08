@@ -24,3 +24,4 @@
 - When making references to the ISA, refer to the above link, do NOT make up your own interpretations of the instructions or use our current implementation as the reference!
 - The CPU is designed to be synthesized into an the Tang Nano 4K FPGA
 - Tests are written in Scala using the ChiselTest library, a good example test is `src/test/scala/gcd/CPUSubset0Spec.scala`
+- The RSC format can be understood using the documenttion in `docs/rsc_format_specification.txt`

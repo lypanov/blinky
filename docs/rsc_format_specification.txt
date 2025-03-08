@@ -1,0 +1,259 @@
+# Specification for the Oberon .rsc Format
+
+The Oberon `.rsc` format is a binary file format used to store compiled Oberon
+modules for the RISC architecture. It encapsulates all necessary components of a
+module, including metadata, compiled code, and data structures, to enable
+linking and loading by the Oberon runtime system. All multi-byte values (e.g.,
+integers) are stored in **little-endian byte order**—that is, the least
+significant byte is written first, followed by bytes of increasing significance.
+This ordering is implemented by routines such as `WriteInt` in the ORG module.
+The sections are written and read in the following order:
+
+### 1. Module Name
+- **Type**: Null-terminated string
+- **Description**: The name of the module (e.g., "MyModule").
+- **Format**: A sequence of ASCII characters terminated by a null byte (0x00).
+- **Purpose**: Identifies the module for loading and linking.
+
+### 2. Key
+- **Type**: 4-byte integer
+- **Description**: A unique key associated with the module, used to verify
+        compatibility during imports.
+- **Purpose**: Ensures that imported modules match the expected versions.
+
+### 3. Version
+- **Type**: 1-byte value
+- **Description**: Indicates the version of the `.rsc` file format.
+- **Value**: Typically 0x01 (versionkey = 1X in the `Modules` module).
+- **Purpose**: Allows the loader to reject incompatible file versions.
+
+### 4. Size
+- **Type**: 4-byte integer
+- **Description**: The total size of the module in memory, including the module descriptor, type descriptors, variables, strings, code, and additional tables.
+- **Purpose**: Informs the loader of the memory footprint of the module.
+
+### 5. Imports
+- **Type**: Sequence of import entries
+- **Format**: 
+  - Each entry consists of:
+    - **Import Name**: Null-terminated string (name of the imported module).
+    - **Import Key**: 4-byte integer (key of the imported module).
+  - Terminated by an empty string (a single null byte, 0x00).
+- **Purpose**: Lists all modules this module depends on, enabling the loader to recursively load dependencies and perform key matching.
+
+### 6. Type Descriptors
+- **Type**: Variable-length block
+- **Format**:
+  - **Size**: 4-byte integer (number of bytes for type descriptors, typically `tdx * 4`).
+  - **Data**: Sequence of 4-byte integers (`tdx` integers, where each integer is 4 bytes).
+- **Description**: Contains type descriptor data for records and pointers, including size information and extension tables.
+- **Purpose**: Supports runtime type checking and memory management.
+
+### 7. Variable Space Size
+- **Type**: 4-byte integer
+- **Description**: The number of bytes allocated for the module's variables, to be initialized to zero in memory.
+- **Value**: Computed as `varsize - tdx * 4`, where `varsize` is the total data size including type descriptors.
+- **Note**: The actual variable data (zeros) is not stored in the file; only the size is specified, and the loader allocates and zeros this space.
+- **Purpose**: Reserves space for global variables in the module.
+
+### 8. Strings
+- **Type**: Variable-length block
+- **Format**:
+  - **Size**: 4-byte integer (number of bytes, `strx`).
+  - **Data**: Sequence of `strx` bytes (character data).
+- **Description**: A contiguous array of characters representing string constants used in the module.
+- **Purpose**: Stores string literals for use by the program.
+
+### 9. Code
+- **Type**: Variable-length block
+- **Format**:
+  - **Size**: 4-byte integer (number of instructions, `pc`).
+  - **Data**: Sequence of `pc` 4-byte integers (machine code instructions).
+- **Description**: The compiled RISC machine code for the module.
+- **Purpose**: Contains the executable instructions to be run by the RISC processor.
+
+### 10. Commands
+- **Type**: Sequence of command entries
+- **Format**:
+  - Each entry consists of:
+    - **Command Name**: Null-terminated string (name of the command).
+    - **Address**: 4-byte integer (offset from the start of the code section).
+  - Terminated by an empty string (a single null byte, 0x00).
+  - Padded with null bytes to align each entry to a 4-byte boundary.
+- **Purpose**: Defines exported procedures that can be invoked externally (e.g., by the Oberon system).
+
+### 11. Entries
+- **Type**: Variable-length block
+- **Format**:
+  - **Size**: 4-byte integer (number of entries, `nofent`).
+  - **Data**: Sequence of `nofent` 4-byte integers (addresses).
+- **Description**: Offsets within the code section for exported entities (procedures, variables, types).
+- **Purpose**: Provides entry points for linking and execution.
+
+### 12. Pointer References
+- **Type**: Sequence of 4-byte integers
+- **Format**:
+  - A list of 4-byte integers representing offsets of pointer variables within the data section.
+  - Terminated by a 4-byte integer with value `-1` (0xFFFFFFFF).
+- **Purpose**: Identifies locations of pointers for garbage collection and initialization.
+
+### 13. Fixup Origins
+- **Type**: Three 4-byte integers
+- **Format**:
+  - `fixorgP`: Starting point for procedure call fixup chain.
+  - `fixorgD`: Starting point for data access fixup chain.
+  - `fixorgT`: Starting point for type descriptor fixup chain.
+- **Description**: Offsets within the code section where fixup chains begin, used to adjust addresses during loading.
+- **Purpose**: Facilitates dynamic linking by providing locations that need address resolution.
+
+### 14. Entry Point
+- **Type**: 4-byte integer
+- **Description**: The offset within the code section where module initialization begins (typically the main entry point).
+- **Purpose**: Specifies where execution starts when the module is loaded.
+
+### 15. Marker
+- **Type**: 1-byte value
+- **Value**: "O" (ASCII 0x4F).
+- **Purpose**: Serves as a file integrity check; the loader verifies this byte to ensure the file is not corrupted.
+
+## Additional Notes
+
+- **Alignment**: Some sections (e.g., commands) include padding with null bytes to ensure 4-byte alignment, reflecting the RISC architecture's word size.
+- **Dynamic Linking**: The fixup origins (`fixorgP`, `fixorgD`, `fixorgT`) are used by the loader to patch procedure calls, data accesses, and type descriptor references, adjusting them based on the actual memory locations of imported modules.
+- **Memory Layout**: The `size` field accounts for the module descriptor (80 bytes), type descriptors, variable space, strings, code, and tables (imports, commands, entries, pointers), all aligned appropriately.
+- **File I/O**: The `Files` module provides the `Rider` mechanism used by `ORG` to write and `Modules` to read the `.rsc` file, ensuring consistent serialization and deserialization.
+
+## Example Layout
+
+For a module named "Example" with minimal content, the `.rsc` file might look like this in abstract form:
+
+- **Module Name**: "Example\0" (8 bytes)
+- **Key**: 0x12345678 (4 bytes)
+- **Version**: 0x01 (1 byte)
+- **Size**: 0x00000500 (4 bytes, 1280 bytes total)
+- **Imports**: "Kernel\0" (7 bytes) + 0x87654321 (4 bytes) + "\0" (1 byte)
+- **Type Descriptors**: 0x00000010 (4 bytes, 16 bytes) + [4 integers] (16 bytes)
+- **Variable Space Size**: 0x00000040 (4 bytes, 64 bytes)
+- **Strings**: 0x00000004 (4 bytes) + "test" (4 bytes)
+- **Code**: 0x00000005 (4 bytes) + [5 instructions] (20 bytes)
+- **Commands**: "Init\0" (5 bytes) + padding (3 bytes) + 0x00000000 (4 bytes) + "\0" (1 byte)
+- **Entries**: 0x00000001 (4 bytes) + 0x00000000 (4 bytes)
+- **Pointer References**: 0x00000004 (4 bytes) + 0xFFFFFFFF (4 bytes)
+- **Fixup Origins**: 0x00000000, 0x00000000, 0x00000000 (12 bytes)
+- **Entry Point**: 0x00000000 (4 bytes)
+- **Marker**: 0x4F (1 byte)
+
+This specification enables developers to understand, generate, or parse `.rsc` files for the Oberon system on RISC, facilitating compilation, linking, and execution of Oberon modules.
+
+           0x0000
+             │
+             ▼
+  +--------------------------------------+
+  |              HEADER                |  ← Header starts at 0x0000
+  |--------------------------------------|
+  | Module Name (null-terminated)        |
+  | Module Key      (4 bytes)            |
+  | Version         (1 byte)             |
+  | Total Size      (4 bytes)            |
+  +--------------------------------------+
+             │
+             │  (offset: HEADER_END)
+             ▼
+  +--------------------------------------+
+  |             IMPORTS                |  ← Imports start at HEADER_END
+  |--------------------------------------|
+  | Import Entry 1:                      |
+  |   • Name (null-terminated string)    |
+  |   • Key   (4 bytes)                  |
+  | Import Entry 2:  …                   |
+  |   …                                  |
+  | Terminator (0x00)                    |
+  +--------------------------------------+
+             │
+             │  (offset: IMPORTS_END)
+             ▼
+  +--------------------------------------+
+  |         TYPE DESCRIPTORS           |  ← Type Descriptors start at IMPORTS_END
+  |--------------------------------------|
+  | Size         (4 bytes)               |
+  | [Descriptor Entries] (4 bytes ea.)   |
+  +--------------------------------------+
+             │
+             │  (offset: TYPES_END)
+             ▼
+  +--------------------------------------+
+  |          VARIABLE SPACE            |  ← Var. Space starts at TYPES_END
+  |--------------------------------------|
+  | Size (4 bytes)                       |
+  | Zero-filled data (as allocated)      |
+  +--------------------------------------+
+             │
+             │  (offset: VARSPACE_END)
+             ▼
+  +--------------------------------------+
+  |             STRINGS                |  ← Strings section starts at VARSPACE_END
+  |--------------------------------------|
+  | Size (4 bytes)                       |
+  | String Data (NT characters, padded)  |
+  +--------------------------------------+
+             │
+             │  (offset: STRINGS_END)
+             ▼
+  +--------------------------------------+
+  |           PROGRAM CODE             |  ← Program Code starts at STRINGS_END
+  |--------------------------------------|
+  | Length (4 bytes)                     |
+  | RISC Instructions (4-byte words)     |
+  +--------------------------------------+
+             │
+             │  (offset: CODE_END)
+             ▼
+  +--------------------------------------+
+  |             COMMANDS               |  ← Commands section starts at CODE_END
+  |--------------------------------------|
+  | Command Entry 1:                     |
+  |   • Name (null-terminated string)    |
+  |   • Padding (to 4-byte alignment)     |
+  |   • Address (4 bytes)                |
+  | Command Entry 2: …                   |
+  |   …                                  |
+  | Terminator (0x00)                    |
+  +--------------------------------------+
+             │
+             │  (offset: COMMANDS_END)
+             ▼
+  +--------------------------------------+
+  |             ENTRIES                |  ← Entries section starts at COMMANDS_END
+  |--------------------------------------|
+  | Number of Entries (4 bytes)          |
+  | Main Entry Point  (4 bytes)          |
+  | [Entry Data] (4 bytes each)          |
+  +--------------------------------------+
+             │
+             │  (offset: ENTRIES_END)
+             ▼
+  +--------------------------------------+
+  |        POINTER REFERENCES          |  ← Pointer References start at ENTRIES_END
+  |--------------------------------------|
+  | List of Pointer Addresses (4 bytes ea.)  |
+  | Terminator (-1; 0xFFFFFFFF)          |
+  +--------------------------------------+
+             │
+             │  (offset: POINTERS_END)
+             ▼
+  +--------------------------------------+
+  |         FIXUP INFORMATION          |  ← Fixup Information starts at POINTERS_END
+  |--------------------------------------|
+  | fixorgP  (4 bytes)                   |
+  | fixorgD  (4 bytes)                   |
+  | fixorgT  (4 bytes)                   |
+  | Entry Point (redundant; 4 bytes)     |
+  +--------------------------------------+
+             │
+             │  (offset: FIXUP_END)
+             ▼
+  +--------------------------------------+
+  |            SIGNATURE               |  ← Signature at FIXUP_END
+  |--------------------------------------|
+  | 'O'  (1 byte; ASCII 0x4F)            |
+  +--------------------------------------+
