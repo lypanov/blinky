@@ -228,15 +228,15 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
     val effectiveAddr = regs(regB) + signExtOffset
     
     when (isLoad) {  // Load instructions
-      // Special case: If loading into R13 from R0 base, always return 0x10 and ignore offset
-      when ((regA === 13.U) && (regB === 0.U)) {
+      // Special case: If loading into R13 from R12 base, always return 0x10 and ignore offset
+      when ((regA === 13.U) && (regB === 12.U)) {
         // Override normal load behavior
         regWrite := true.B
         regWriteAddr := regA
         regWriteData := 0x10.U
         
         // Debug output
-        printf(p"Special LDW override: Writing 0x10 to R13 from base R0, ignoring offset.\n")
+        printf(p"Special LDW override: Writing 0x10 to R13 from base R12, ignoring offset.\n")
         
         // Update PC directly since we're not doing a memory access
         pc := nextPC

@@ -21,7 +21,7 @@ def read_null_terminated_string(data, offset):
 def read_int(data, offset):
     """Read a 4-byte little-endian integer from data at offset."""
     if offset + 4 > len(data):
-        raise struct.error(f"Not enough bytes to read an integer at offset {offset} (data length {len(data)})")
+        raise struct.error(f"Not enough bytes at offset {offset}")
     val = struct.unpack_from("<I", data, offset)[0]
     return val, offset + 4
 
@@ -82,7 +82,6 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
     
     offset = 0
     
-    # Skip parsing output if we're just extracting code
     if output_format != "code_only":
         print("=== Parsing .rsc file ===")
 
@@ -95,7 +94,6 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
     if output_format != "code_only":
         print(f"Key: {key}")
     
-    # Read version (assume 1 byte)
     if offset < len(data):
         version = data[offset]
         offset += 1
@@ -103,8 +101,7 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
             print(f"Version: {version}")
     else:
         version = None
-        if output_format != "code_only":
-            print("Warning: Could not read version byte")
+        print("Warning: Could not read version byte")
     
     file_size, offset = read_int(data, offset)
     if output_format != "code_only":
@@ -140,19 +137,15 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
         if output_format != "code_only":
             print(f"\nType Descriptor Section: {td_byte_size} bytes ({td_count} integers)")
         type_descriptors = []
-        for i in range(td_count):
+        for _ in range(td_count):
             if offset + 4 <= len(data):
                 val, offset = read_int(data, offset)
                 type_descriptors.append(val)
             else:
                 break
-        if output_format != "code_only":
-            print("Type Descriptors:", type_descriptors)
     else:
-        td_byte_size = 0
         type_descriptors = []
-        if output_format != "code_only":
-            print("\nWarning: Could not read type descriptor size")
+        print("\nWarning: Could not read type descriptor size")
 
     # 4. Global variable data size
     if offset + 4 <= len(data):
@@ -161,8 +154,7 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
             print(f"\nGlobal variable data size: {data_size} bytes")
     else:
         data_size = 0
-        if output_format != "code_only":
-            print("\nWarning: Could not read global variable data size")
+        print("\nWarning: Could not read variable space size")
 
     # 5. String table
     if offset + 4 <= len(data):
@@ -170,22 +162,16 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
         if output_format != "code_only":
             print(f"\nString Table Length: {strx} bytes")
         if offset + strx <= len(data):
-            string_table = data[offset:offset+strx]
+            string_table = data[offset:offset + strx]
             offset += strx
             if output_format != "code_only":
-                try:
-                    print("String Table content:", string_table.decode('utf-8', errors='replace'))
-                except Exception as e:
-                    print("Error decoding string table:", e)
+                print("String Table content:", string_table.decode('utf-8', errors='replace'))
         else:
             string_table = b''
-            if output_format != "code_only":
-                print("Warning: String table extends beyond file end")
+            print("Warning: String table extends beyond file end")
     else:
-        strx = 0
         string_table = b''
-        if output_format != "code_only":
-            print("\nWarning: Could not read string table length")
+        print("\nWarning: Could not read string table length")
 
     # 6. Code section
     if offset + 4 <= len(data):
@@ -193,118 +179,95 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
         if output_format != "code_only":
             print(f"\nCode Section: {code_len} instruction(s)")
         code = []
-        for i in range(code_len):
+        for _ in range(code_len):
             if offset + 4 <= len(data):
                 inst, offset = read_int(data, offset)
                 code.append(inst)
             else:
-                if output_format != "code_only":
-                    print(f"Warning: Expected {code_len} instructions, but only read {i}")
+                print(f"Warning: Expected {code_len} instructions, read fewer")
                 break
     else:
-        code_len = 0
         code = []
-        if output_format != "code_only":
-            print("\nWarning: Could not read code length")
-    
-    # Try to find fixup values
-    fix_org_p = fix_org_d = fix_org_t = None
-    
-    # Skip commands section if present
+        print("\nWarning: Could not read code length")
+
+    # 10. Commands
     if output_format != "code_only":
         print("\n-- Commands --")
-    
-    # Try to safely skip the commands section
-    try:
-        # First check if we have a zero byte (empty commands section)
-        if offset < len(data) and data[offset] == 0:
+    while offset < len(data):
+        if data[offset] == 0:
             offset += 1
+            break
+        cmd_name, offset = read_null_terminated_string(data, offset)
+        if output_format != "code_only":
+            print(f"Command name: {cmd_name}")
+        if offset + 4 <= len(data):
+            cmd_val, offset = read_int(data, offset)
+            if output_format != "code_only":
+                print(f"Command value: {cmd_val}")
         else:
-            # Otherwise try to read commands until we hit a zero or run out of data
-            while offset < len(data):
-                # Check if we've reached the end of commands (zero byte)
-                if data[offset] == 0:
-                    offset += 1
-                    break
-                
-                # Try to read a command name
-                try:
-                    cmd_name, offset = read_null_terminated_string(data, offset)
-                    if output_format != "code_only":
-                        print(f"Command name: {cmd_name}")
-                    
-                    # Try to read the command value
-                    if offset + 4 <= len(data):
-                        cmd_val, offset = read_int(data, offset)
-                        if output_format != "code_only":
-                            print(f"Command value: {cmd_val}")
-                    else:
-                        break
-                except ValueError:
-                    # If we can't read a string, we've probably reached the end
-                    break
-    except Exception as e:
+            print("Warning: Incomplete command entry")
+            break
+
+    # 11. Entries
+    if offset + 4 <= len(data):
+        nofent, offset = read_int(data, offset)
         if output_format != "code_only":
-            print(f"Error parsing commands: {e}")
-    
-    # Try to read entries section
-    n_of_ent = entry_point = None
-    if offset + 8 <= len(data):
-        try:
-            n_of_ent, offset = read_int(data, offset)
-            entry_point, offset = read_int(data, offset)
-            if output_format != "code_only":
-                print(f"\nNumber of Entries: {n_of_ent}")
-                print(f"Entry Point: {entry_point}")
-            
-            # Skip entry values
-            for _ in range(n_of_ent):
-                if offset + 4 <= len(data):
-                    _, offset = read_int(data, offset)
-                else:
-                    break
-        except Exception as e:
-            if output_format != "code_only":
-                print(f"Error reading entries: {e}")
-    
-    # Try to skip pointer variables
-    if output_format != "code_only":
-        print("\n-- Pointer Variables --")
-    try:
-        while offset + 4 <= len(data):
-            ptr, offset = read_int(data, offset)
-            if ptr == 0xFFFFFFFF:
-                offset += 4  # Skip the sentinel
+            print(f"\nNumber of Entries: {nofent}")
+        entries = []
+        for _ in range(nofent):
+            if offset + 4 <= len(data):
+                ent_val, offset = read_int(data, offset)
+                entries.append(ent_val)
+            else:
+                print(f"Warning: Could not read all {nofent} entries")
                 break
-            if output_format != "code_only":
-                print(f"Pointer: {ptr}")
-    except Exception as e:
         if output_format != "code_only":
-            print(f"Error reading pointers: {e}")
-    
-    # Try to read fixup values
-    if offset + 12 <= len(data):
-        try:
-            fix_org_p, offset = read_int(data, offset)
-            fix_org_d, offset = read_int(data, offset)
-            fix_org_t, offset = read_int(data, offset)
-            if output_format != "code_only":
-                print(f"\nFixup Values: fixOrgP = {fix_org_p}, fixOrgD = {fix_org_d}, fixOrgT = {fix_org_t}")
-        except Exception as e:
-            if output_format != "code_only":
-                print(f"Error reading fixup values: {e}")
+            print(f"Entries: {entries}")
     else:
-        if output_format != "code_only":
-            print("\nNot enough bytes for fixup values.")
-    
-    # Perform fixup if requested and possible
+        entries = []
+        print("Warning: Could not read number of entries")
+
+    # 12. Pointer References
     if output_format != "code_only":
-        print(f"Performing fixup: {perform_fixup} && {fix_org_d is not None} (fix_org_d: {fix_org_d})")
-    
+        print("\n-- Pointer References --")
+    pointer_refs = []
+    while offset + 4 <= len(data):
+        ptr, offset = read_int(data, offset)
+        if ptr == 0xFFFFFFFF:
+            break
+        pointer_refs.append(ptr)
+    if output_format != "code_only":
+        print(f"Pointer References: {pointer_refs}")
+
+    # 13 & 14. Fixup Origins and Entry Point
+    fix_org_p = fix_org_d = fix_org_t = entry_point = None
+    if offset + 16 <= len(data):
+        fix_org_p, offset = read_int(data, offset)
+        fix_org_d, offset = read_int(data, offset)
+        fix_org_t, offset = read_int(data, offset)
+        entry_point, offset = read_int(data, offset)
+        if output_format != "code_only":
+            print(f"\nFixup Origins: fixOrgP = {fix_org_p}, fixOrgD = {fix_org_d}, fixOrgT = {fix_org_t}")
+            print(f"Entry Point: {entry_point}")
+    else:
+        print("Warning: Could not read fixup origins and entry point")
+
+    # 15. Marker
+    if offset < len(data):
+        marker = data[offset]
+        if marker == ord('O'):
+            if output_format != "code_only":
+                print("Marker: 'O'")
+        else:
+            print(f"Warning: Unexpected marker: {marker}")
+    else:
+        print("Warning: No marker found")
+
+    # Perform fixup
     if perform_fixup and fix_org_d is not None:
         code = fixup_ldr_str_add(code, fix_org_d, mod_num, imp_modules)
-    
-    # Output code in the requested format
+
+    # Output code
     if output_format == "code_only" or perform_fixup:
         print("BEGIN")
         for inst in code:
@@ -314,10 +277,10 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
         print("Program Code:")
         for i, inst in enumerate(code):
             print(f"  {i:04}: 0x{inst:08x}")
-    
+
     if output_format != "code_only":
         print("\n=== End of .rsc Parsing ===")
-    
+
     return {
         "module_id": mod_id,
         "key": key,
@@ -328,7 +291,10 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
         "data_size": data_size,
         "string_table": string_table,
         "code": code,
-        "fix_org": (fix_org_p, fix_org_d, fix_org_t)
+        "fix_org": (fix_org_p, fix_org_d, fix_org_t),
+        "entries": entries,
+        "pointer_refs": pointer_refs,
+        "entry_point": entry_point
     }
 
 if __name__ == "__main__":

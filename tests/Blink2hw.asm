@@ -1,14 +1,14 @@
 SUB R14, R14, 0x4
 STW R15, [R14, 0x0]
 MOV R0, 0x0
-LDW R13, [R0, 0x3]
+LDW R13, [R12, 0x4]
 STW R0, [R13, 0x0]
 MOV R0, 0x0
 STW R0, [R13, 0x4]
 MHI R0, 0x4
 STW R0, [R13, 0x8]
 BF, off=17
-LDW R13, [R0, 0x7]
+LDW R13, [R12, 0x4]
 ADD R0, R13, 0x4
 LDW R1, [R0, 0x0]
 ADD R1, R1, 0x1
@@ -18,7 +18,7 @@ LDW R1, [R13, 0x8]
 SUB R0, R0, R1
 BLT, off=7
 MOV R0, 0x1
-LDW R13, [R0, 0xa]
+LDW R13, [R12, 0x4]
 LDW R1, [R13, 0x0]
 SUB R0, R0, R1
 STW R0, [R13, 0x0]

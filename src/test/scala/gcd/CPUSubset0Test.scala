@@ -551,7 +551,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     }
   }
 
-  it should "behave correctly when loading into R13 from R0" in {
+  it should "behave correctly when loading into R13 from R12" in {
     val testId = "r13_source_hack_test"
     checkTestFilter(testId)
     val traceFile = initializeTest(testId)
@@ -559,7 +559,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     // Define the test program instructions
     val r13SourceHackInstructions = Seq(
       "4000DEAD", // MOV R0, 0xDEAD      ; Initialize R0 to 0xDEAD
-      "8D000003", // LDW R13, [R0, 0x3]  ; Hacked: Load value from address R0+3 into R13 -> should read address 0x10
+      "8DC00003", // LDW R13, [R12, 0x3]  ; Hacked: Load value from address R12+3 into R13 -> should read address 0x10
       "A0D00000", // STW R0, [R13, 0x0]  ; Store R0 value at address in R13
       "41000010", // MOV R1, 0x10        ; Set R1 to 0
       "81100000", // LDW R1, [R1, 0x0]   ; Load from address 0x10 into R1 (should be 0xDEAD)
