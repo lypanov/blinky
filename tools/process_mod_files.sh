@@ -48,7 +48,7 @@ for mod_file in *.Mod; do
     fi
     
     # Parse the .rsc file
-    ../tools/rsc_parser.py "$module_name.rsc" code_only > input.txt
+    ../tools/rsc_parser.py "$module_name.rsc" fixup > input.txt
     
     # Generate assembly
     python3 ../tools/instruction_parser.py > "$base_name.asm"
