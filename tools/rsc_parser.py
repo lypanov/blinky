@@ -2,6 +2,9 @@
 import struct
 import sys
 
+# Global module table: emulates the Oberon MT register.
+mt_table = {}
+
 def read_null_terminated_string(data, offset):
     """Read a null-terminated ASCII string starting at offset."""
     if offset >= len(data):
@@ -32,49 +35,101 @@ class ImportedModule:
         self.data = data    # base address of its data section (dummy value)
         self.ent = ent      # base address of its entry table (dummy value)
 
-def fixup_ldr_str_add(code, fixorg_d, mod_num, imp_modules):
+def fixup_ldr_str_add(code, fixorg_d, mod_num, mt):
+    """
+    Fixup for LDR/STR/ADD instructions that uses the emulated MT table.
+    """
     MT = 12
-    # Compute starting byte address
     adr_byte = fixorg_d * 4
-    # Loop until adr_byte equals zero
     while adr_byte != 0:
         index = adr_byte // 4
         if index < 0 or index >= len(code):
-            # Out-of-bound safeguard
             break
         inst = code[index]
-        # Extract mno and disp
         mno = (inst // 0x100000) % 0x10
         disp = inst % 0x1000
         if disp == 0:
-            # Avoid infinite loop if disp is zero
             break
 
         if mno == 0:
-            # Global fixup
+            # Global fixup: use current module's number from the MT table.
+            current_mod = mt.get(mod_num)
             new_inst = (((inst // 0x1000000) * 0x10 + MT) * 0x100000) + (mod_num * 4)
             code[index] = new_inst
         else:
-            # Import fixup
-            imp_index = mno - 1
-            impmod = imp_modules.get(imp_index, ImportedModule(0, 0, 0, 0))
-            v = impmod.num
+            # For imported modules, try looking them up in the MT table.
+            imp = mt.get(mno, ImportedModule(0, 0, 0, 0))
+            v = imp.num
             new_inst = (((inst // 0x1000000) * 0x10 + MT) * 0x100000) + (v * 4)
             code[index] = new_inst
-            # Process the following word (if present)
             if index + 1 < len(code):
                 inst_next = code[index + 1]
                 vno = inst_next % 0x100
-                # Simulate offset retrieval
-                offset_val = impmod.ent
-                # Adjust if odd
+                offset_val = imp.ent
                 if ((inst_next // 0x100) % 2) == 1:
-                    offset_val += (impmod.code - impmod.data)
-                new_inst_next = (inst_next // 0x10000) * 0x10000 + offset_val
+                    offset_val += (imp.code - imp.data)
+                new_inst_next = ((inst_next // 0x10000) * 0x10000) + offset_val
                 code[index + 1] = new_inst_next
-        # Move backwards
         adr_byte = adr_byte - disp * 4
     return code
+
+def fixup_bl(code, fixorg_p, mod_num, mt):
+    """
+    Fixup for BL (branch link) instructions that uses the emulated MT table.
+    Instead of discarding the original module information, we use the MT table (mt)
+    to look up the imported module's descriptor.
+    """
+    MT = 12  # Constant from Oberon (if needed for adjustments)
+    adr_byte = fixorg_p * 4
+    while adr_byte != 0:
+        index = adr_byte // 4
+        if index < 0 or index >= len(code):
+            break
+        inst = code[index]
+        mno = (inst // 0x100000) % 0x10
+        pno = (inst // 0x1000) % 0x100
+        disp = inst % 0x1000
+        if disp == 0:
+            # Prevent infinite loop if disp is zero.
+            break
+
+        if mno != 0:
+            # Retrieve the imported module using the global table.
+            impmod = mt.get(mno, ImportedModule(0, 0, 0, 0))
+            # Simulate the original Modules.Mod logic:
+            #   dest := (impmod.ent + pno*4) + impmod.code
+            dest = impmod.ent + (pno * 4) + impmod.code
+            offset = (dest - adr_byte - 4) // 4
+            new_inst = (offset % 0x1000000) + 0xF7000000
+            code[index] = new_inst
+        else:
+            # For a global (non-import) reference, use the current module from the MT table.
+            current_mod = mt.get(mod_num)
+            # You may wish to adjust further if needed.
+            # Here we leave it as is since no special fixup may be required.
+        adr_byte = adr_byte - disp * 4
+    return code
+
+def fixup_type(type_descriptors, fixorg_t, mod_data, mt):
+    """
+    Fixup for type descriptors using the emulated MT table.
+    """
+    adr = fixorg_t  # Use this as the index into the type descriptor list.
+    while adr != 0 and adr < len(type_descriptors):
+        inst = type_descriptors[adr]
+        mno = (inst // 0x1000000) % 0x10
+        vno = (inst // 0x1000) % 0x1000
+        disp = inst % 0x1000
+        if mno == 0:
+            new_inst = mod_data + vno
+        else:
+            imp = mt.get(mno, ImportedModule(0, 0, 0, 0))
+            new_inst = imp.data + (imp.ent + vno * 4)
+        type_descriptors[adr] = new_inst
+        if disp == 0:
+            break
+        adr = adr - disp
+    return type_descriptors
 
 def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1):
     with open(file_path, "rb") as f:
@@ -240,7 +295,6 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
         print(f"Pointer References: {pointer_refs}")
 
     # 13 & 14. Fixup Origins and Entry Point
-    fix_org_p = fix_org_d = fix_org_t = entry_point = None
     if offset + 16 <= len(data):
         fix_org_p, offset = read_int(data, offset)
         fix_org_d, offset = read_int(data, offset)
@@ -263,9 +317,19 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
     else:
         print("Warning: No marker found")
 
+    # Default module number (for global fixups)
+    mod_num = 1
+
+    # Create a descriptor for the current module.
+    # For example, we assume the module's code base is at index 0 and data base 0 in our simulation.
+    current_module = ImportedModule(mod_num, code=0, data=0, ent=0)
+    mt_table[mod_num] = current_module
+
     # Perform fixup
-    if perform_fixup and fix_org_d is not None:
-        code = fixup_ldr_str_add(code, fix_org_d, mod_num, imp_modules)
+    if perform_fixup:
+        code = fixup_bl(code, fix_org_p, mod_num, mt_table)
+        code = fixup_ldr_str_add(code, fix_org_d, mod_num, mt_table)
+        type_descriptors = fixup_type(type_descriptors, fix_org_t, 0, mt_table)
 
     # Output code
     if output_format == "code_only" or perform_fixup:

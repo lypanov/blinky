@@ -78,22 +78,33 @@ def disassemble(instr):
             cond_name = cond_names[cond]
             return f"B{'L' if v else ''}{cond_name}, off={off}"
 
-with open('input.txt', 'r') as f:
-    lines = f.readlines()
+def disassemble_instructions(instructions, base_addr=0):
+    """
+    Disassembles a list of instructions.
+    Each instruction is printed preceded by its virtual address computed from base_addr.
+    """
+    for i, instr in enumerate(instructions):
+        addr = base_addr + i * 4
+        asm = disassemble(instr)
+        print(f"0x{addr:08x}: 0x{instr:08x}    {asm}")
 
-instructions = []
-in_block = False
-for line in lines:
-    line = line.strip()
-    if line == "BEGIN":
-        in_block = True
-        continue
-    elif line == "END":
-        in_block = False
-        continue
-    if in_block:
-        instr = int(line, 16)
-        instructions.append(instr)
+if __name__ == "__main__":
+    # For testing: if run standalone, read from input.txt and dump disassembly.
+    with open('input.txt', 'r') as f:
+        lines = f.readlines()
 
-for instr in instructions:
-    print(disassemble(instr))
+    instructions = []
+    in_block = False
+    for line in lines:
+        line = line.strip()
+        if line == "BEGIN":
+            in_block = True
+            continue
+        elif line == "END":
+            in_block = False
+            continue
+        if in_block:
+            instr = int(line, 16)
+            instructions.append(instr)
+
+    disassemble_instructions(instructions)
