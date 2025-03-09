@@ -33,13 +33,13 @@ class CPUMinimalWrapper(useRealGowin: Boolean = true, programInstructions: Seq[S
   io.deadbeef := ramController.io.value
   io.addr := ramController.io.addr
 
-  val logger = Module(new Logger(numProducers = 1))
+  // Create and properly initialize the Logger module
+  val logger = Module(new Logger())
   logger.io.clk := clock
   logger.io.rst_n := ~reset.asBool
   logger.io.uart_rx := io.uart_rx
-  
-  logger.io.producerLogs(0) <> cpu.io.logOut
-  // logger.io.producerLogs(1) <> memoryController.io.logOut
-  
+  logger.io.messageCode := cpu.io.messageCode
+  logger.io.trigger := cpu.io.trigger
+  logger.io.logByte := cpu.io.logByte
   io.uart_tx := logger.io.uart_tx
 } 

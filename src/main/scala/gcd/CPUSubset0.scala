@@ -23,24 +23,22 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
     val memWrite = Output(Bool())
     val memRead = Output(Bool())
 
-    val logOut = Decoupled(new LogEntry)
+    // Logger boilerplate
+    val messageCode = Output(UInt(4.W))
+    val trigger = Output(Bool())
+    val logByte = Output(UInt(8.W))
   })
-
-  // Create a queue for log messages
-  val logQueue = Module(new Queue(new LogEntry, entries = 8))
-  logQueue.io.enq.valid := false.B
-  logQueue.io.enq.bits.messageCode := 0.U
-  logQueue.io.enq.bits.logByte := 0.U
-  logQueue.io.enq.bits.logByte1 := 0.U
-  io.logOut <> logQueue.io.deq
-
+  
+  // Initialize the logByte signal with a default value
+  io.logByte := 0.U
+  
   // Program counter
   // Initialize PC to 0x80 (byte address) to start at the setup instructions
   val pc = RegInit(0x80.U(32.W))
-
+  
   // Registers
   val regs = RegInit(VecInit(Seq.fill(16)(0.U(32.W))))
-
+  
   // Flags
   val n = RegInit(false.B)  // Negative
   val c = RegInit(false.B)  // Carry
@@ -150,6 +148,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
   io.memWrite := false.B
   io.memRead := false.B
 
+  // Logger boilerplate
+  io.messageCode := 0.U
+  io.trigger := false.B
+  
   // Flag to track if CPU should halt (for simulation purposes)
   val halted = RegInit(false.B)
   
@@ -269,14 +271,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String]) extends
         when (effectiveAddr === 0x10.U) {
           // Update LED state with bit 0 of the value being stored
           ledState := regs(regA)(0)
-          
-          // Enqueue a log message to the queue
-          logQueue.io.enq.valid := true.B
-          logQueue.io.enq.bits.messageCode := Logger.Codes.LedToggle
-          logQueue.io.enq.bits.logByte := regs(regA)(0).asUInt
-          
+          // Use a single LED event code and pass the state as an extra 8-bit value.
+          Logger.log(io, Logger.Codes.LedToggle, ledState.asUInt)
           // Debug output
           printf(p"Memory-mapped LED write detected at address 0x10: Setting LED to ${regs(regA)(0)}\n")
+          CPUSubset0Companion.printTrace(s"Memory-mapped LED write detected at address 0x10: Setting LED to ${regs(regA)(0)}\n")
         }
         
         // Debug output

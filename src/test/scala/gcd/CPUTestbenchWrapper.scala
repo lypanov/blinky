@@ -21,10 +21,6 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
     val memWriteData = Output(UInt(32.W))
     val memWrite = Output(Bool())
     val memRead = Output(Bool())
-
-    // UART interface
-    val uart_rx = Input(Bool())
-    val uart_tx = Output(Bool())
   })
   
   // Create CPU with the provided instructions
@@ -47,15 +43,6 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
   io.r3 := cpu.io.r3
   io.cpuHalted := cpu.io.halted
   io.pc := cpu.io.pc  // Connect PC to the output
-
-  val logger = Module(new Logger(numProducers = 1))
-  logger.io.clk := clock
-  logger.io.rst_n := ~reset.asBool
-  logger.io.uart_rx := io.uart_rx
-  io.uart_tx := logger.io.uart_tx
-  
-  logger.io.producerLogs(0) <> cpu.io.logOut
-  // logger.io.producerLogs(1) <> memoryController.io.logOut
   
   // Connect memory interface signals to outputs for monitoring
   io.memAddr := cpu.io.memAddr
