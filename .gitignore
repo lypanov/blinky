@@ -346,3 +346,4 @@ input.*
 .bloop
 .metals
 trace/
+__pycache__
