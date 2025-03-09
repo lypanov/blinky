@@ -630,6 +630,127 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     }
   }
 
+  // New helper and test for final_system.code image execution
+  it should "correctly execute system image from final_system.code with trampoline" in {
+    val testId = "final_system_code_test"
+    checkTestFilter(testId)
+    
+    // Read the final_system.code file (adjust the path if needed)
+    val codeFile = new java.io.File(projectRoot, "tests/final_system.code")
+    val lines = scala.io.Source.fromFile(codeFile).getLines().toList
+    // Close the source as appropriate.
+    
+    // Helper to parse the file.
+    def parseFinalSystemCode(lines: List[String]): (Map[Int, String], Int) = {
+      var memMap = Map.empty[Int, String]
+      var initialEntry = 0
+      var currentModuleBase = 0
+      for(line <- lines) {
+        if(line.startsWith("=== System Metadata ===")) {
+          // Concatenate the subsequent lines and extract initial_entry_point using regex.
+          val metadataLines = lines.dropWhile(!_.startsWith("=== System Metadata ===")).tail.mkString(" ")
+          val pattern = "initial_entry_point':\\s*'0x([0-9A-Fa-f]{8})'".r
+          pattern.findFirstMatchIn(metadataLines) match {
+            case Some(m) => initialEntry = Integer.parseUnsignedInt(m.group(1), 16)
+            case None => initialEntry = 0
+          }
+          return (memMap, initialEntry)
+        } else if (line.startsWith("Base:")) {
+          val parts = line.split(":")
+          if(parts.length >= 2) {
+            // e.g., "Base: 0x00001000"
+            currentModuleBase = Integer.parseUnsignedInt(parts(1).trim.drop(2), 16)
+          }
+        } else if (line.matches("^0x[0-9A-Fa-f]{8}:\\s+0x[0-9A-Fa-f]{8}.*$")) {
+          // Instruction line: "0x00001000: 0x4ee90004 ..."
+          val addrInstPattern = "0x([0-9A-Fa-f]{8}):\\s+0x([0-9A-Fa-f]{8})".r
+          line match {
+            case addrInstPattern(addrStr, instStr) =>
+              val addr = Integer.parseUnsignedInt(addrStr, 16)
+              val wordIndex = addr / 4
+              memMap += (wordIndex -> instStr)
+            case _ => // do nothing
+          }
+        }
+      }
+      (memMap, initialEntry)
+    }
+    
+    // Parse the final system file.
+    val (moduleMem, initEntry) = parseFinalSystemCode(lines)
+    println(s"Parsed initial_entry_point: 0x${initEntry.toHexString}")
+    
+    // Determine memory image size.
+    val maxIndex = if(moduleMem.isEmpty) 44 else (moduleMem.keys.max max (44 - 1))
+    val totalSize = maxIndex + 1
+    
+    // Generate the default low-memory block (addresses 0x00 – 0xB0) as in CPUSubset0.
+    val lowMemorySize = 44  // 0xB0/4 words
+    val userProgEndAddr = 0x80 / 4
+    val setupStartAddr = 0x80 / 4
+    val setupEndAddr = 0xA0 / 4
+    val haltStartAddr = 0xA0 / 4
+    val haltEndAddr = 0xB0 / 4
+    val defaultUserProg = Seq.fill(userProgEndAddr)("0000BEEF")
+    val setupInstructions = Seq(
+      "4e000080", // MOV R14, 0x0080
+      "4f0000A0", // MOV R15, 0x00A0
+      "40000000", // MOV R0, 0x0000
+      "c7000000"  // BT R0
+    )
+    val defaultSetup = setupInstructions ++ Seq.fill(setupEndAddr - setupStartAddr - setupInstructions.length)("0000BEEF")
+    val defaultHalt = Seq.fill(haltEndAddr - haltStartAddr)("E7FFFFFF")
+    val defaultLowMemory = (defaultUserProg ++ defaultSetup ++ defaultHalt).padTo(lowMemorySize, "0000BEEF")
+    
+    // Create the full memory image.
+    val memoryImage = Array.fill(totalSize)("0000BEEF")
+    // Populate low memory block (indices 0 until lowMemorySize) with default low memory.
+    for(i <- 0 until lowMemorySize) {
+      memoryImage(i) = defaultLowMemory(i)
+    }
+    // Overlay parsed module instructions.
+    for((index, inst) <- moduleMem) {
+      if(index < totalSize) memoryImage(index) = inst
+    }
+    
+    // Generate the trampoline at address 0.
+    // Compute offset = (initial_entry_point - 4) / 4 and then trampoline = 0xF7000000 OR offset.
+    val offset = (initEntry - 4) / 4
+    val trampoline = (0xF7000000 | offset)
+    val trampolineStr = f"$trampoline%08x"
+    memoryImage(0) = trampolineStr
+    
+    val memoryImageSeq = memoryImage.toSeq
+    println(s"Generated memory image with ${memoryImageSeq.length} words; trampoline = $trampolineStr")
+    
+    // Create a CPU instance using the custom memory image via the testbench wrapper.
+    test(new CPUTestbenchWrapper(customMemoryImage = Some(memoryImageSeq))).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
+      dut.clock.setTimeout(1000)
+      
+      val expectedBlinks = 3
+      var blinkPeriods = Seq.empty[Int]
+      var lastR0 = dut.io.r0.peek().litValue.toInt
+      
+      while (blinkPeriods.size < expectedBlinks) {
+        // Wait for a memory write at address 0x10, which indicates a blink event
+        val cyclesForBlink = runTillMemoryWrite(dut, 0x10, lastR0, 10000)
+        blinkPeriods :+= cyclesForBlink
+        println(s"Blink ${blinkPeriods.size} occurred after $cyclesForBlink cycles")
+        
+        // Check we toggled
+        val currentR0 = dut.io.r0.peek().litValue.toInt
+        println(s"R0 toggled to $currentR0")
+        assert((currentR0 == 0 || currentR0 == 1), s"R0 value $currentR0 is not 0 or 1")
+        assert(currentR0 != lastR0, s"R0 did not toggle: previous = $lastR0, current = $currentR0")
+        
+        lastR0 = currentR0
+      }
+
+      val avgPeriod = blinkPeriods.sum / blinkPeriods.size
+      assert(avgPeriod == 81, s"Average blink period $avgPeriod is expected period of 81")
+    }
+  }
+
   // Helper method to print instructions to trace file
   private def printInstructionsToTrace(title: String, instructions: Seq[String]): Unit = {
     try {
