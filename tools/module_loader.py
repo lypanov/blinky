@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 
-from rsc_parser import parse_rsc, fixup_bl, fixup_ldr_str_add, fixup_type
+from rsc_parser import parse_rsc, fixup_bl, fixup_ldr_str_add, fixup_type, ImportedModule
 from mt_table import mt_table  # Shared mt_table
+
+# Added a global counter for module numbering.
+module_counter = 1
 
 # Global dictionary holding all loaded modules by name.
 loaded_modules = {}
@@ -45,12 +48,30 @@ def load_module(module_name, loaded_modules=loaded_modules):
     module["data_base"] = next_free_data_addr
     next_free_data_addr += module_data_size
 
-    # Assign a module number (for simplicity, here assume each module has a unique key)
-    # In a real loader, module.num is assigned during allocation.
-    module["module_id"] = module["key"]  # or use another unique derivation
+    # Replace the old module_id assignment with one using a global counter.
+    global module_counter
+    # Instead of: module["module_id"] = module["key"]
+    module["module_id"] = module_counter
+    module_counter += 1
 
-    # Register in our global module table.
-    mt_table[module["module_id"]] = module
+    # Instead of storing the module dictionary directly, convert it to an ImportedModule.
+    # Import the ImportedModule type from rsc_parser.
+    if module["module_id"] == 1:
+        # Global module: store under key 1.
+        mt_table[module["module_id"]] = ImportedModule(
+            num=module["module_id"],
+            code=module["code_base"],
+            data=module["data_base"],
+            ent=module.get("entry_table", 0)
+        )
+    else:
+        # Imported module: store using key = module_id - 1.
+        mt_table[module["module_id"] - 1] = ImportedModule(
+            num=module["module_id"],
+            code=module["code_base"],
+            data=module["data_base"],
+            ent=module.get("entry_table", 0)
+        )
 
     # Now perform the fixups on this module using the global MT table.
     # (fix_org is a tuple (fix_org_p, fix_org_d, fix_org_t) as parsed)
