@@ -15,7 +15,7 @@ LDW R0, [R13, 0x0]
 LDW R1, [R13, 0x4]
 SUB R0, R0, R1
 BLT, off=4
-BLT, off=1056785
+BLT, off=-16
 MOV R0, 0x0
 LDW R13, [R12, 0x4]
 STW R0, [R13, 0x0]
