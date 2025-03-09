@@ -35,7 +35,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   
   // Initialize PC: if a custom memory image is provided then start at 0x00 (for trampoline execution),
   // otherwise default to 0x80.
-  val pc = RegInit( if(customMemoryImage.isDefined) 0.U(32.W) else 0x80.U(32.W) )
+  val pc = RegInit(0x80.U(32.W))
   
   // Registers
   val regs = RegInit(VecInit(Seq.fill(16)(0.U(32.W))))
