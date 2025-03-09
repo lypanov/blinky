@@ -6,7 +6,7 @@ data memory (BSRAM currently)
 10 : variable memory begins here, pre-initialized with DEADBEEFs until ...
 20 : stack should begin here probably, but no logic for overflowing etc just yet
 40 : stack begins pointing here, but grows upwards ^^^
-50 - fin, this address doesn't exist
+50 : here we start allocating variable storage per module
 
 instruction memory
 ------------------
@@ -14,8 +14,8 @@ instruction memory
 00 : current program begins
 80 : PC initially set here, setup instructions
 ..   (setup instructions continue, every instruction until a0 should be a halt instruction)
-A0   halt instruction (*1)
-B0 - fin, this address doesn't exist
+B0   halt instruction (*1)
+C0 - fin, this address doesn't exist
 
 notes: *1: after completing setup CPU will jump to 00, on completion of user code
              if the user code does not halt and instead returns, we'll return
