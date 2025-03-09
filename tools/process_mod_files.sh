@@ -64,4 +64,7 @@ for mod_file in *.Mod; do
     echo ""
 done
 
+../tools/module_loader.py
+../tools/image_dump.py final_system.code
+
 echo "All .Mod files processed successfully" 
