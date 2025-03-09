@@ -7,7 +7,7 @@ import chisel3.util._
  * A wrapper for the CPU that connects it to a memory controller for testing.
  * This is similar to CPUMinimalWrapper but designed specifically for test environments.
  */
-class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]) extends Module {
+class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String], customMemoryImage: Option[Seq[String]] = None) extends Module {
   val io = IO(new Bundle {
     val r0 = Output(UInt(32.W))
     val r1 = Output(UInt(32.W)) 
@@ -24,7 +24,7 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
   })
   
   // Create CPU with the provided instructions
-  val cpu = Module(new CPUSubset0(instructionHexStrings))
+  val cpu = Module(new CPUSubset0(instructionHexStrings, customMemoryImage = customMemoryImage))
   
   // Create memory controller (use mock version for tests)
   val memoryController = Module(new MemoryController(useRealGowin = false))
