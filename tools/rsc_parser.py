@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 import struct
 import sys
-
-# Global module table: emulates the Oberon MT register.
-mt_table = {}
+from mt_table import mt_table  # Import the shared global module table
 
 def read_null_terminated_string(data, offset):
     """Read a null-terminated ASCII string starting at offset."""
@@ -58,7 +56,7 @@ def fixup_ldr_str_add(code, fixorg_d, mod_num, mt):
             code[index] = new_inst
         else:
             # For imported modules, try looking them up in the MT table.
-            imp = mt.get(mno, ImportedModule(0, 0, 0, 0))
+            imp = mt.get(mno - 1, ImportedModule(0, 0, 0, 0))
             v = imp.num
             new_inst = (((inst // 0x1000000) * 0x10 + MT) * 0x100000) + (v * 4)
             code[index] = new_inst
@@ -95,7 +93,7 @@ def fixup_bl(code, fixorg_p, mod_num, mt):
 
         if mno != 0:
             # Retrieve the imported module using the global table.
-            impmod = mt.get(mno, ImportedModule(0, 0, 0, 0))
+            impmod = mt.get(mno - 1, ImportedModule(0, 0, 0, 0))
             # Simulate the original Modules.Mod logic:
             #   dest := (impmod.ent + pno*4) + impmod.code
             dest = impmod.ent + (pno * 4) + impmod.code
@@ -123,7 +121,7 @@ def fixup_type(type_descriptors, fixorg_t, mod_data, mt):
         if mno == 0:
             new_inst = mod_data + vno
         else:
-            imp = mt.get(mno, ImportedModule(0, 0, 0, 0))
+            imp = mt.get(mno - 1, ImportedModule(0, 0, 0, 0))
             new_inst = imp.data + (imp.ent + vno * 4)
         type_descriptors[adr] = new_inst
         if disp == 0:

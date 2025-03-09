@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
 from rsc_parser import parse_rsc, fixup_bl, fixup_ldr_str_add, fixup_type
-
-# Global table emulating the MT register (module table)
-mt_table = {}
+from mt_table import mt_table  # Shared mt_table
 
 # Global dictionary holding all loaded modules by name.
 loaded_modules = {}
@@ -67,53 +65,45 @@ def load_module(module_name, loaded_modules=loaded_modules):
     return module
 
 def assemble_system_memory(root_module):
-    """
-    After all modules are loaded, assemble a system image.
-    For simplicity the image is a list of (virtual address, content) tuples.
-    The metadata includes the initial entry point (resolved from root_module).
-    """
-    system_image = []
-    
-    # Dump each module's code section at its allocated code_base.
-    for mod in loaded_modules.values():
+    system_image_lines = []
+    metadata = {}
+
+    # For each loaded module, dump its code section with a header.
+    for name, mod in loaded_modules.items():
         base = mod["code_base"]
+        code_length = len(mod["code"]) * 4  # total bytes
+        system_image_lines.append(f"=== Module: {name} ===")
+        system_image_lines.append(f"Base: 0x{base:08x}")
+        system_image_lines.append(f"Code Length: 0x{code_length:08x}")
         for i, inst in enumerate(mod["code"]):
             addr = base + i * 4
-            system_image.append((addr, inst))
-    
-    # Sort system memory by address.
-    system_image.sort(key=lambda tup: tup[0])
-    
-    # Create metadata: for example, the initial entry point of the root module.
-    metadata = {
-        "initial_module": root_module["module_id"],
-        "initial_entry_point": root_module["entry_point"] + root_module["code_base"],
-        "module_table": {mod["module_id"]: {"name": name,
-                                              "code_base": mod["code_base"],
-                                              "data_base": mod["data_base"]} 
-                         for name, mod in loaded_modules.items()}
-    }
-    
-    return system_image, metadata
+            # Always write using only the low 32 bits.
+            system_image_lines.append(f"0x{addr:08x}: 0x{inst & 0xffffffff:08x}")
+        system_image_lines.append("")  # blank line separator
+
+    metadata["initial_entry_point"] = f"0x{root_module['entry_point'] + root_module['code_base']:08x}"
+    metadata["module_table"] = {
+        mod["module_id"]: {"name": mod_name, "code_base": mod["code_base"], "code_length": len(mod["code"]) * 4}
+            for mod_name, mod in loaded_modules.items()}
+    system_image_lines.append("=== System Metadata ===")
+    system_image_lines.append(str(metadata))
+    return system_image_lines, metadata
 
 def main(root_module_name):
     # Load root module and all dependent modules recursively.
     root_module = load_module(root_module_name)
     
     # Assemble a system-wide memory image.
-    system_image, metadata = assemble_system_memory(root_module)
+    system_image_lines, metadata = assemble_system_memory(root_module)
     
     # Write the virtual memory image to final .code output.
     out_filename = "final_system.code"
     with open(out_filename, "w") as f:
-        f.write("=== System Memory Image ===\n")
-        for addr, inst in system_image:
-            f.write(f"0x{addr:08x}: 0x{inst:08x}\n")
-        f.write("\n=== Metadata ===\n")
-        f.write(str(metadata))
+        for line in system_image_lines:
+            f.write(line + "\n")
     
     print(f"Final system image written to {out_filename}.")
-    print(f"Initial entry point: 0x{metadata['initial_entry_point']:08x}")
+    print(f"Initial entry point: {metadata['initial_entry_point']}")
 
 if __name__ == "__main__":
     # Example: load the 'LightToggle' module (which depends on AMemoryMappedToggle).

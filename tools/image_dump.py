@@ -5,36 +5,55 @@ from instruction_parser import disassemble
 
 def dump_system_image(image_file):
     """
-    Reads a system image file containing lines of the form:
-      0x[address]: 0x[instruction]
-    and dumps a fully disassembled listing.
+    Reads a system image file with module header markers and dumps
+    the disassembled code for each module.
     """
-    instructions = []
-    addresses = []
     with open(image_file, "r") as f:
         lines = f.readlines()
-        for line in lines:
-            line = line.strip()
-            # Skip header or metadata lines
-            if not line or line.startswith("===") or line.startswith("Metadata"):
-                continue
-            # Expect lines like: "0x00401000: 0x81d00004"
+
+    current_module = None
+    module_lines = []
+    for line in lines:
+        line = line.strip()
+        if line.startswith("=== Module:"):
+            # If a previous module was being processed, dump its code.
+            if current_module is not None and module_lines:
+                print(f"\nModule: {current_module['name']}")
+                print(f"Base: 0x{current_module['base']:08x}  Code Length: 0x{current_module['length']:08x}")
+                for addr, inst in module_lines:
+                    # Mask the instruction to 32 bits.
+                    inst &= 0xffffffff
+                    print(f"0x{addr:08x}: 0x{inst:08x}    {disassemble(inst)}")
+            # Start a new module.
+            current_module = {"name": line[len("=== Module:"):].strip()}
+            module_lines = []
+        elif line.startswith("Base:"):
+            if current_module is not None:
+                base_str = line.split(":")[1].strip()
+                current_module["base"] = int(base_str, 16)
+        elif line.startswith("Code Length:"):
+            if current_module is not None:
+                len_str = line.split(":")[1].strip()
+                current_module["length"] = int(len_str, 16)
+        elif line and line.startswith("0x"):
+            # Parse an instruction line.
             try:
                 addr_str, rest = line.split(":", 1)
-                inst_str = rest.strip().split()[0]
                 addr = int(addr_str, 16)
-                instr = int(inst_str, 16)
-                addresses.append(addr)
-                instructions.append(instr)
+                inst_str = rest.strip().split()[0]
+                inst = int(inst_str, 16)
+                module_lines.append((addr, inst))
             except Exception:
-                # Skip lines that do not match the expected format.
                 continue
-
-    # Dump the disassembled instructions.
-    for i, instr in enumerate(instructions):
-        addr = addresses[i]
-        asm = disassemble(instr)
-        print(f"0x{addr:08x}: 0x{instr:08x}    {asm}")
+        # We ignore metadata blocks here.
+    
+    # Dump last module if any.
+    if current_module is not None and module_lines:
+        print(f"\nModule: {current_module['name']}")
+        print(f"Base: 0x{current_module['base']:08x}  Code Length: 0x{current_module['length']:08x}")
+        for addr, inst in module_lines:
+            inst &= 0xffffffff
+            print(f"0x{addr:08x}: 0x{inst:08x}    {disassemble(inst)}")
 
 def main():
     if len(sys.argv) < 2:
