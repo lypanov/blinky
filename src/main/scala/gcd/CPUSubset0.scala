@@ -55,21 +55,31 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     case Some(mem) => VecInit(mem.map(hex => s"h$hex".U(32.W)))
     case None =>
       {
-        val userProgEndAddr = 0x80 / 4     // End of user program (word address)
+        val userProgEndAddr = 0x80 / 4
         val setupStartAddr = 0x80 / 4
-        val setupEndAddr = 0xA0 / 4
-        val haltStartAddr = 0xA0 / 4
-        val haltEndAddr = 0xB0 / 4
+        val setupEndAddr = 0xB0 / 4
+        val haltStartAddr = 0xB0 / 4
+        val haltEndAddr = 0xC0 / 4
+        if (instructionHexStrings.length > userProgEndAddr) {
+          throw new RuntimeException(s"Provided hex strings (${instructionHexStrings.length}) exceed the maximum allowed length ($userProgEndAddr)")
+        }
         val userBeefCount = userProgEndAddr - instructionHexStrings.length
         val userBeefFiller = Seq.fill(userBeefCount)("0000BEEF")
-        // Setup instructions as before
         val setupInstructions = Seq(
+          "4c000010", // MOV R12, 0x0010     ; MT (module top?)
+          "4d000050", // MOV R13, 0x0050     ; setup variable block 0x50
+          "adc00004", // STW R13, [R12, 0x04]
+          "4dd80020", // ADD R13, [R13, 0x20]; now variable block 0x70
+          "adc00008", // STW R13, [R12, 0x08]
           "4e000080", // MOV R14, 0x0080     ; Top of stack
-          "4f0000A0", // MOV R15, 0x00A0     ; Halt address
+          "4f0000B0", // MOV R15, 0x00B0     ; Halt address
           "40000000", // MOV R0, 0x0000      ; Clear R0 (function body)
           "c7000000"  // BT R0               ; Default branch (to user code)
         )
         val setupSize = setupEndAddr - setupStartAddr
+        if (setupInstructions.length > setupSize) {
+          throw new RuntimeException(s"Setup instructions (${setupInstructions.length}) exceed the maximum allowed length ($setupSize)")
+        }
         val setupBeefCount = setupSize - setupInstructions.length
         val setupBeefFiller = Seq.fill(setupBeefCount)("0000BEEF")
         val haltCount = haltEndAddr - haltStartAddr
@@ -211,23 +221,6 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val effectiveAddr = regs(regB) + signExtOffset
     
     when (isLoad) {  // Load instructions
-      // Special case: If loading into R13 from R12 base, always return 0x10 and ignore offset
-      when ((regA === 13.U) && (regB === 12.U)) {
-        // Override normal load behavior
-        regWrite := true.B
-        regWriteAddr := regA
-        regWriteData := 0x10.U
-        
-        // Debug output
-        printf(p"Special LDW override: Writing 0x10 to R13 from base R12, ignoring offset.\n")
-        
-        // Update PC directly since we're not doing a memory access
-        pc := nextPC
-        
-        // No memory access pending
-        memoryAccessPending := false.B
-      } .otherwise {
-        // Normal load behavior
         when (!isByte) {  // LDW - Load Word
           // Start a memory read operation
           io.memAddr := effectiveAddr
@@ -242,7 +235,6 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         } .otherwise {
           // LDB - Load Byte not implemented yet
         }
-      }
     } .otherwise {  // Store instructions
       when (!isByte) {  // STW - Store Word
         // Start a memory write operation

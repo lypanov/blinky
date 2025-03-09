@@ -547,42 +547,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       println(s"Final PC value = 0x${pcValue.toHexString.toUpperCase()}")
       
       // Check that the PC is at the expected address 0xA0
-      assert(pcValue == 0xA0, s"PC value $pcValue should be 0xA0 (160), confirming return from subroutine")
-    }
-  }
-
-  it should "behave correctly when loading into R13 from R12" in {
-    val testId = "r13_source_hack_test"
-    checkTestFilter(testId)
-    val traceFile = initializeTest(testId)
-    
-    // Define the test program instructions
-    val r13SourceHackInstructions = Seq(
-      "4000DEAD", // MOV R0, 0xDEAD      ; Initialize R0 to 0xDEAD
-      "8DC00003", // LDW R13, [R12, 0x3]  ; Hacked: Load value from address R12+3 into R13 -> should read address 0x10
-      "A0D00000", // STW R0, [R13, 0x0]  ; Store R0 value at address in R13
-      "41000010", // MOV R1, 0x10        ; Set R1 to 0
-      "81100000", // LDW R1, [R1, 0x0]   ; Load from address 0x10 into R1 (should be 0xDEAD)
-      "E7FFFFFF"  // B always, halt      ; Branch to self (halt)
-    )
-    
-    // Print the R13 source hack test instructions to the trace file
-    printInstructionsToTrace("R13 Source Hack Test Instructions", r13SourceHackInstructions)
-    
-    test(new CPUTestbenchWrapper(r13SourceHackInstructions)).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
-      dut.clock.setTimeout(100)
-      
-      val cyclesRun = runTillHalt(dut, 30)
-      println(s"R13 source hack test ran for $cyclesRun cycles")
-      
-      val r0Value = dut.io.r0.peek().litValue.toInt
-      val r1Value = dut.io.r1.peek().litValue.toInt
-      println(s"After R13 source hack test, R0 = 0x${r0Value.toHexString.toUpperCase()}, R1 = 0x${r1Value.toHexString.toUpperCase()}")
-      
-      // Check the expected value - should be 0xBEEF
-      assert(r1Value == 0xDEAD, s"R1 value $r1Value should be 0xDEAD, indicating successful R13 source hack")
-      // TODO this will be the ADD variant
-      // assert(r0Value == 0xBEEF, s"R0 value $r0Value should be 0xBEEF, indicating successful R13 source hack")
+      assert(pcValue == 0xB0, s"PC value $pcValue should be 0xB0 (160), confirming return from subroutine")
     }
   }
 
@@ -612,7 +577,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       
       while (blinkPeriods.size < expectedBlinks) {
         // Wait for a memory write at address 0x10, which indicates a blink event
-        val cyclesForBlink = runTillMemoryWrite(dut, 0x10, lastR0, 10000)
+        val cyclesForBlink = runTillMemoryWrite(dut, 0x50, lastR0, 10000)
         blinkPeriods :+= cyclesForBlink
         println(s"Blink ${blinkPeriods.size} occurred after $cyclesForBlink cycles")
         
@@ -626,10 +591,11 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       }
 
       val avgPeriod = blinkPeriods.sum / blinkPeriods.size
-      assert(avgPeriod == 81, s"Average blink period $avgPeriod is expected period of 81")
+      // TODO should modify average period calculation to skip the first period as it's biased by setup instructions
+      assert(avgPeriod == 89, s"Average blink period $avgPeriod is expected period of 89")
     }
   }
-
+  
   // New helper and test for final_system.code image execution
   it should "correctly execute system image from final_system.code with trampoline" in {
     val testId = "final_system_code_test"
@@ -688,15 +654,21 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     val lowMemorySize = 44  // 0xB0/4 words
     val userProgEndAddr = 0x80 / 4
     val setupStartAddr = 0x80 / 4
-    val setupEndAddr = 0xA0 / 4
-    val haltStartAddr = 0xA0 / 4
-    val haltEndAddr = 0xB0 / 4
+    val setupEndAddr = 0xB0 / 4
+    val haltStartAddr = 0xB0 / 4
+    val haltEndAddr = 0xC0 / 4
     val defaultUserProg = Seq.fill(userProgEndAddr)("0000BEEF")
     val setupInstructions = Seq(
-      "4e000080", // MOV R14, 0x0080
-      "4f0000A0", // MOV R15, 0x00A0
-      "40000000", // MOV R0, 0x0000
-      "c7000000"  // BT R0
+      "4c000010", // MOV R12, 0x0010     ; MT (module top?)
+      "4d000050", // MOV R13, 0x0050     ; setup variable block 0x50
+      "adc00004", // STW R13, [R12, 0x04]
+      "4dd80020", // ADD R13, [R13, 0x20]; now variable block 0x70
+      "adc00008", // STW R13, [R12, 0x08]
+      "4e000080", // MOV R14, 0x0080     ; Top of stack
+      "4f0000A0", // MOV R15, 0x00A0     ; Halt address
+      "4f0000B0", // MOV R15, 0x00B0     ; Halt address
+      "40000000", // MOV R0, 0x0000      ; Clear R0 (function body)
+      "c7000000"  // BT R0               ; Default branch (to user code)
     )
     val defaultSetup = setupInstructions ++ Seq.fill(setupEndAddr - setupStartAddr - setupInstructions.length)("0000BEEF")
     val defaultHalt = Seq.fill(haltEndAddr - haltStartAddr)("E7FFFFFF")
