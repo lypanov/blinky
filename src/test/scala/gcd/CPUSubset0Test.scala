@@ -600,6 +600,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
   it should "correctly execute system image from final_system.code with trampoline" in {
     val testId = "final_system_code_test"
     checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
     
     // Read the final_system.code file (adjust the path if needed)
     val codeFile = new java.io.File(projectRoot, "tests/final_system.code")
