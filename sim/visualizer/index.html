@@ -24,7 +24,7 @@
       <button id="btn-back" title="Previous instruction (A / ←)">◀ Step</button>
       <button id="btn-step" title="Next instruction (S / →)">Step ▶</button>
       <button id="btn-run" class="primary" title="Run/Pause (Space)">Run</button>
-      <button id="btn-fail" class="danger hidden" title="Jump to the broken BL (F)">Jump to BL failure</button>
+      <button id="btn-fail" class="danger hidden" title="Jump to the BL (F). Target is Toggle; R15 is not written.">Jump to BL (R15)</button>
       <label class="speed">
         Speed
         <input id="speed" type="range" min="0" max="8" value="4" />
@@ -42,7 +42,7 @@
 
   <div id="fail-banner" class="fail-banner hidden" role="status">
     <strong>Blink3 failure.</strong>
-    <span id="fail-text">BL at 0x108C should call Toggle at 0x1000 and set R15 = 0x1090.</span>
+    <span id="fail-text">BL at 0x108C lands on Toggle at 0x1000. R15 stays 0xB0 — CPU never saved PC+4 (0x1090).</span>
   </div>
 
   <main class="grid">

@@ -68,9 +68,9 @@ The clone lands in `tools/project-norebo/` (gitignored). After the monorepo layo
 ## Visualizer (Phase 2)
 
 Local web page (Python 3 stdlib HTTP server). Blink2 and Blink3 buttons load
-**real Verilator traces** of the current unfixed loader and CPU (Blink3 shows
-the broken `BL` at `0x108C`). Stepping is one **instruction** (PC change), not
-one clock. `F` jumps to the Blink3 failure.
+**real Verilator traces**. The Python loader now relocates Blink3's `BL` at
+`0x108C` to Toggle (`0x1000`); the CPU still does not write R15. Stepping is one
+**instruction** (PC change), not one clock. `F` jumps to that `BL`.
 
 On Bee (this Linux PC):
 

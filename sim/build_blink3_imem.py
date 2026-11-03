@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the unfixed Blink3 custom IMEM from tests/final_system.code."""
+"""Build the Blink3 custom IMEM from tests/final_system.code (loader-fixed BL)."""
 from __future__ import annotations
 
 import os
@@ -18,9 +18,9 @@ def main() -> int:
     write_words(out, words)
     print(f"[imem] {len(words)} words -> {out}")
     print(f"[imem] word[0] trampoline = 0x{words[0]:08x}  (B to LightToggle)")
-    print(f"[imem] 0x108C = 0x{words[0x108C // 4]:08x}  (unfixed BL)")
+    print(f"[imem] 0x108C = 0x{words[0x108C // 4]:08x}  (BL → Toggle, expect f7ffffdc)")
     print(f"[imem] 0x1000 = 0x{words[0x1000 // 4]:08x}  (Toggle)")
-    print(f"[imem] 0x1050 = 0x{words[0x1050 // 4]:08x}  (wrong land: MOV R0, 0)")
+    print(f"[imem] 0x1050 = 0x{words[0x1050 // 4]:08x}  (LightToggle counter := 0)")
     return 0
 
 

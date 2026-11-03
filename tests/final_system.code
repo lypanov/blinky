@@ -40,7 +40,7 @@ Code Length: 0x00000064
 0x00001080: 0x81d00004
 0x00001084: 0x00090001
 0x00001088: 0xe5000004
-0x0000108c: 0xf7fffff0
+0x0000108c: 0xf7ffffdc
 0x00001090: 0x40000000
 0x00001094: 0x8dc00008
 0x00001098: 0xa0d00000
@@ -50,4 +50,4 @@ Code Length: 0x00000064
 0x000010a8: 0xc700000f
 
 === System Metadata ===
-{'initial_entry_point': '0x00001048', 'module_table': {1: {'name': 'AMemoryMappedToggle', 'code_base': 4096, 'code_length': 72}, 2: {'name': 'LightToggle', 'code_base': 4168, 'code_length': 100}}}
+{'initial_entry_point': '0x00001048', 'module_table': {1: {'name': 'AMemoryMappedToggle', 'code_base': 4096, 'code_length': 72, 'entries': [40, 0, 0]}, 2: {'name': 'LightToggle', 'code_base': 4168, 'code_length': 100, 'entries': [0]}}}
