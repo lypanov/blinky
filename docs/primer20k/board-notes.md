@@ -159,9 +159,9 @@ From The Researcher (3 Nov 2026) and remaining gaps:
   (anode to 3V3 via 510R). Webcam cannot identify which LED is which.
 - **PMOD2 M15/M14 as Pi UART** — candidate only, not loopback-tested.
 
-HDMI and BL702 UART are verified (3 Nov 2026). Earlier black ThinkVision stills
-were the HDMI switcher on the wrong input. After switching: NESTang palette,
-then nestest menu via `ttyUSB1` @ 921600 on M11/T13. See [`nestang.md`](nestang.md).
+HDMI and BL702 UART are verified (3 Nov 2026). A black ThinkVision meant the
+HDMI switcher was on the wrong input. After switching: NESTang palette, then
+nestest menu via `ttyUSB1` @ 921600 on M11/T13. See [`nestang.md`](nestang.md).
 
 ## Sources
 
