@@ -1,0 +1,16 @@
+[Unit]
+Description=Webcam MCP server (streamable HTTP stills on localhost)
+Documentation=file://%h/fpga/blinky/tools/webcam-mcp/README.md
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/fpga/blinky/tools/webcam-mcp
+ExecStart=%h/fpga/blinky/tools/webcam-mcp/.venv/bin/python %h/fpga/blinky/tools/webcam-mcp/server.py --host 127.0.0.1 --port 8766
+Restart=on-failure
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+Environment=WEBCAM_MCP_CAPTURE_DIR=%h/fpga/captures
+
+[Install]
+WantedBy=default.target
