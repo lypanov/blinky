@@ -161,7 +161,7 @@ AMMT_SOURCE = {
 LT_SOURCE = {
     0: (None, "compiler prologue: SUB SP, 4"),
     1: (None, "compiler prologue: save LNK"),
-    2: (9, "counter := 0   ← WRONG BL landing (0x1050)"),
+    2: (9, "counter := 0"),
     3: (9, "SB := MT[2]"),
     4: (9, "store counter"),
     5: (10, "maxIterations := 5"),
@@ -176,7 +176,7 @@ LT_SOURCE = {
     14: (14, "load maxIterations"),
     15: (14, "IF counter >= maxIterations"),
     16: (14, "BLT skip Toggle"),
-    17: (15, "MMT.Toggle  ; unfixed BL — should go to 0x1000"),
+    17: (15, "MMT.Toggle  ; BL → 0x1000 (R15 still not written)"),
     18: (16, "counter := 0  ; correct return address of the BL (0x1090)"),
     19: (16, "reload SB"),
     20: (16, "store counter"),
@@ -260,9 +260,7 @@ def build_blink3(imem_path: str) -> tuple[list[dict], dict]:
         line, note = LT_SOURCE.get(i, (None, None))
         mark = None
         if addr == BLINK3_BL_PC:
-            mark = "failure-bl"
-        elif addr == BLINK3_WRONG_LAND:
-            mark = "wrong-land"
+            mark = "call-bl"
         elif addr == BLINK3_RETURN:
             mark = "return-addr"
         entries.append(entry(
@@ -291,8 +289,8 @@ def build_blink3(imem_path: str) -> tuple[list[dict], dict]:
             {"file": "tests/AMemoryMappedToggle.Mod", "source": ammt_mod, "title": "AMemoryMappedToggle"},
             {"file": "tests/Blink3test.Mod", "source": lt_mod, "title": "LightToggle (Blink3)"},
         ],
-        "title": "Blink3 — imported Toggle (this one fails)",
-        "subtitle": "Unfixed Python loader + CPU that never writes R15 on BL",
+        "title": "Blink3 — imported Toggle (loader fixed, R15 still dropped)",
+        "subtitle": "BL now lands on Toggle at 0x1000; CPUSubset0 never writes R15",
         "ammt_mod_offset": ammt_off,
         "lt_mod_offset": lt_off,
     }
@@ -340,9 +338,22 @@ def find_blink3_failure(steps: list[dict]) -> dict | None:
     actual = int(land.get("pc") or 0)
     r15 = int(bl.get("r15") or 0)
     r15_after = int(land.get("r15") or r15)
+    hex_word = bl.get("hex") or ""
+    insn = hex_word if str(hex_word).startswith("0x") else f"0x{hex_word}"
+    kind = "bl_no_r15" if actual == BLINK3_TOGGLE else "bl_wrong_target"
+    if actual == BLINK3_TOGGLE:
+        label = (
+            "BL at 0x108C lands on Toggle at 0x1000 (loader matches Modules.Mod). "
+            "R15 is not written."
+        )
+    else:
+        label = (
+            f"BL at 0x108C jumps to 0x{actual:X}, not Toggle at 0x1000. "
+            "R15 is not written."
+        )
     return {
-        "kind": "bl_wrong_target",
-        "label": "BL at 0x108C jumps to 0x1050, not Toggle at 0x1000. R15 is not written.",
+        "kind": kind,
+        "label": label,
         "bl_pc": BLINK3_BL_PC,
         "expected_target": BLINK3_TOGGLE,
         "actual_target": actual,
@@ -353,7 +364,7 @@ def find_blink3_failure(steps: list[dict]) -> dict | None:
         "r15_written": r15_after == BLINK3_RETURN,
         "step_index": bl_i,
         "landing_step_index": bl_i + 1 if bl_i + 1 < len(steps) else bl_i,
-        "insn": "0xf7fffff0",
+        "insn": insn,
     }
 
 
@@ -384,9 +395,7 @@ def annotate(trace: dict, program: list[dict], meta: dict) -> dict:
             cyc["note"] = None
             cyc["mark"] = None
         if pc == BLINK3_BL_PC:
-            cyc["mark"] = "failure-bl"
-        elif pc == BLINK3_WRONG_LAND:
-            cyc["mark"] = cyc.get("mark") or "wrong-land"
+            cyc["mark"] = "call-bl"
         elif pc == BLINK3_TOGGLE:
             cyc["mark"] = cyc.get("mark") or "expected-target"
     return trace

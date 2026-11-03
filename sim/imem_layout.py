@@ -26,7 +26,7 @@ SETUP = [
     (0xA0, 0xC7000000, "BT R0             ; jump to address 0"),
 ]
 
-# Blink3 linked image (unfixed Python loader). LightToggle entry = 0x1048.
+# Blink3 linked image (Python loader matching Modules.Mod). LightToggle entry = 0x1048.
 BLINK3_ENTRY = 0x1048
 BLINK3_BL_PC = 0x108C
 BLINK3_WRONG_LAND = 0x1050

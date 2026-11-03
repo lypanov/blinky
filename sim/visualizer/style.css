@@ -95,9 +95,11 @@ ol.code li.hdr { color: var(--warn); font-weight: 700; }
 .asm .row .arrow { color: var(--pc); text-align: center; }
 .asm .row.current { background: #3a1520; box-shadow: inset 3px 0 0 var(--pc); }
 .asm .row.failure-bl { background: #4a1810; }
+.asm .row.call-bl { background: #0f2a1c; }
 .asm .row.wrong-land { background: #3a2a10; }
 .asm .row.expected-target { background: #0f2a1c; }
 .asm .row.failure-bl.current { box-shadow: inset 3px 0 0 var(--fail); }
+.asm .row.call-bl.current { box-shadow: inset 3px 0 0 var(--ok); }
 .asm .addr { color: #8fb4ff; }
 .asm .hex { color: #7f8aa3; }
 .asm .mn { color: #d7e3f7; }

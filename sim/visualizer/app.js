@@ -68,6 +68,7 @@ function renderSource(modLines) {
 
 function tagFor(mark) {
   if (mark === "failure-bl") return '<span class="tag tag-fail">BROKEN BL</span>';
+  if (mark === "call-bl") return '<span class="tag tag-ok">BL → TOGGLE</span>';
   if (mark === "wrong-land") return '<span class="tag tag-wrong">LANDS HERE</span>';
   if (mark === "expected-target") return '<span class="tag tag-ok">TOGGLE</span>';
   if (mark === "return-addr") return '<span class="tag tag-wrong">SHOULD RETURN HERE</span>';
@@ -191,8 +192,11 @@ function renderDmem(dmem) {
 function failBannerHtml(f) {
   if (!f) return "";
   const r15ok = f.r15_written;
-  return `BL at <code>${hex32(f.bl_pc)}</code> jumped to <code>${hex32(f.actual_target)}</code>
-    (MOV R0, 0 inside LightToggle), not Toggle at <code>${hex32(f.expected_target)}</code>.
+  const landed = f.actual_target === f.expected_target;
+  const where = landed
+    ? `landed on Toggle at <code>${hex32(f.actual_target)}</code> (loader matches Modules.Mod).`
+    : `jumped to <code>${hex32(f.actual_target)}</code>, not Toggle at <code>${hex32(f.expected_target)}</code>.`;
+  return `BL at <code>${hex32(f.bl_pc)}</code> ${where}
     R15 ${r15ok ? "was written" : "stayed " + hex32(f.r15_after) + " — CPU never saved PC+4 (" + hex32(f.r15_expected) + ")"}.`;
 }
 
@@ -225,6 +229,8 @@ function applyCycle() {
 
   const f = t.failure;
   const atFail = !!(f && (i === f.step_index || i === f.landing_step_index));
+  // Highlight R15 whenever we are on the BL or its landing, because the CPU
+  // still does not write LNK. Target may already be Toggle (loader fixed).
   $("reg-15").classList.toggle("stale", !!(f && !f.r15_written && atFail));
   $("fail-banner").classList.toggle("here", atFail);
   $("brand-dot").classList.toggle("fail", state.image === "blink3");

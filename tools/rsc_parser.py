@@ -27,15 +27,40 @@ def read_int(data, offset):
     return val, offset + 4
 
 class ImportedModule:
-    def __init__(self, num, code=0, data=0, ent=0):
-        self.num = num      # module number (from import table)
-        self.code = code    # base address of its code section (dummy value for now)
-        self.data = data    # base address of its data section (dummy value)
-        self.ent = ent      # base address of its entry table (dummy value)
+    def __init__(self, num, code=0, data=0, ent=0, entries=None):
+        self.num = num      # module number (mod.num in Modules.Mod)
+        self.code = code    # base address of its code section
+        self.data = data    # base address of its data section
+        self.ent = ent      # unused (Modules.Mod reads entries[] from memory)
+        self.entries = list(entries or [])  # object-file entry table (byte offsets)
 
-def fixup_ldr_str_add(code, fixorg_d, mod_num, mt):
+    def entry_at(self, pno):
+        if pno < 0 or pno >= len(self.entries):
+            raise IndexError(
+                f"entry {pno} out of range for module {self.num} "
+                f"(have {len(self.entries)} entries)"
+            )
+        return self.entries[pno]
+
+
+def _import_mod(imports, mno, mt):
+    """Modules.Mod: SYSTEM.GET(mod.imp + (mno-1)*4, impmod)."""
+    if imports is not None:
+        if mno < 1 or mno > len(imports):
+            raise IndexError(f"import mno={mno} out of range (have {len(imports)})")
+        return imports[mno - 1]
+    # Fallback for standalone parse_rsc --fixup: global MT keyed by mod.num.
+    if mt is None or mno not in mt:
+        raise KeyError(f"no imported module for mno={mno}")
+    return mt[mno]
+
+
+def fixup_ldr_str_add(code, fixorg_d, mod_num, mt, imports=None):
     """
-    Fixup for LDR/STR/ADD instructions that uses the emulated MT table.
+    Fixup for LDR/STR/ADD. Matches Modules.Mod D-list.
+    mno=0: rewrite to LDW/STW via MT (R12) at mod.num*4.
+    mno!=0: import — MT slot of the imported module, and the following
+    word's offset is entries[vno] (SYSTEM.GET(impmod.ent + vno*4)).
     """
     MT = 12
     adr_byte = fixorg_d * 4
@@ -46,66 +71,78 @@ def fixup_ldr_str_add(code, fixorg_d, mod_num, mt):
         inst = code[index]
         mno = (inst // 0x100000) % 0x10
         disp = inst % 0x1000
-        if disp == 0:
-            break
 
         if mno == 0:
-            # Global fixup: use current module's number from the MT table.
-            current_mod = mt.get(mod_num)
             new_inst = (((inst // 0x1000000) * 0x10 + MT) * 0x100000) + (mod_num * 4)
             code[index] = new_inst
+        elif not imports and (mt is None or mno not in mt):
+            pass  # standalone --fixup without a loaded import list
         else:
-            # For imported modules, try looking them up in the MT table.
-            imp = mt.get(mno - 1, ImportedModule(0, 0, 0, 0))
+            imp = _import_mod(imports, mno, mt)
             v = imp.num
             new_inst = (((inst // 0x1000000) * 0x10 + MT) * 0x100000) + (v * 4)
             code[index] = new_inst
             if index + 1 < len(code):
                 inst_next = code[index + 1]
                 vno = inst_next % 0x100
-                offset_val = imp.ent
+                offset_val = imp.entry_at(vno)
                 if ((inst_next // 0x100) % 2) == 1:
                     offset_val += (imp.code - imp.data)
-                new_inst_next = ((inst_next // 0x10000) * 0x10000) + offset_val
+                new_inst_next = ((inst_next // 0x10000) * 0x10000) + (offset_val & 0xFFFF)
                 code[index + 1] = new_inst_next
+        if disp == 0:
+            break
         adr_byte = adr_byte - disp * 4
     return code
 
-def fixup_bl(code, fixorg_p, mod_num, mt):
+def fixup_bl(code, fixorg_p, code_base=0, imports=None, mod_num=None, mt=None):
     """
-    Fixup for BL (branch link) instructions that uses the emulated MT table.
-    Instead of discarding the original module information, we use the MT table (mt)
-    to look up the imported module's descriptor.
+    Modules.Mod P-list (BL fixup), verbatim:
+
+        adr := mod.code + fixorgP*4;
+        WHILE adr # mod.code DO
+          SYSTEM.GET(adr, inst);
+          mno := inst DIV 100000H MOD 10H;
+          pno := inst DIV 1000H MOD 100H;
+          disp := inst MOD 1000H;
+          SYSTEM.GET(mod.imp + (mno-1)*4, impmod);
+          SYSTEM.GET(impmod.ent + pno*4, dest); dest := dest + impmod.code;
+          offset := (dest - adr - 4) DIV 4;
+          SYSTEM.PUT(adr, (offset MOD 1000000H) + 0F7000000H);
+          adr := adr - disp*4
+        END
+
+    `imports` is this module's import list (mod.imp). `code_base` is mod.code.
+    The old (mod_num, mt) keyword form is accepted so parse_rsc --fixup still runs;
+    it cannot relocate imported BLs without a real import list.
     """
-    MT = 12  # Constant from Oberon (if needed for adjustments)
-    adr_byte = fixorg_p * 4
-    while adr_byte != 0:
-        index = adr_byte // 4
+    if imports is None:
+        imports = []
+        if mt is not None and mod_num is not None:
+            # Best-effort: treat MT values as an import list keyed by mno.
+            pass
+    adr = code_base + fixorg_p * 4
+    while adr != code_base:
+        index = (adr - code_base) // 4
         if index < 0 or index >= len(code):
             break
         inst = code[index]
         mno = (inst // 0x100000) % 0x10
         pno = (inst // 0x1000) % 0x100
         disp = inst % 0x1000
-        if disp == 0:
-            # Prevent infinite loop if disp is zero.
-            break
-
         if mno != 0:
-            # Retrieve the imported module using the global table.
-            impmod = mt.get(mno - 1, ImportedModule(0, 0, 0, 0))
-            # Simulate the original Modules.Mod logic:
-            #   dest := (impmod.ent + pno*4) + impmod.code
-            dest = impmod.ent + (pno * 4) + impmod.code
-            offset = (dest - adr_byte - 4) // 4
-            new_inst = (offset % 0x1000000) + 0xF7000000
-            code[index] = new_inst
-        else:
-            # For a global (non-import) reference, use the current module from the MT table.
-            current_mod = mt.get(mod_num)
-            # You may wish to adjust further if needed.
-            # Here we leave it as is since no special fixup may be required.
-        adr_byte = adr_byte - disp * 4
+            if not imports and mt is None:
+                # Standalone --fixup: leave the compiler placeholder.
+                pass
+            else:
+                impmod = _import_mod(imports if imports else None, mno, mt)
+                dest = impmod.entry_at(pno) + impmod.code
+                offset = (dest - adr - 4) // 4
+                code[index] = (offset % 0x1000000) + 0xF7000000
+        next_adr = adr - disp * 4
+        if next_adr == adr:
+            break
+        adr = next_adr
     return code
 
 def fixup_type(type_descriptors, fixorg_t, mod_data, mt):
@@ -134,34 +171,35 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
         data = f.read()
     
     offset = 0
+    verbose = output_format not in ("code_only", "quiet")
     
-    if output_format != "code_only":
+    if verbose:
         print("=== Parsing .rsc file ===")
 
     # 1. Module header
     mod_id, offset = read_null_terminated_string(data, offset)
-    if output_format != "code_only":
+    if verbose:
         print(f"Module ID: {mod_id}")
     
     key, offset = read_int(data, offset)
-    if output_format != "code_only":
+    if verbose:
         print(f"Key: {key}")
     
     if offset < len(data):
         version = data[offset]
         offset += 1
-        if output_format != "code_only":
+        if verbose:
             print(f"Version: {version}")
     else:
         version = None
         print("Warning: Could not read version byte")
     
     file_size, offset = read_int(data, offset)
-    if output_format != "code_only":
+    if verbose:
         print(f"File Size: {file_size} bytes")
 
     # 2. Import table
-    if output_format != "code_only":
+    if verbose:
         print("\n-- Imports --")
     imports = []
     imp_modules = {}  # Map from import index to ImportedModule
@@ -178,7 +216,7 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
             # Create a dummy ImportedModule for this import
             imp_modules[imp_index] = ImportedModule(imp_val)
             imp_index += 1
-            if output_format != "code_only":
+            if verbose:
                 print(f"Imported Module: {imp_str}, value: {imp_val}")
         else:
             break
@@ -187,7 +225,7 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
     if offset + 4 <= len(data):
         td_byte_size, offset = read_int(data, offset)
         td_count = td_byte_size // 4
-        if output_format != "code_only":
+        if verbose:
             print(f"\nType Descriptor Section: {td_byte_size} bytes ({td_count} integers)")
         type_descriptors = []
         for _ in range(td_count):
@@ -203,7 +241,7 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
     # 4. Global variable data size
     if offset + 4 <= len(data):
         data_size, offset = read_int(data, offset)
-        if output_format != "code_only":
+        if verbose:
             print(f"\nGlobal variable data size: {data_size} bytes")
     else:
         data_size = 0
@@ -212,12 +250,12 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
     # 5. String table
     if offset + 4 <= len(data):
         strx, offset = read_int(data, offset)
-        if output_format != "code_only":
+        if verbose:
             print(f"\nString Table Length: {strx} bytes")
         if offset + strx <= len(data):
             string_table = data[offset:offset + strx]
             offset += strx
-            if output_format != "code_only":
+            if verbose:
                 print("String Table content:", string_table.decode('utf-8', errors='replace'))
         else:
             string_table = b''
@@ -229,7 +267,7 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
     # 6. Code section
     if offset + 4 <= len(data):
         code_len, offset = read_int(data, offset)
-        if output_format != "code_only":
+        if verbose:
             print(f"\nCode Section: {code_len} instruction(s)")
         code = []
         for _ in range(code_len):
@@ -244,18 +282,18 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
         print("\nWarning: Could not read code length")
 
     # 10. Commands
-    if output_format != "code_only":
+    if verbose:
         print("\n-- Commands --")
     while offset < len(data):
         if data[offset] == 0:
             offset += 1
             break
         cmd_name, offset = read_null_terminated_string(data, offset)
-        if output_format != "code_only":
+        if verbose:
             print(f"Command name: {cmd_name}")
         if offset + 4 <= len(data):
             cmd_val, offset = read_int(data, offset)
-            if output_format != "code_only":
+            if verbose:
                 print(f"Command value: {cmd_val}")
         else:
             print("Warning: Incomplete command entry")
@@ -264,7 +302,7 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
     # 11. Entries
     if offset + 4 <= len(data):
         nofent, offset = read_int(data, offset)
-        if output_format != "code_only":
+        if verbose:
             print(f"\nNumber of Entries: {nofent}")
         entries = []
         for _ in range(nofent):
@@ -274,14 +312,14 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
             else:
                 print(f"Warning: Could not read all {nofent} entries")
                 break
-        if output_format != "code_only":
+        if verbose:
             print(f"Entries: {entries}")
     else:
         entries = []
         print("Warning: Could not read number of entries")
 
     # 12. Pointer References
-    if output_format != "code_only":
+    if verbose:
         print("\n-- Pointer References --")
     pointer_refs = []
     while offset + 4 <= len(data):
@@ -289,7 +327,7 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
         if ptr == 0xFFFFFFFF:
             break
         pointer_refs.append(ptr)
-    if output_format != "code_only":
+    if verbose:
         print(f"Pointer References: {pointer_refs}")
 
     # 13 & 14. Fixup Origins and Entry Point
@@ -298,7 +336,7 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
         fix_org_d, offset = read_int(data, offset)
         fix_org_t, offset = read_int(data, offset)
         entry_point, offset = read_int(data, offset)
-        if output_format != "code_only":
+        if verbose:
             print(f"\nFixup Origins: fixOrgP = {fix_org_p}, fixOrgD = {fix_org_d}, fixOrgT = {fix_org_t}")
             print(f"Entry Point: {entry_point}")
     else:
@@ -308,25 +346,24 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
     if offset < len(data):
         marker = data[offset]
         if marker == ord('O'):
-            if output_format != "code_only":
+            if verbose:
                 print("Marker: 'O'")
         else:
             print(f"Warning: Unexpected marker: {marker}")
     else:
         print("Warning: No marker found")
 
-    # Default module number (for global fixups)
+    # Default module number (for global D-list fixups in standalone --fixup).
+    # Do not write mt_table here: parse_rsc is also used while loading imports,
+    # and stuffing a dummy at key 1 used to wipe the real module table.
     mod_num = 1
-
-    # Create a descriptor for the current module.
-    # For example, we assume the module's code base is at index 0 and data base 0 in our simulation.
-    current_module = ImportedModule(mod_num, code=0, data=0, ent=0)
-    mt_table[mod_num] = current_module
 
     # Perform fixup
     if perform_fixup:
-        code = fixup_bl(code, fix_org_p, mod_num, mt_table)
-        code = fixup_ldr_str_add(code, fix_org_d, mod_num, mt_table)
+        # Standalone --fixup has no loaded import list, so imported BLs are
+        # left as compiler placeholders. Linked images go through module_loader.
+        code = fixup_bl(code, fix_org_p, code_base=0, imports=[])
+        code = fixup_ldr_str_add(code, fix_org_d, mod_num, mt_table, imports=[])
         type_descriptors = fixup_type(type_descriptors, fix_org_t, 0, mt_table)
 
     # Output code
@@ -340,7 +377,7 @@ def parse_rsc(file_path, output_format="default", perform_fixup=False, mod_num=1
         for i, inst in enumerate(code):
             print(f"  {i:04}: 0x{inst:08x}")
 
-    if output_format != "code_only":
+    if verbose:
         print("\n=== End of .rsc Parsing ===")
 
     return {

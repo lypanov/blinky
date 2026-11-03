@@ -347,8 +347,8 @@
       "file": "tests/Blink3test.Mod",
       "line": 9,
       "src": "counter := 0;",
-      "note": "counter := 0   \u2190 WRONG BL landing (0x1050)",
-      "mark": "wrong-land"
+      "note": "counter := 0",
+      "mark": null
     },
     {
       "addr": 4180,
@@ -492,13 +492,13 @@
     },
     {
       "addr": 4236,
-      "hex": "f7fffff0",
-      "disasm": "BL always, off=-16",
+      "hex": "f7ffffdc",
+      "disasm": "BL always, off=-36",
       "file": "tests/Blink3test.Mod",
       "line": 15,
       "src": "MMT.Toggle; (* Use the toggle function from the imported module *)",
-      "note": "MMT.Toggle  ; unfixed BL \u2014 should go to 0x1000",
-      "mark": "failure-bl"
+      "note": "MMT.Toggle  ; BL \u2192 0x1000 (R15 still not written)",
+      "mark": "call-bl"
     },
     {
       "addr": 4240,
@@ -611,8 +611,8 @@
     "END LightToggle."
   ],
   "mod_file": "tests/Blink3test.Mod + AMemoryMappedToggle.Mod",
-  "title": "Blink3 \u2014 imported Toggle (this one fails)",
-  "subtitle": "Unfixed Python loader + CPU that never writes R15 on BL",
+  "title": "Blink3 \u2014 imported Toggle (loader fixed, R15 still dropped)",
+  "subtitle": "BL now lands on Toggle at 0x1000; CPUSubset0 never writes R15",
   "modules": [
     {
       "file": "tests/AMemoryMappedToggle.Mod",
