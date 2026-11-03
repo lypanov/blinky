@@ -255,13 +255,8 @@ def measure_series(
     states = hysteresis_states(brightness, low_t, high_t)
     rising, falling = edges_from_states(states)
     edges = np.sort(np.concatenate([rising, falling]))
-    periods = []
-    if len(rising) >= 2:
-        periods = np.diff(rising.astype(np.float64)) / fps
-    elif len(falling) >= 2:
-        periods = np.diff(falling.astype(np.float64)) / fps
-    else:
-        periods = np.array([])
+    marks = rising if len(rising) >= 2 else falling
+    periods = np.diff(marks.astype(np.float64)) / fps if len(marks) >= 2 else np.array([])
 
     duration = (len(brightness) - 1) / fps if len(brightness) > 1 else 0.0
     warnings: list[str] = []
@@ -269,9 +264,13 @@ def measure_series(
     freq = None
     period = None
     period_std = None
-    if len(periods) > 0:
-        period = float(np.median(periods))
-        period_std = float(np.std(periods))
+    period_median = None
+    if len(marks) >= 2:
+        # Long baseline: (last-first)/(n-1). Median of per-cycle intervals is
+        # biased when the true period is not an integer number of frames.
+        period = float(marks[-1] - marks[0]) / (len(marks) - 1) / fps
+        period_std = float(np.std(periods)) if len(periods) else None
+        period_median = float(np.median(periods)) if len(periods) else None
         if period > 0:
             freq = 1.0 / period
     elif len(edges) >= 2 and duration > 0:
@@ -330,6 +329,7 @@ def measure_series(
     return {
         "frequency_hz": freq,
         "period_s": period,
+        "period_median_s": period_median,
         "period_std_s": period_std,
         "toggle_rate_hz": (2.0 * freq) if freq else None,
         "duty_cycle": duty,
@@ -362,7 +362,7 @@ def draw_roi_png(frame: np.ndarray, roi: tuple[int, int, int, int], path: str, l
         font = ImageFont.load_default()
     except Exception:
         font = None
-    draw.text((x, max(0, y - 12)), label, fill=(0, 255, 40), font=font)
+    draw.text((8, 8), label, fill=(0, 255, 40), font=font)
     im.save(path)
 
 
@@ -474,8 +474,19 @@ def analyze(
     meas = measure_series(brightness, fps)
     exp = expected_blink()
     err = None
+    implied_cycles_per_edge = None
+    implied_cycles_per_iteration = None
     if meas["frequency_hz"]:
         err = 100.0 * (meas["frequency_hz"] - exp["frequency_hz"]) / exp["frequency_hz"]
+        toggle = meas["toggle_rate_hz"]
+        if toggle:
+            implied_cycles_per_edge = CLOCK_HZ / toggle
+            implied_cycles_per_iteration = implied_cycles_per_edge / HW_MAX_ITERATIONS
+    exp["note"] = (
+        "Scales Verilator's 78-cycle edge period at maxIterations=5 linearly "
+        "to 524288. Sim memory is 1-cycle; Gowin SPRAM wait-states make the "
+        "hardware loop slower, so this is an upper bound on blink Hz."
+    )
 
     roi_frame = best_on if best_on is not None else last_frame
     roi_png = os.path.join(outdir, "roi.png")
@@ -496,8 +507,11 @@ def analyze(
     result = {
         "frequency_hz": meas["frequency_hz"],
         "period_s": meas["period_s"],
+        "period_median_s": meas["period_median_s"],
         "period_std_s": meas["period_std_s"],
         "toggle_rate_hz": meas["toggle_rate_hz"],
+        "implied_cycles_per_edge": implied_cycles_per_edge,
+        "implied_cycles_per_iteration": implied_cycles_per_iteration,
         "duty_cycle": meas["duty_cycle"],
         "edge_count": meas["edge_count"],
         "rising_edge_count": meas["rising_edge_count"],
