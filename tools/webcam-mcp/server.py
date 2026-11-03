@@ -27,6 +27,9 @@ DEFAULT_DEVICE = os.environ.get("WEBCAM_MCP_DEVICE", "/dev/video0")
 DEFAULT_SIZE = "640x480"
 LOCK_TIMEOUT_S = 30.0
 FFMPEG_TIMEOUT_S = 25.0
+# Same look Alex liked on the HDMI-monitor stills. Applied only to the
+# MCP stills, never to tools/measure_blink.sh (that path stays raw).
+ENHANCE_VF = "eq=brightness=0.25:contrast=1.6:gamma=1.8"
 
 DEVICE_RE = re.compile(r"^/dev/video\d+$")
 SIZE_RE = re.compile(r"^(\d+)x(\d+)$")
@@ -37,7 +40,10 @@ mcp = MCPServer(
         "Take still JPEGs from V4L2 cameras on this machine (Bee). "
         "Today the Logitech is /dev/video0; an HDMI capture stick will show up "
         "as another /dev/videoN. Call list_cameras if you are unsure. "
-        "Does not touch the FPGA or serial ports."
+        "Does not touch the FPGA or serial ports. "
+        "capture_still returns a brightened JPEG by default "
+        f"(ffmpeg -vf {ENHANCE_VF!r}); pass enhance=false for the raw frame. "
+        "Both files are saved under ~/fpga/captures/."
     ),
 )
 
@@ -100,20 +106,45 @@ def list_v4l_cameras() -> list[dict[str, str]]:
     return cameras
 
 
-def still_path(device: str, suffix: str = "") -> Path:
+def still_paths(device: str, suffix: str = "") -> tuple[Path, Path]:
+    """Return (raw, enhanced) paths that share a timestamp."""
     CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
     stem = Path(device).name
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     extra = f"-{suffix}" if suffix else ""
-    path = CAPTURE_DIR / f"{stamp}-{stem}{extra}.jpg"
-    if path.exists():
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        path = CAPTURE_DIR / f"{stamp}-{stem}{extra}.jpg"
-    return path
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    def pair(stamp: str) -> tuple[Path, Path]:
+        return (
+            CAPTURE_DIR / f"{stamp}-{stem}{extra}-raw.jpg",
+            CAPTURE_DIR / f"{stamp}-{stem}{extra}-enhanced.jpg",
+        )
+
+    raw, enhanced = pair(stamp)
+    if raw.exists() or enhanced.exists():
+        raw, enhanced = pair(datetime.now().strftime("%Y%m%d-%H%M%S-%f"))
+    return raw, enhanced
+
+
+def run_ffmpeg(cmd: list[str], what: str) -> None:
+    try:
+        subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=FFMPEG_TIMEOUT_S,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffmpeg is not installed") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"ffmpeg {what} timed out") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip() or str(exc)
+        raise RuntimeError(f"ffmpeg {what} failed: {detail}") from exc
 
 
 def grab_still(device: str, out: Path, width: int, height: int, warmup_frames: int) -> None:
-    """Grab one JPEG, then return so the V4L2 device is released."""
+    """Grab one raw JPEG, then return so the V4L2 device is released."""
     frames = max(0, warmup_frames) + 1
     out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -129,23 +160,41 @@ def grab_still(device: str, out: Path, width: int, height: int, warmup_frames: i
         "-update", "1",
         str(out),
     ]
-    try:
-        subprocess.run(
-            cmd,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=FFMPEG_TIMEOUT_S,
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError("ffmpeg is not installed") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("ffmpeg timed out; camera should be free again") from exc
-    except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or exc.stdout or "").strip() or str(exc)
-        raise RuntimeError(f"ffmpeg failed: {detail}") from exc
+    run_ffmpeg(cmd, "capture")
     if not out.is_file() or out.stat().st_size == 0:
         raise RuntimeError(f"ffmpeg wrote no image to {out}")
+
+
+def enhance_still(src: Path, dst: Path) -> None:
+    """Brighten a saved JPEG. Does not open the camera."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-nostdin",
+        "-y",
+        "-i", str(src),
+        "-vf", ENHANCE_VF,
+        str(dst),
+    ]
+    run_ffmpeg(cmd, "enhance")
+    if not dst.is_file() or dst.stat().st_size == 0:
+        raise RuntimeError(f"ffmpeg wrote no enhanced image to {dst}")
+
+
+def capture_raw_and_enhanced(
+    device: str,
+    width: int,
+    height: int,
+    warmup_frames: int,
+    suffix: str = "",
+) -> tuple[Path, Path]:
+    raw, enhanced = still_paths(device, suffix=suffix)
+    with camera_lock():
+        grab_still(device, raw, width, height, warmup_frames)
+    enhance_still(raw, enhanced)
+    return raw, enhanced
 
 
 @mcp.tool()
@@ -164,11 +213,15 @@ def capture_still(
     device: str = DEFAULT_DEVICE,
     resolution: str | None = None,
     warmup_frames: int = 8,
+    enhance: bool = True,
 ) -> list:
     """Capture one JPEG still.
 
-    Returns the image for the model to look at, plus the saved path under
-    ~/fpga/captures/. Releases the camera as soon as ffmpeg exits.
+    Returns the image for the model to look at, plus saved paths under
+    ~/fpga/captures/. enhance=true (default) returns the brightened frame
+    (eq=brightness=0.25:contrast=1.6:gamma=1.8); enhance=false returns the
+    raw frame. Both the -raw.jpg and -enhanced.jpg files are always written.
+    Releases the camera as soon as the raw grab finishes.
     warmup_frames discards the first N frames (auto-exposure); 0 matches
     tools/webcam_still.sh.
     """
@@ -176,10 +229,12 @@ def capture_still(
     width, height = parse_size(resolution)
     if warmup_frames < 0 or warmup_frames > 60:
         raise ValueError("warmup_frames must be 0..60")
-    out = still_path(device)
-    with camera_lock():
-        grab_still(device, out, width, height, warmup_frames)
-    return [f"Saved to {out}", Image(path=out)]
+    raw, enhanced = capture_raw_and_enhanced(device, width, height, warmup_frames)
+    shown = enhanced if enhance else raw
+    return [
+        f"Saved raw to {raw}\nSaved enhanced to {enhanced}",
+        Image(path=shown),
+    ]
 
 
 @mcp.tool()
@@ -189,11 +244,13 @@ def capture_burst(
     device: str = DEFAULT_DEVICE,
     resolution: str | None = None,
     warmup_frames: int = 8,
-) -> list[str]:
+    enhance: bool = True,
+) -> list[dict[str, str]]:
     """Capture N stills, sleeping interval_s between shots. Paths only.
 
-    Each shot opens then releases the camera, so other scripts can use it
-    between frames. The lock is held only for the duration of each shot.
+    Each shot writes both -raw.jpg and -enhanced.jpg. The `path` field is
+    the enhanced file by default, or the raw file when enhance=false.
+    The lock is held only while grabbing the raw frame.
     """
     device = parse_device(device)
     width, height = parse_size(resolution)
@@ -203,15 +260,16 @@ def capture_burst(
         raise ValueError("interval_s must be 0..30")
     if warmup_frames < 0 or warmup_frames > 60:
         raise ValueError("warmup_frames must be 0..60")
-    paths: list[str] = []
+    shots: list[dict[str, str]] = []
     for i in range(n):
-        out = still_path(device, suffix=f"{i:02d}")
-        with camera_lock():
-            grab_still(device, out, width, height, warmup_frames)
-        paths.append(str(out))
+        raw, enhanced = capture_raw_and_enhanced(
+            device, width, height, warmup_frames, suffix=f"{i:02d}"
+        )
+        shown = enhanced if enhance else raw
+        shots.append({"path": str(shown), "raw": str(raw), "enhanced": str(enhanced)})
         if i + 1 < n and interval_s:
             time.sleep(interval_s)
-    return paths
+    return shots
 
 
 def main() -> None:
