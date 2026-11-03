@@ -357,3 +357,11 @@ gowin/impl/
 gowin/src/
 gowin/*.gprj.user
 gowin/ip/gowin_sp/
+gowin/primer20k/impl/
+gowin/primer20k/led_build.v
+gowin/primer20k/*.gprj.user
+gowin/primer20k/led.v.bak
+docs/blink-measure/**/clip.mkv
+docs/blink-measure/**/capture.log
+docs/blink-measure/**/result.json.stdout
+docs/blink-measure/**/*.fs

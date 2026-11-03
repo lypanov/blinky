@@ -4,6 +4,18 @@ Chisel 6.6 / Mill 0.12.5 CPU. **Not RISC-V.** ISA: [`docs/risc_5_arch.txt`](docs
 
 Commit `a68a501` is the last known-good-on-hardware snapshot: Oberon `Blink2hw` plus UART. This branch is **main-forward**: `main`'s Logger / linker / MT work on top of the blink2-4x Verilator/visualizer/webcam/Gowin tooling. Hardware still uses `tests/Blink2hw.Mod` (`maxIterations := 262144`, 2x delay word `0x60000004`). Simulation uses `tests/Blink2test.Mod` (`maxIterations := 5`). LED MMIO snoops stores to `0x10` or `0x50` (module vars moved to 0x50 on `main`).
 
+## Tang Primer 20K Dock
+
+SRAM-only bring-up on the Primer 20K Dock (never FPGA flash): pinout, wiki blinky
+(1.000 Hz then 2.003 Hz), and NESTang v0.4 UART ROM load.
+
+- Pins, HDMI pairs, BL702 UART, SRAM rule: [`docs/primer20k/board-notes.md`](docs/primer20k/board-notes.md)
+- NESTang build, UART loader, nestest / Alter Ego stills: [`docs/primer20k/nestang.md`](docs/primer20k/nestang.md)
+- Blink measurements: [`docs/blink-measure/primer20k/`](docs/blink-measure/primer20k/)
+
+Load bitstreams with `tools/sram_load.sh` (`openFPGALoader -b tangprimer20k -m`).
+Do not pass `-f`.
+
 ## Verilator simulation (Phase 1)
 
 Needs: JDK 11+, Mill 0.12.x on `PATH`, Verilator 5.x, Python 3 with `matplotlib` (for the PNG), optional GTKWave.
