@@ -77,7 +77,7 @@ CPU tests: `mill chisel-blinky.test` from the repo root, or `tools/run_cpu_with_
 
 ## nano4k
 
-Tang Nano 4K (`GW1NSR-4C`). Gowin sources in [`nano4k/gowin/`](nano4k/gowin/), constraints [`nano4k/tang-nano-4k.cst`](nano4k/tang-nano-4k.cst). Past blink measurements: [`nano4k/docs/blink-measure/`](nano4k/docs/blink-measure/).
+Tang Nano 4K (`GW1NSR-4C`). Gowin sources in [`nano4k/gowin/`](nano4k/gowin/), constraints [`nano4k/tang-nano-4k.cst`](nano4k/tang-nano-4k.cst). Blink after the layout move: [`nano4k/docs/blink-measure/layout-pr7/`](nano4k/docs/blink-measure/layout-pr7/) (**3.437 Hz**). Earlier runs: [`nano4k/docs/blink-measure/`](nano4k/docs/blink-measure/).
 
 ## primer20k
 

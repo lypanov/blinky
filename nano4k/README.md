@@ -14,3 +14,4 @@ tools/sram_load.sh -b tangnano4k nano4k/gowin/impl/pnr/<bitstream>.fs
 - Constraints: [`tang-nano-4k.cst`](tang-nano-4k.cst)
 - CPU Verilog comes from `core/` via mill (`CPUMinimalWrapper.v`)
 - Blink measurements: [`docs/blink-measure/`](docs/blink-measure/)
+- After the layout move: [`docs/blink-measure/layout-pr7/`](docs/blink-measure/layout-pr7/) (**3.437 Hz**, SRAM `blink2hw_4x.fs`)
