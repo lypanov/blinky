@@ -71,49 +71,49 @@ Cherry-pick where the patch applies cleanly; otherwise port by hand. After **eve
 
 No `main` code yet. Confirm the sim still blinks.
 
-- Result: *(pending)*
+- Result: **PASS** — 6 LED edges at 86 164 242 320 398 476, mean period 78.00. Matches blink2-4x.
 
 ### Step 1 — Logger UART (`e1fef8c` + `ed9d355`)
 
 Replace `UartTest` with `Logger`; wire LED stores to `Logger.log`; keep `UartTx`/`UartRx`. Extra CPU IO (`messageCode`, `trigger`, `logByte`) is unused by `CPUSimTop` (simulation has no UART). LED snoop stays 0x10. Blink2 images unchanged.
 
-- Result: *(pending)*
+- Result: **PASS** — same 6 edges / 78.00 mean. CPUSimTop ignores the new Logger ports.
 
 ### Step 2 — Docs / cursorrules (`14d7b97` + `073dda5`)
 
 `./build.sh` note, RSC spec, cursorrules RSC pointer. No HDL change; still run sim so the log is uniform.
 
-- Result: *(pending)*
+- Result: **PASS** — 6 edges / 78.00. No HDL rebuild (docs only).
 
 ### Step 3 — Skip reverted UART dump (`e920df6` / `387b227`)
 
 Deferred: already backed out on `main`. No files to port.
 
-- Result: skipped (net-zero on `main`)
+- Result: skipped (net-zero on `main`). Not cherry-picked.
 
 ### Step 4 — Fixups + R12 R13 hack (`1f9d7c9`)
 
 Port `rsc_parser.py` rewrite, enable fixups in `process_mod_files.sh`, switch R13 hack from R0 to R12, update Blink2/Blink3/`AMemoryMappedToggle` images to `LDW R13, [R12, 0x4]`. **Keep Blink2hw `MHI R0, 0x4`.** Hack still returns 0x10, so LED snoop should still fire.
 
-- Result: *(pending)*
+- Result: **PASS** — 6 edges / 78.00. Auto-merged Blink2hw kept `0x60000004`. R13 hack now R12→0x10.
 
 ### Step 5 — Module loader / image dump (`71f84f1` + `5cb18fe` + `f6719da`)
 
 `tools/module_loader.py`, `image_dump.py`, `mt_table.py`, rsc_parser MT-table fixups, `tests/final_system.code`, `instruction_parser.disassemble_instructions` (address prefix). Blink2test `.code` unchanged except later asm refresh.
 
-- Result: *(pending)*
+- Result: **PASS** — 6 edges / 78.00. Parser conflict resolved by taking main's `disassemble_instructions`.
 
 ### Step 6 — Asm listings with addresses (`f9bb7b6`)
 
 Refresh `.asm` files to `0xADDR: 0xWORD    mnemonic`. Keep Blink2hw delay word 0x4.
 
-- Result: *(pending)*
+- Result: **PASS** — 6 edges / 78.00. Blink2hw.asm kept `0x60000004` / `MHI R0, 0x4`.
 
 ### Step 7 — Custom memory image (`5e8ccb2`)
 
 `CPUSubset0(..., customMemoryImage)` and `CPUTestbenchWrapper` passthrough; system-image test. Default path (Blink2 / CPUSimTop) still builds the 0x00–0xB0 map. May temporarily start PC at 0 for custom images (undone in step 9).
 
-- Result: *(pending)*
+- Result: **PASS** — 6 edges / 78.00. CPUSimTop still uses default IMEM / PC=0x80.
 
 ### Step 8 — Real MT / vars at 0x50 (`9d190e2`) **LED RISK**
 
@@ -121,23 +121,33 @@ Setup installs R12/MT and variable block at 0x50; drop R13 hack; IMEM halt at 0x
 
 **Expected without a fix:** Blink2 writes `light` at 0x50, LED snoop at 0x10 sees nothing, sim fails.
 
+- Result: **FAIL as predicted** — 0 LED edges in 800 cycles (`c182388`). Sim exit 1.
+
 ### Step 8b — Minimal LED fix (new commit, not on `main`)
 
-Snoop **both** 0x10 and 0x50 for `io.led` (and Logger LedToggle). Restores Blink2 in sim without undoing the 0x50 variable map. Logger still reports the snoop address in the existing printf.
+Snoop **both** 0x10 and 0x50 for `io.led` (and Logger LedToggle). Restores Blink2 in sim without undoing the 0x50 variable map.
 
-- Result: *(pending)*
+- Result: **PASS** — 6 edges at 98 182 266 350 434 518, mean period **84.00**. Period grew from 78 because real `LDW R13, [R12, 0x4]` now takes a memory wait cycle (the old hack was 1 cycle); inner loop ×5 plus the toggle-path load = +6. First edge also later because setup grew (R12/MT init).
 
 ### Step 9 — System-image test bugfixes (`0d5f6e2`)
 
 PC always `RegInit(0x80)`; restore `initializeTest` in the system-image test.
 
-- Result: *(pending)*
+- Result: **PASS** — still 6 edges / 84.00. Dual snoop survived the auto-merge.
 
 ### Step 10 — gitignore `__pycache__` (`7d47778`)
 
 blink2-4x already has `__pycache__/`. Skip unless a distinct line is missing.
 
-- Result: *(pending)*
+- Result: skipped. blink2-4x already ignores `__pycache__/`, `sim/out/`, and Gowin build dirs. Main's unsashed `__pycache__` line is redundant.
+
+## Hardware build
+
+`mill chisel-blinky.runMain gcd.CPUSubset0` emits `generated/CPUMinimalWrapper.v` with delay word `60000004`. `gw_sh` is **not** on this machine, so `tools/gowin_build.sh` was not run. No FPGA work.
+
+## End state vs `main`
+
+All of `main`'s intended files are present (Logger, RSC spec, module_loader/image_dump/mt_table, final_system.code, customMemoryImage, R12/MT setup, rsc_parser fixups). Plus blink2-4x tooling and the 2x Blink2hw delay. Only CPU behaviour added beyond `main`: LED snoop 0x10 **or** 0x50 (`828d985`).
 
 ## Deferred / open (not blocking Blink2 sim)
 
@@ -153,4 +163,15 @@ blink2-4x already has `__pycache__/`. Skip unless a distinct line is missing.
 
 | Step | Commit(s) on `main-forward` | LED edges | Mean period | Notes |
 |---|---|---|---|---|
-| 0 baseline | *(pending)* | | | |
+| 0 baseline | `0793eb7` (plan only) | 6 (86..476) | 78.00 | matches blink2-4x |
+| 1 Logger | `50e5158` `9c36cc3` | 6 (86..476) | 78.00 | UART Logger; LED still 0x10 |
+| 2 docs | `373717c` `c1f453b` | 6 (86..476) | 78.00 | cursorrules + rsc spec |
+| 3 skip dump | — | — | — | e920df6/387b227 not picked |
+| 4 R12 fixups | `33ca297` | 6 (86..476) | 78.00 | kept Blink2hw 2x delay |
+| 5 loader | `1b74d76` `f885582` `684e157` | 6 (86..476) | 78.00 | parser merge: keep address dump |
+| 6 asm addrs | `ba4bbec` | 6 (86..476) | 78.00 | Blink2hw listing kept 2x delay |
+| 7 custom IMEM | `4c33f5b` | 6 (86..476) | 78.00 | Blink2 still default map |
+| 8 vars@0x50 | `c182388` | **0** | — | LED still snooped 0x10; predicted fail |
+| 8b dual snoop | `828d985` | 6 (98..518) | **84.00** | snoop 0x10 and 0x50 |
+| 9 sysimage fix | `8952848` | 6 (98..518) | 84.00 | PC always 0x80 |
+| 10 gitignore | — | — | — | already covered by blink2-4x |

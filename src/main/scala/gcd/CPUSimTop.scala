@@ -10,7 +10,7 @@ import java.io.File
  * Does not change CPU behaviour. The Blink2 *program* loaded here is the
  * short-delay test image (maxIterations = 5) so a LED period is observable
  * in a few hundred cycles. Hardware still uses tests/Blink2hw.code
- * (maxIterations = 524288) via CPUSubset0.main / build.sh.
+ * (maxIterations = 262144, 2x delay) via CPUSubset0.main / build.sh.
  */
 class CPUSimTop(programInstructions: Seq[String]) extends Module {
   val io = IO(new Bundle {

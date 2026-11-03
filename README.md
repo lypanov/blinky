@@ -2,7 +2,7 @@
 
 Chisel 6.6 / Mill 0.12.5 CPU. **Not RISC-V.** ISA: [`docs/risc_5_arch.txt`](docs/risc_5_arch.txt). Memory map: [`docs/memory_map.txt`](docs/memory_map.txt).
 
-Commit `a68a501` is the last known-good-on-hardware snapshot: Oberon `Blink2hw` runs on the 4K, LED = store to `0x10`, UART working. This branch adds **simulation tooling only** (no CPU/HDL behaviour change). Hardware still uses `tests/Blink2hw.Mod` (`maxIterations := 524288`). Simulation uses `tests/Blink2test.Mod` (`maxIterations := 5`) so a blink period fits in a few hundred cycles.
+Commit `a68a501` is the last known-good-on-hardware snapshot: Oberon `Blink2hw` plus UART. This branch is **main-forward**: `main`'s Logger / linker / MT work on top of the blink2-4x Verilator/visualizer/webcam/Gowin tooling. Hardware still uses `tests/Blink2hw.Mod` (`maxIterations := 262144`, 2x delay word `0x60000004`). Simulation uses `tests/Blink2test.Mod` (`maxIterations := 5`). LED MMIO snoops stores to `0x10` or `0x50` (module vars moved to 0x50 on `main`).
 
 ## Verilator simulation (Phase 1)
 
@@ -30,9 +30,9 @@ Open the waveform:
 gtkwave -S sim/gtkwave_led.tcl sim/out/blink2.fst sim/gtkwave_led.gtkw
 ```
 
-The sim prints `[LED] cycle=…` lines and a mean period. Verilator measures a **steady 78-cycle** LED period (edges at 86, 164, 242, …). Treadle `blink2_code_test` asserts an **average of 81** over the first three intervals on the same short-delay image — that average mixes the longer first interval (setup + first loop, ~87 cycles from T=0) with two 78-cycle loops. Informal notes said ~89; 78/81/89 are the same program, different counting windows. Hardware `Blink2hw` uses `maxIterations := 524288` and is not the sim default.
+The sim prints `[LED] cycle=…` lines and a mean period. After the `main` MT/0x50 map, Verilator measures a **steady 84-cycle** LED period (edges at 98, 182, 266, …). That is the old 78-cycle loop plus six extra memory-wait cycles now that `LDW R13, [R12, 0x4]` is a real load instead of the R13 hack. Hardware `Blink2hw` uses `maxIterations := 262144` and is not the sim default.
 
-Sim-only delay: set `BLINK2_CODE` if you want a different image (the hardware image will take ~524288 loop iterations and is not the default):
+Sim-only delay: set `BLINK2_CODE` if you want a different image (the hardware image is a long delay loop and is not the default):
 
 ```sh
 BLINK2_CODE=tests/Blink2test.code mill chisel-blinky.runMain gcd.CPUSimTop
