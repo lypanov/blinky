@@ -1,0 +1,24 @@
+--- a/src/nestang_dock.cst
++++ b/src/nestang_dock.cst
+@@ -2,10 +2,10 @@ IO_LOC "sys_clk" H11;
+ IO_PORT "sys_clk" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+ 
+ IO_LOC "sys_resetn" T2;
+-IO_PORT "sys_resetn" PULL_MODE=NONE;
++IO_PORT "sys_resetn" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+ 
+ IO_LOC "d7" D7;
+-IO_PORT "d7" PULL_MODE=UP;
++IO_PORT "d7" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+ 
+ // HDMI: dock hdmi port
+ IO_LOC "tmds_clk_p" G16;
+@@ -114,6 +114,8 @@ IO_LOC "DDR3_DM[1]" K5;
+ IO_PORT "DDR3_DM[1]" IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+ IO_LOC "DDR3_DM[0]" G1;
+ IO_PORT "DDR3_DM[0]" IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
++IO_LOC "DDR3_nCS" P5;
++IO_PORT "DDR3_nCS" IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
+ 
+ // UART through Tang 20K core board JTAG-UART connector
+ IO_LOC "UART_TXD" M11;

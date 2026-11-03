@@ -14,7 +14,8 @@ import mill.bsp._
 // See: https://github.com/com-lihaoyi/mill/issues/3840
 
 object `chisel-blinky` extends SbtModule { m =>
-  override def millSourcePath = super.millSourcePath / os.up
+  // Sources live in core/; mill is invoked from the repo root.
+  override def millSourcePath = super.millSourcePath / os.up / "core"
   override def scalaVersion = "2.13.15"
   override def scalacOptions = Seq(
     "-language:reflectiveCalls",

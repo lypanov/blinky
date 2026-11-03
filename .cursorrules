@@ -2,26 +2,26 @@
 
 ## Environment basics
 - Don't directly run sbt, we do not use sbt.
-- Mill build tool is installed and available on the users PATH, do not run it with ./mill. But simply 'mill ...'.
+- Mill build tool is installed and available on the users PATH, do not run it with ./mill. But simply 'mill ...'. Mill is invoked from the repo root; Chisel sources live in `core/`.
 - The CPU is implemented in Scala using the Chisel library
 
 ## Commands
 - Run CPU tests with trace output: `bash tools/run_cpu_with_trace.sh`
   - This generates trace files at:
-    - CPU raw trace: `trace/cpu_trace.txt`
-    - Annotated trace: `trace/annotated_trace.txt`
-- If you want to build for the FPGA itself then run `./build.sh`, on successful completion kindly ask the user to perform the "Gowin-fu"
+    - CPU raw trace: `core/trace/cpu_trace.txt` (directory `core/trace/`)
+    - Annotated trace: `core/trace/annotated_trace.txt`
+- FPGA bitstream for the Tang Nano 4K: `tools/gowin_build.sh` then SRAM-load with `tools/sram_load.sh -b tangnano4k <file.fs>`. Never flash (`-f`).
 - Don't try running mill directly for subsetting the test cases either, simply run the tests as mentioned in the first command so we get full trace output.
-- Whenever you want to verify the code you just wrote compiles, please make a call to `./build.sh` in the project directory.
+- Whenever you want to verify the Chisel still compiles, run `mill chisel-blinky.runMain gcd.CPUSubset0` from the repo root (with `CHISEL_CPU_PROJECT_ROOT` pointing at `core/`).
 
 ## Important Notes
 - Ensure that when adding new instructions the `tools/trace_analyzer.py` script is updated accordingly or traces will stop making any sense.
 
 ## Architecture Notes
 - This CPU implements a subset of the 2018 RISC5 architecture (Project Oberon), it is NOT RELATED to the RISC-V architecture.
-- The ISA is described in the file `docs/risc_5_arch.txt`
-- The memory map is described in the file `docs/memory_map.txt`
+- The ISA is described in the file `core/docs/risc_5_arch.txt`
+- The memory map is described in the file `core/docs/memory_map.txt`
 - When making references to the ISA, refer to the above link, do NOT make up your own interpretations of the instructions or use our current implementation as the reference!
-- The CPU is designed to be synthesized into an the Tang Nano 4K FPGA
-- Tests are written in Scala using the ChiselTest library, a good example test is `src/test/scala/gcd/CPUSubset0Spec.scala`
-- The RSC format can be understood using the documenttion in `docs/rsc_format_specification.txt`
+- The CPU is designed to be synthesized into the Tang Nano 4K FPGA (`nano4k/`)
+- Tests are written in Scala using the ChiselTest library, a good example test is `core/src/test/scala/gcd/CPUSubset0Test.scala`
+- The RSC format can be understood using the documentation in `core/docs/rsc_format_specification.txt`

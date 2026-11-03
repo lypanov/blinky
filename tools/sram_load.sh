@@ -2,15 +2,16 @@
 # Load a Gowin bitstream to FPGA SRAM only. Refuses flash programming.
 #
 # Usage:
-#   tools/sram_load.sh <file.fs>
+#   tools/sram_load.sh -b tangnano4k <file.fs>
 #   tools/sram_load.sh -b tangprimer20k <file.fs>
 set -euo pipefail
 
-BOARD="tangprimer20k"
+BOARD=""
 FS=""
 
 usage() {
-  echo "usage: $0 [-b board] <bitstream.fs>" >&2
+  echo "usage: $0 -b board <bitstream.fs>" >&2
+  echo "board is required: tangnano4k or tangprimer20k" >&2
   echo "always SRAM (-m). never flash." >&2
   exit "${1:-1}"
 }
@@ -36,6 +37,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+[[ -n "$BOARD" ]] || { echo "error: -b board is required" >&2; usage 1; }
 [[ -n "$FS" ]] || usage 1
 [[ -f "$FS" ]] || { echo "error: no such file $FS" >&2; exit 1; }
 

@@ -3,10 +3,11 @@
 # Verilate, run, dump FST + LED log + waveform PNG.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CORE="$REPO/core"
 export PATH="${HOME}/bin:/usr/local/bin:${PATH}"
-export CHISEL_CPU_PROJECT_ROOT="$ROOT"
-cd "$ROOT"
+export CHISEL_CPU_PROJECT_ROOT="$CORE"
+cd "$REPO"
 
 if ! command -v mill >/dev/null 2>&1; then
   echo "error: mill not on PATH (need Mill 0.12.x). Install: https://mill-build.org/" >&2
@@ -17,7 +18,7 @@ if ! command -v verilator >/dev/null 2>&1; then
   exit 1
 fi
 
-make -C sim sim "$@"
+make -C core/sim sim "$@"
 echo ""
 echo "GTKWave:"
-echo "  gtkwave -S $ROOT/sim/gtkwave_led.tcl $ROOT/sim/out/blink2.fst $ROOT/sim/gtkwave_led.gtkw"
+echo "  gtkwave -S $CORE/sim/gtkwave_led.tcl $CORE/sim/out/blink2.fst $CORE/sim/gtkwave_led.gtkw"

@@ -1,0 +1,49 @@
+{
+  "frequency_hz": 2.0025188916876573,
+  "period_s": 0.49937106918238994,
+  "period_median_s": 0.43333333333333335,
+  "period_std_s": 0.07620191814269664,
+  "toggle_rate_hz": 4.005037783375315,
+  "implied_cycles_per_edge": 6741509.433962265,
+  "duty_cycle": 0.7222222222222222,
+  "edge_count": 108,
+  "rising_edge_count": 54,
+  "falling_edge_count": 54,
+  "confidence": 0.9237,
+  "threshold": 95.45486122326973,
+  "fft_frequency_hz": 2.0,
+  "aliasing_warning": null,
+  "warnings": [],
+  "fps": 30.0,
+  "probed_fps": 30.0,
+  "warmup_s": 8.0,
+  "duration_s": 26.966666666666665,
+  "n_frames_analyzed": 810,
+  "n_frames_total": 1050,
+  "video": "(not committed)",
+  "roi": {
+    "x": 340,
+    "y": 104,
+    "w": 106,
+    "h": 102,
+    "method": "manual"
+  },
+  "paths": {
+    "json": "primer20k/blink-measure/2hz/result.json",
+    "plot": "primer20k/blink-measure/2hz/brightness.png",
+    "roi_frame": "primer20k/blink-measure/2hz/roi.png"
+  },
+  "expected": {
+    "design": "Sipeed wiki Dock LED with COUNT_VALUE halved",
+    "clock_hz": 27000000,
+    "count_value": 6749999,
+    "half_period_s": 0.25,
+    "frequency_hz": 2.0,
+    "toggle_rate_hz": 4.0,
+    "period_s": 0.5,
+    "note": "Same wiki blinky, COUNT_VALUE=6_749_999 (half of 13_499_999) so the LED should double from 1 Hz to 2 Hz."
+  },
+  "error_pct_vs_expected": 0.12594458438286366,
+  "ratio_vs_1hz": 2.0025188916876573,
+  "sram_load": "openFPGALoader -b tangprimer20k -m (never flash)"
+}
