@@ -17,9 +17,16 @@ Does not touch the FPGA, serial ports, or `openFPGALoader`.
 | `capture_still` | One JPEG: MCP image content + path under `~/fpga/captures/` |
 | `capture_burst` | N stills at an interval; returns paths only |
 
-`capture_still` arguments: `device` (default `/dev/video0`), optional
-`resolution` (`640x480`), optional `warmup_frames` (default 8, discard AE
-settle frames; `0` matches `webcam_still.sh`).
+`capture_still` / `capture_burst` arguments: `device` (default `/dev/video0`),
+optional `resolution` (`640x480`), optional `warmup_frames` (default 8,
+discard AE settle frames; `0` matches `webcam_still.sh`), optional
+`enhance` (default `true`). Enhanced stills use
+`ffmpeg -vf "eq=brightness=0.25:contrast=1.6:gamma=1.8"`. Both
+`-raw.jpg` and `-enhanced.jpg` are written under `~/fpga/captures/`;
+the image returned to the model is the enhanced file unless
+`enhance=false`.
+
+`tools/measure_blink.sh` is unchanged and still records a raw clip.
 
 Camera access is serialised with an `flock` on `$XDG_RUNTIME_DIR/webcam-mcp.lock`.
 ffmpeg is started and waited on per shot, so the V4L2 node is free afterwards
@@ -62,8 +69,9 @@ Cursor on Bee: `~/.cursor/mcp.json` should contain (keep any other servers):
 ## How agents use it
 
 Call `list_cameras`, then `capture_still` with the Logitech (`/dev/video0`) or
-the HDMI stick. The still is returned as an image the model can see, and a
-timestamped JPEG is left in `~/fpga/captures/`.
+the HDMI stick. The still returned to the model is brightened by default;
+pass `enhance=false` for the raw frame. Timestamped `-raw.jpg` and
+`-enhanced.jpg` files are left in `~/fpga/captures/`.
 
 ```sh
 systemctl --user status webcam-mcp.service
