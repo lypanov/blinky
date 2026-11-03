@@ -158,10 +158,10 @@ From The Researcher (3 Nov 2026) and remaining gaps:
 - **LED polarity** was not scoped; active-low is from schematic notes
   (anode to 3V3 via 510R). Webcam cannot identify which LED is which.
 - **PMOD2 M15/M14 as Pi UART** — candidate only, not loopback-tested.
-- **HDMI to the ThinkVision** — webcam stills after SRAM-loading both NESTang
-  v0.4 and Sipeed’s Dock HDMI example show a black panel. Board-side HDMI
-  cable is plugged in; monitor input / sleep was not changed from Bee. See
-  [`nestang.md`](nestang.md).
+
+HDMI and BL702 UART are verified (3 Nov 2026). Earlier black ThinkVision stills
+were the HDMI switcher on the wrong input. After switching: NESTang palette,
+then nestest menu via `ttyUSB1` @ 921600 on M11/T13. See [`nestang.md`](nestang.md).
 
 ## Sources
 
