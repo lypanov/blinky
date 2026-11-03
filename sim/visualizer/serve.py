@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Tiny static server for the Blink2 visualizer (Arch / macOS / anything with Python 3)."""
+"""Tiny static server for the Blink2/Blink3 visualizer.
+
+Default bind is 127.0.0.1 — reach it from the Mac with:
+  ssh -N -L 8765:127.0.0.1:8765 bee
+Nothing is exposed to the internet unless you pass --bind 0.0.0.0 (LAN only).
+"""
 
 from __future__ import annotations
 
@@ -33,7 +38,10 @@ def main() -> int:
     handler = functools.partial(Handler, directory=HERE)
     with socketserver.TCPServer((args.bind, args.port), handler) as httpd:
         url = f"http://{args.bind}:{args.port}/"
-        print(f"Blink2 visualizer at {url}", flush=True)
+        print(f"RISC5 visualizer at {url}", flush=True)
+        print(f"Blink3 failure: {url}?p=blink3", flush=True)
+        if args.bind in ("127.0.0.1", "localhost"):
+            print("From the Mac:  ssh -N -L %d:127.0.0.1:%d bee" % (args.port, args.port), flush=True)
         print("Ctrl-C to stop.", flush=True)
         try:
             httpd.serve_forever()

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Enrich the Verilator Blink2 trace with RISC5 disassembly and Oberon source."""
+"""Enrich a Verilator CPUSimTop trace with RISC5 disassembly and Oberon source.
 
+Used for both Blink2 (default IMEM) and Blink3 (unfixed linked image). Does not
+change the loader or the CPU — it only labels what the sim actually did.
+"""
 from __future__ import annotations
 
 import argparse
@@ -10,30 +13,104 @@ import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
+sys.path.insert(0, os.path.dirname(__file__))
 from instruction_parser import disassemble  # noqa: E402
+from imem_layout import (  # noqa: E402
+    BLINK3_BL_PC,
+    BLINK3_ENTRY,
+    BLINK3_RETURN,
+    BLINK3_TOGGLE,
+    BLINK3_WRONG_LAND,
+    HALT_END,
+    HALT_START,
+    HALT_WORD,
+    SETUP,
+)
 
-# CPUSubset0 setup / halt image (byte addresses). See CPUSubset0.scala.
-SETUP = [
-    (0x80, 0x4E000080, "(trap/setup) MOV SP, #0x80  ; stack pointer"),
-    (0x84, 0x4F0000A0, "(trap/setup) MOV LNK, #0xA0 ; return-to-halt"),
-    (0x88, 0x40000000, "(trap/setup) MOV R0, #0     ; user entry"),
-    (0x8C, 0xC7000000, "(trap/setup) BT R0          ; jump to Blink2"),
-]
-HALT_START = 0xA0
-HALT_END = 0xB0
-HALT_WORD = 0xE7FFFFFF
+WATCH_ADDRS = {
+    0x10: "LED snoop / old light",
+    0x14: "MT[1] (AMMT vars ptr)",
+    0x18: "MT[2] (LightToggle vars ptr)",
+    0x50: "AMMT light (MT[1])",
+    0x70: "LightToggle counter",
+    0x74: "LightToggle maxIterations",
+}
 
-# Map user-program PCs (Blink2test.asm) onto Blink2test.Mod lines.
-# Indices are instruction numbers in tests/Blink2test.code (addr = i*4).
-USER_SOURCE = {
+
+_COND = ["MI", "EQ", "CS", "VS", "LS", "LT", "LE", "always",
+         "PL", "NE", "CC", "VC", "HI", "GE", "GT", "never"]
+
+
+def pretty_disasm(word: int) -> str:
+    """Prefer 'BL always' over the parser's 'BLT' (which collides with less-than)."""
+    fmt = (word >> 28) & 0xF
+    if fmt in (0xC, 0xD, 0xE, 0xF):
+        v = fmt & 1
+        cond = (word >> 24) & 0xF
+        name = ("BL" if v else "B") + " " + _COND[cond]
+        if fmt in (0xC, 0xD):
+            return f"{name} R{word & 0xF}"
+        off = word & 0xFFFFFF
+        if off & 0x800000:
+            off -= 0x1000000
+        return f"{name}, off={off}"
+    text = disassemble(word)
+    return text if text is not None else f".word 0x{word:08x}"
+
+
+def load_lines(rel: str) -> list[str]:
+    path = os.path.join(ROOT, rel)
+    with open(path) as f:
+        return [line.rstrip("\n") for line in f]
+
+
+def load_code_words(rel: str) -> list[int]:
+    path = os.path.join(ROOT, rel)
+    words = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("="):
+                continue
+            if ":" in line and line.startswith("0x"):
+                line = line.split(":", 1)[1].strip().split()[0]
+            words.append(int(line.replace("0x", ""), 16))
+    return words
+
+
+def load_words_file(path: str) -> list[int]:
+    words = []
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                words.append(int(line, 16))
+    return words
+
+
+def entry(addr, word, file=None, line=None, src=None, note=None, mark=None):
+    return {
+        "addr": addr,
+        "hex": f"{word:08x}",
+        "disasm": pretty_disasm(word),
+        "file": file,
+        "line": line,
+        "src": src,
+        "note": note,
+        "mark": mark,
+    }
+
+
+# Blink2test.Mod line numbers for user-program word index i (addr = i*4).
+BLINK2_SOURCE = {
     0: (None, "compiler prologue: SUB SP, 4"),
     1: (None, "compiler prologue: save LNK"),
     2: (8, "light := 0"),
-    3: (8, "SB := 0x10  (R13-from-R0 load hack)"),
-    4: (8, "light := 0"),
+    3: (8, "SB := MT[1]  (LDW R13, [R12, 4])"),
+    4: (8, "light := 0  ; STW -> 0x50, LED snoop"),
     5: (9, "counter := 0"),
     6: (9, "counter := 0"),
-    7: (10, "maxIterations := 5   ; sim-only delay (hw uses 524288)"),
+    7: (10, "maxIterations := 5"),
     8: (10, "maxIterations := 5"),
     9: (12, "WHILE TRUE DO"),
     10: (13, "INC(counter)"),
@@ -49,70 +126,176 @@ USER_SOURCE = {
     20: (15, "light := 1 - light"),
     21: (15, "light := 1 - light"),
     22: (15, "light := 1 - light"),
-    23: (15, "light := 1 - light  ; STW light -> 0x10 toggles LED"),
+    23: (15, "light := 1 - light  ; STW light -> 0x50 toggles LED"),
     24: (16, "counter := 0"),
     25: (16, "counter := 0"),
     26: (12, "END  ; BT back to WHILE"),
     27: (None, "compiler epilogue: restore LNK"),
     28: (None, "compiler epilogue: restore SP"),
-    29: (None, "compiler epilogue: BT LNK (halt at 0xA0)"),
+    29: (None, "compiler epilogue: BT LNK (halt at 0xB0)"),
+}
+
+# Word index inside AMemoryMappedToggle (base 0x1000).
+AMMT_SOURCE = {
+    0: (8, "PROCEDURE Toggle*  prologue"),
+    1: (8, "save LNK"),
+    2: (10, "light := 1 - light"),
+    3: (10, "SB := MT[1]"),
+    4: (10, "load light"),
+    5: (10, "1 - light"),
+    6: (10, "store light  ; this is the LED write if we ever get here"),
+    7: (11, "restore LNK"),
+    8: (11, "restore SP"),
+    9: (11, "BT R15  ; return to caller"),
+    10: (14, "BEGIN light := 0  prologue"),
+    11: (14, "save LNK"),
+    12: (14, "light := 0"),
+    13: (14, "SB := MT[1]"),
+    14: (14, "store light"),
+    15: (15, "restore LNK"),
+    16: (15, "restore SP"),
+    17: (15, "BT R15"),
+}
+
+# Word index inside LightToggle (base 0x1048).
+LT_SOURCE = {
+    0: (None, "compiler prologue: SUB SP, 4"),
+    1: (None, "compiler prologue: save LNK"),
+    2: (9, "counter := 0   ← WRONG BL landing (0x1050)"),
+    3: (9, "SB := MT[2]"),
+    4: (9, "store counter"),
+    5: (10, "maxIterations := 5"),
+    6: (10, "store maxIterations"),
+    7: (12, "WHILE TRUE DO"),
+    8: (13, "INC(counter)  ; reload SB"),
+    9: (13, "INC(counter)"),
+    10: (13, "INC(counter)"),
+    11: (13, "INC(counter)"),
+    12: (13, "INC(counter)"),
+    13: (13, "load counter"),
+    14: (14, "load maxIterations"),
+    15: (14, "IF counter >= maxIterations"),
+    16: (14, "BLT skip Toggle"),
+    17: (15, "MMT.Toggle  ; unfixed BL — should go to 0x1000"),
+    18: (16, "counter := 0  ; correct return address of the BL (0x1090)"),
+    19: (16, "reload SB"),
+    20: (16, "store counter"),
+    21: (12, "BT back to WHILE"),
+    22: (None, "epilogue: restore LNK"),
+    23: (None, "epilogue: restore SP"),
+    24: (None, "BT LNK"),
 }
 
 
-def load_mod_lines() -> list[str]:
-    path = os.path.join(ROOT, "tests", "Blink2test.Mod")
-    with open(path) as f:
-        return [line.rstrip("\n") for line in f]
+def src_of(mod_lines: list[str], line: int | None) -> str | None:
+    if line is None or not (1 <= line <= len(mod_lines)):
+        return None
+    return mod_lines[line - 1].strip()
 
 
-def load_user_code() -> list[int]:
-    path = os.path.join(ROOT, "tests", "Blink2test.code")
-    words = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            words.append(int(line.replace("0x", ""), 16))
-    return words
+def add_setup_and_halt(entries: list[dict]) -> None:
+    for addr, word, note in SETUP:
+        entries.append(entry(addr, word, note=note, mark="setup"))
+    for addr in range(HALT_START, HALT_END, 4):
+        entries.append(entry(addr, HALT_WORD, note="halt (branch-self)", mark="halt"))
 
 
-def pretty_disasm(word: int) -> str:
-    text = disassemble(word)
-    return text if text is not None else f".word 0x{word:08x}"
+def build_blink2() -> tuple[list[dict], dict]:
+    mod = load_lines("tests/Blink2test.Mod")
+    user = load_code_words("tests/Blink2test.code")
+    entries = []
+    for i, word in enumerate(user):
+        line, note = BLINK2_SOURCE.get(i, (None, None))
+        entries.append(entry(
+            i * 4, word,
+            file="tests/Blink2test.Mod" if line else None,
+            line=line,
+            src=src_of(mod, line),
+            note=note,
+        ))
+    add_setup_and_halt(entries)
+    return entries, {
+        "mod_file": "tests/Blink2test.Mod",
+        "mod_source": mod,
+        "modules": [{"file": "tests/Blink2test.Mod", "source": mod, "title": "LightToggle (Blink2)"}],
+        "title": "Blink2 — inlined toggle (this one works)",
+        "subtitle": "Verilator playback of Blink2test · unfixed CPU, no BL",
+    }
 
 
-def build_program() -> list[dict]:
-    mod = load_mod_lines()
-    user = load_user_code()
+def build_blink3(imem_path: str) -> tuple[list[dict], dict]:
+    ammt_mod = load_lines("tests/AMemoryMappedToggle.Mod")
+    lt_mod = load_lines("tests/Blink3test.Mod")
+    words = load_words_file(imem_path)
     entries = []
 
-    def add(addr: int, word: int, file: str | None, line: int | None, note: str | None):
-        src = None
-        if line is not None and 1 <= line <= len(mod):
-            src = mod[line - 1].strip()
-        entries.append({
-            "addr": addr,
-            "hex": f"{word:08x}",
-            "disasm": pretty_disasm(word),
-            "file": file,
-            "line": line,
-            "src": src,
-            "note": note,
-        })
+    # Address 0 trampoline (B to LightToggle).
+    if words:
+        entries.append(entry(
+            0, words[0],
+            note="sim trampoline: B to LightToggle entry (not a BL)",
+            mark="trampoline",
+        ))
+    add_setup_and_halt(entries)
 
-    for i, word in enumerate(user):
-        addr = i * 4
-        line, note = USER_SOURCE.get(i, (None, None))
-        add(addr, word, "tests/Blink2test.Mod" if line else None, line, note)
+    ammt_base = 0x1000
+    for i in range(18):
+        addr = ammt_base + i * 4
+        word = words[addr // 4]
+        line, note = AMMT_SOURCE.get(i, (None, None))
+        mark = "expected-target" if addr == BLINK3_TOGGLE else None
+        entries.append(entry(
+            addr, word,
+            file="tests/AMemoryMappedToggle.Mod" if line else None,
+            line=line,
+            src=src_of(ammt_mod, line),
+            note=note,
+            mark=mark,
+        ))
 
-    for addr, word, note in SETUP:
-        add(addr, word, None, None, note)
+    lt_base = BLINK3_ENTRY
+    for i in range(25):
+        addr = lt_base + i * 4
+        word = words[addr // 4]
+        line, note = LT_SOURCE.get(i, (None, None))
+        mark = None
+        if addr == BLINK3_BL_PC:
+            mark = "failure-bl"
+        elif addr == BLINK3_WRONG_LAND:
+            mark = "wrong-land"
+        elif addr == BLINK3_RETURN:
+            mark = "return-addr"
+        entries.append(entry(
+            addr, word,
+            file="tests/Blink3test.Mod" if line else None,
+            line=line,
+            src=src_of(lt_mod, line),
+            note=note,
+            mark=mark,
+        ))
 
-    for addr in range(HALT_START, HALT_END, 4):
-        add(addr, HALT_WORD, None, None, "halt (branch-self)")
-
-    return entries, mod
+    combined = (
+        ["----- tests/AMemoryMappedToggle.Mod -----"]
+        + ammt_mod
+        + [""]
+        + ["----- tests/Blink3test.Mod  (LightToggle) -----"]
+        + lt_mod
+    )
+    # 1-based line of each module's first source line in the combined listing.
+    ammt_off = 2
+    lt_off = 4 + len(ammt_mod)
+    return entries, {
+        "mod_file": "tests/Blink3test.Mod + AMemoryMappedToggle.Mod",
+        "mod_source": combined,
+        "modules": [
+            {"file": "tests/AMemoryMappedToggle.Mod", "source": ammt_mod, "title": "AMemoryMappedToggle"},
+            {"file": "tests/Blink3test.Mod", "source": lt_mod, "title": "LightToggle (Blink3)"},
+        ],
+        "title": "Blink3 — imported Toggle (this one fails)",
+        "subtitle": "Unfixed Python loader + CPU that never writes R15 on BL",
+        "ammt_mod_offset": ammt_off,
+        "lt_mod_offset": lt_off,
+    }
 
 
 def lookup(program: list[dict], pc: int) -> dict | None:
@@ -122,7 +305,59 @@ def lookup(program: list[dict], pc: int) -> dict | None:
     return None
 
 
-def annotate(trace: dict, program: list[dict]) -> dict:
+def collapse_to_instructions(cycles: list[dict]) -> list[dict]:
+    """Keep the last cycle of each PC run so LDW has retired before we step."""
+    out = []
+    for i, c in enumerate(cycles):
+        nxt = cycles[i + 1] if i + 1 < len(cycles) else None
+        if nxt is None or nxt.get("pc") != c.get("pc"):
+            out.append(c)
+    return out
+
+
+def attach_dmem(cycles: list[dict]) -> None:
+    mem: dict[int, int] = {}
+    for c in cycles:
+        if c.get("memWrite"):
+            mem[int(c.get("memAddr") or 0)] = int(c.get("memWriteData") or 0)
+        snap = {}
+        for addr, name in WATCH_ADDRS.items():
+            if addr in mem:
+                snap[str(addr)] = {"addr": addr, "name": name, "value": mem[addr]}
+        c["dmem"] = snap
+
+
+def find_blink3_failure(steps: list[dict]) -> dict | None:
+    bl_i = None
+    for i, c in enumerate(steps):
+        if int(c.get("pc") or 0) == BLINK3_BL_PC:
+            bl_i = i
+            break
+    if bl_i is None:
+        return None
+    bl = steps[bl_i]
+    land = steps[bl_i + 1] if bl_i + 1 < len(steps) else {}
+    actual = int(land.get("pc") or 0)
+    r15 = int(bl.get("r15") or 0)
+    r15_after = int(land.get("r15") or r15)
+    return {
+        "kind": "bl_wrong_target",
+        "label": "BL at 0x108C jumps to 0x1050, not Toggle at 0x1000. R15 is not written.",
+        "bl_pc": BLINK3_BL_PC,
+        "expected_target": BLINK3_TOGGLE,
+        "actual_target": actual,
+        "return_addr": BLINK3_RETURN,
+        "r15_at_bl": r15,
+        "r15_after": r15_after,
+        "r15_expected": BLINK3_RETURN,
+        "r15_written": r15_after == BLINK3_RETURN,
+        "step_index": bl_i,
+        "landing_step_index": bl_i + 1 if bl_i + 1 < len(steps) else bl_i,
+        "insn": "0xf7fffff0",
+    }
+
+
+def annotate(trace: dict, program: list[dict], meta: dict) -> dict:
     for cyc in trace.get("cycles", []):
         pc = int(cyc.get("pc", 0))
         info = lookup(program, pc)
@@ -130,14 +365,30 @@ def annotate(trace: dict, program: list[dict]) -> dict:
             cyc["disasm"] = info["disasm"]
             cyc["hex"] = info["hex"]
             cyc["src"] = info["src"]
-            cyc["srcLine"] = info["line"]
+            src_line = info["line"]
+            if src_line and info.get("file"):
+                if "AMemoryMappedToggle" in info["file"]:
+                    src_line = meta.get("ammt_mod_offset", 2) + info["line"] - 1
+                elif "Blink3test" in info["file"]:
+                    src_line = meta.get("lt_mod_offset", 2) + info["line"] - 1
+            cyc["srcLine"] = src_line
+            cyc["srcFile"] = info["file"]
             cyc["note"] = info["note"]
+            cyc["mark"] = info["mark"]
         else:
-            cyc["disasm"] = f"(pc 0x{pc:x} outside image)"
+            cyc["disasm"] = f"(pc 0x{pc:x} outside listing)"
             cyc["hex"] = None
             cyc["src"] = None
             cyc["srcLine"] = None
+            cyc["srcFile"] = None
             cyc["note"] = None
+            cyc["mark"] = None
+        if pc == BLINK3_BL_PC:
+            cyc["mark"] = "failure-bl"
+        elif pc == BLINK3_WRONG_LAND:
+            cyc["mark"] = cyc.get("mark") or "wrong-land"
+        elif pc == BLINK3_TOGGLE:
+            cyc["mark"] = cyc.get("mark") or "expected-target"
     return trace
 
 
@@ -149,13 +400,8 @@ def summarize(trace: dict) -> dict:
         "toggle_cycles": edges,
         "periods": periods,
         "mean_period": mean,
-        "n_cycles": len(trace.get("cycles", [])),
-        "treadle_reference_cycles": 81,
-        "treadle_reference_note": (
-            "CPUSubset0Test blink2_code_test asserts average period == 81 "
-            "on Treadle with maxIterations=5. Informal notes say ~89; both "
-            "describe the same short-delay Blink2test image."
-        ),
+        "n_clocks": len(trace.get("clocks") or trace.get("cycles", [])),
+        "n_steps": len(trace.get("cycles", [])),
     }
 
 
@@ -166,25 +412,48 @@ def main() -> int:
     ap.add_argument("--program", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--visualizer")
+    ap.add_argument("--image", default="blink2", choices=("blink2", "blink3"))
+    ap.add_argument("--imem", default="")
+    ap.add_argument("--collapse", action="store_true", default=True)
     args = ap.parse_args()
 
-    program, mod = build_program()
+    if args.image == "blink3":
+        imem = args.imem or os.path.join(ROOT, "sim", "visualizer", "imem", "blink3.words")
+        program, meta = build_blink3(imem)
+    else:
+        program, meta = build_blink2()
+
     with open(args.trace) as f:
         trace = json.load(f)
 
-    trace = annotate(trace, program)
+    clocks = list(trace.get("cycles", []))
+    trace = annotate(trace, program, meta)
+    if args.collapse:
+        trace["clocks_sampled"] = len(clocks)
+        trace["cycles"] = collapse_to_instructions(trace.get("cycles", []))
+    attach_dmem(trace["cycles"])
+
     summary = summarize(trace)
     trace["summary"] = summary
-    trace["mod_source"] = mod
-    trace["mod_file"] = "tests/Blink2test.Mod"
+    trace["mod_source"] = meta["mod_source"]
+    trace["mod_file"] = meta["mod_file"]
+    trace["title"] = meta["title"]
+    trace["subtitle"] = meta["subtitle"]
+    trace["modules"] = meta["modules"]
+    trace["image"] = args.image
+    if args.image == "blink3":
+        trace["failure"] = find_blink3_failure(trace["cycles"])
+        trace["ammt_mod_offset"] = meta.get("ammt_mod_offset")
+        trace["lt_mod_offset"] = meta.get("lt_mod_offset")
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(trace, f, indent=2)
         f.write("\n")
 
+    prog_doc = {"entries": program, **{k: meta[k] for k in ("mod_source", "mod_file", "title", "subtitle", "modules") if k in meta}}
     with open(args.program, "w") as f:
-        json.dump({"entries": program, "mod_source": mod, "mod_file": "tests/Blink2test.Mod"}, f, indent=2)
+        json.dump(prog_doc, f, indent=2)
         f.write("\n")
 
     if args.visualizer:
@@ -193,18 +462,13 @@ def main() -> int:
         with open(args.visualizer, "w") as f:
             json.dump(trace, f)
             f.write("\n")
-        vis_prog = os.path.join(vis_dir, "program.json")
-        with open(vis_prog, "w") as f:
-            json.dump({"entries": program, "mod_source": mod, "mod_file": "tests/Blink2test.Mod"}, f)
-            f.write("\n")
 
-    print("[annotate] instructions:", len(program))
-    print("[annotate] cycles:", summary["n_cycles"])
+    print("[annotate] image:", args.image)
+    print("[annotate] listing:", len(program), "instructions")
+    print("[annotate] clocks:", summary["n_clocks"], "instruction steps:", summary["n_steps"])
     print("[annotate] LED edges at cycles:", summary["toggle_cycles"])
-    print("[annotate] periods:", summary["periods"])
-    if summary["mean_period"] is not None:
-        print("[annotate] mean period: %.2f cycles (Treadle reference %d)" % (
-            summary["mean_period"], summary["treadle_reference_cycles"]))
+    if args.image == "blink3":
+        print("[annotate] failure:", json.dumps(trace.get("failure"), indent=2))
     return 0
 
 
