@@ -53,6 +53,18 @@ make -C sim run CYCLES=800 TOGGLES=6
 
 FPGA bitstream generation is unchanged: `./build.sh` still emits `CPUMinimalWrapper.v` from `tests/Blink2hw.code`.
 
+## Oberon compiler (Norebo)
+
+Blink2 / Blink3 `.Mod` files are compiled with Wirth's Project Oberon 2013 `ORP` via [project-norebo](https://github.com/pdewacht/project-norebo), pinned in `tools/norebo.pin`.
+
+```sh
+tools/setup_norebo.sh              # clone pin, run upstream ./build.sh
+python3 tools/verify_raw_oberon_code.py   # raw code vs historical unfixed dumps
+tools/process_mod_files.sh         # compile tests/*.Mod; writes tests/raw/ *before* fixup
+```
+
+The clone lands in `tools/project-norebo/` (gitignored). After the monorepo layout (PR #7) keep the pin and scripts in `tools/` and point them at `core/tests/`. `.rsc` object files are gitignored; the bit-for-bit check uses tiny hex dumps in `tests/fixtures/unfixed/`, not binary `.rsc` files. This does not fix the Python linker or CPU `BL`/`R15`.
+
 ## Visualizer (Phase 2)
 
 Local web page (Python 3 stdlib HTTP server). Works on Arch Linux and macOS.

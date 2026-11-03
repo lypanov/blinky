@@ -1,0 +1,5 @@
+# Pinned Project Norebo: Wirth's Project Oberon 2013 ORP/ORG
+# running on a Unix RISC5 emulator (pdewacht/project-norebo).
+# Pin is the upstream tip as of this work; bump sha here when rebuilding.
+url=https://github.com/pdewacht/project-norebo.git
+sha=0e4731bc2c2551c907b7cba96079efd1316e92d6
