@@ -9,7 +9,10 @@ Does not touch the CPU. R15/BL hardware is still unfixed.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
+import tempfile
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
@@ -18,6 +21,7 @@ sys.path.insert(0, HERE)
 
 from rsc_parser import ImportedModule, fixup_bl  # noqa: E402
 from module_loader import linked_image, mt_table  # noqa: E402
+from verify_raw_oberon_code import compile_case, load_env  # noqa: E402
 
 # Modules.Mod: PC' = PC + 4 + off*4, off is signed 24-bit.
 BL_PC = 0x108C
@@ -45,8 +49,39 @@ def test_synthetic_modules_mod_formula():
     print("[ok] synthetic fixup_bl → 0xF7FFFFDC → Toggle 0x1000")
 
 
+def rsc_dir():
+    """tests/*.rsc is gitignored; compile with pinned Norebo when missing (CI)."""
+    if os.path.isfile(os.path.join(TESTS, "LightToggle.rsc")):
+        return TESTS, None
+    norebo_bin, norebo_path = load_env()
+    work = Path(tempfile.mkdtemp(prefix="blinky-bl-fixup-"))
+    case = {
+        "name": "LightToggle",
+        "sources": ["AMemoryMappedToggle.Mod", "Blink3test.Mod"],
+        "rsc": "LightToggle.rsc",
+    }
+    rsc = compile_case(case, norebo_bin, norebo_path, work)
+    return str(rsc.parent), work
+
+
 def test_lighttoggle_rsc():
-    words, root, meta = linked_image("LightToggle", TESTS)
+    image = os.path.join(TESTS, "final_system.code")
+    text = open(image).read().lower()
+    assert "0x0000108c: 0xf7ffffdc" in text, (
+        f"{image} does not contain the relocated BL; re-run tools/module_loader.py"
+    )
+    print("[ok] tests/final_system.code has 0x108C = 0xf7ffffdc")
+
+    src, work = rsc_dir()
+    try:
+        _assert_live_link(src)
+    finally:
+        if work is not None:
+            shutil.rmtree(work, ignore_errors=True)
+
+
+def _assert_live_link(src):
+    words, root, meta = linked_image("LightToggle", src)
     assert 1 in mt_table and 2 in mt_table, f"MT keys {sorted(mt_table)} (overwrite?)"
     assert mt_table[1].code == 0x1000, hex(mt_table[1].code)
     assert mt_table[2].code == 0x1048, hex(mt_table[2].code)
@@ -65,14 +100,6 @@ def test_lighttoggle_rsc():
     print(f"[ok] linked LightToggle: 0x108C = 0x{word:08x} → 0x{target:08x}")
     print(f"[ok] MT keys {sorted(mt_table)} entries AMMT={mt_table[1].entries}")
     print(f"[ok] entry point {meta['initial_entry_point']}")
-
-    image = os.path.join(TESTS, "final_system.code")
-    if os.path.isfile(image):
-        text = open(image).read().lower()
-        assert "0x0000108c: 0xf7ffffdc" in text, (
-            f"{image} does not contain the relocated BL; re-run tools/module_loader.py"
-        )
-        print("[ok] tests/final_system.code has 0x108C = 0xf7ffffdc")
 
 
 def main() -> int:
