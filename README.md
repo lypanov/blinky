@@ -1,178 +1,103 @@
-# Blinky — Project Oberon RISC5 subset (Tang Nano 4K)
+# blinky
 
-Chisel 6.6 / Mill 0.12.5 CPU. **Not RISC-V.** ISA: [`docs/risc_5_arch.txt`](docs/risc_5_arch.txt). Memory map: [`docs/memory_map.txt`](docs/memory_map.txt).
+FPGA lab monorepo. **SRAM-only** bitstream load (`openFPGALoader -m`). Never `-f` / flash, even if a board already has something in flash.
 
-Commit `a68a501` is the last known-good-on-hardware snapshot: Oberon `Blink2hw` plus UART. This branch is **main-forward**: `main`'s Logger / linker / MT work on top of the blink2-4x Verilator/visualizer/webcam/Gowin tooling. Hardware still uses `tests/Blink2hw.Mod` (`maxIterations := 262144`, 2x delay word `0x60000004`). Simulation uses `tests/Blink2test.Mod` (`maxIterations := 5`). LED MMIO snoops stores to `0x10` or `0x50` (module vars moved to 0x50 on `main`).
+Do not commit ROMs (`.nes`) or bitstreams (`.fs`).
 
-## Tang Primer 20K Dock
+| Directory | What |
+|---|---|
+| [`core/`](core/) | Chisel RISC5 CPU (**not RISC-V**) + Verilator sim + visualizer |
+| [`nano4k/`](nano4k/) | Tang Nano 4K Gowin project, CST, blink measurements |
+| [`primer20k/`](primer20k/) | Primer 20K Dock notes, wiki blinky, blink measurements |
+| [`retro/`](retro/) | NESTang v0.4 (git submodule) + Dock CST overlay + UART loader + HDMI stills |
+| [`pi/`](pi/) | Raspberry Pi notes (placeholder) |
+| [`mcu/`](mcu/) | MCU notes (placeholder) |
+| [`tools/`](tools/) | Build / SRAM-load / blink-measure scripts, [webcam MCP](tools/webcam-mcp/) |
 
-SRAM-only bring-up on the Primer 20K Dock (never FPGA flash): pinout, wiki blinky
-(1.000 Hz then 2.003 Hz), and NESTang v0.4 UART ROM load.
+**Licences.** Mixed tree. NESTang (`retro/nestang`) is GPL (fpganes / Strigeus lineage); `hdmi2` inside it is MIT (Sameer Puri). Do not mix NESTang HDL with the Chisel CPU in one bitstream. v0.4 has no LICENSE file in-tree; treat it as GPL as documented upstream.
 
-- Pins, HDMI pairs, BL702 UART, SRAM rule: [`docs/primer20k/board-notes.md`](docs/primer20k/board-notes.md)
-- NESTang build, UART loader, nestest / Alter Ego stills: [`docs/primer20k/nestang.md`](docs/primer20k/nestang.md)
-- Blink measurements: [`docs/blink-measure/primer20k/`](docs/blink-measure/primer20k/)
+Clone with the submodule:
 
-Load bitstreams with `tools/sram_load.sh` (`openFPGALoader -b tangprimer20k -m`).
-Do not pass `-f`.
+```sh
+git clone --recurse-submodules git@github.com:lypanov/blinky.git
+# or after a plain clone:
+git submodule update --init --recursive
+```
 
-## Verilator simulation (Phase 1)
+## SRAM load
 
-Needs: JDK 11+, Mill 0.12.x on `PATH`, Verilator 5.x, Python 3 with `matplotlib` (for the PNG), optional GTKWave.
+`-b` is required (two boards). Always `-m`. Never `-f`.
+
+```sh
+tools/sram_load.sh -b tangnano4k nano4k/gowin/impl/pnr/<bitstream>.fs
+tools/sram_load.sh -b tangprimer20k primer20k/gowin/impl/pnr/primer20k_blink.fs
+```
+
+## core — RISC5 CPU
+
+Chisel 6.6 / Mill 0.12.5. ISA: [`core/docs/risc_5_arch.txt`](core/docs/risc_5_arch.txt). Memory map: [`core/docs/memory_map.txt`](core/docs/memory_map.txt).
+
+Hardware image: `core/tests/Blink2hw.Mod` (`maxIterations := 262144`, 2x delay word `0x60000004`). Simulation: `core/tests/Blink2test.Mod` (`maxIterations := 5`). LED MMIO snoops stores to `0x10` or `0x50`.
+
+Mill is invoked from the **repo root**. Oberon `.code` files live under `core/tests/`; set `CHISEL_CPU_PROJECT_ROOT` to `core/` (the scripts do this).
 
 ```sh
 # from the repo root
 tools/run_verilator_sim.sh
 # equivalent:
-make -C sim sim
+make -C core/sim sim
 ```
-
-What you get:
 
 | artifact | path |
 |---|---|
-| FST waveform (GTKWave) | `sim/out/blink2.fst` |
-| LED edge log | `sim/out/led_toggles.csv` |
-| timing-diagram PNG | `sim/out/led_waveform.png` |
-| cycle trace | `sim/out/blink2_trace.json` |
-
-Open the waveform:
+| FST waveform (GTKWave) | `core/sim/out/blink2.fst` |
+| LED edge log | `core/sim/out/led_toggles.csv` |
+| timing-diagram PNG | `core/sim/out/led_waveform.png` |
+| cycle trace | `core/sim/out/blink2_trace.json` |
 
 ```sh
-gtkwave -S sim/gtkwave_led.tcl sim/out/blink2.fst sim/gtkwave_led.gtkw
+gtkwave -S core/sim/gtkwave_led.tcl core/sim/out/blink2.fst core/sim/gtkwave_led.gtkw
 ```
 
-The sim prints `[LED] cycle=…` lines and a mean period. After the `main` MT/0x50 map, Verilator measures a **steady 84-cycle** LED period (edges at 98, 182, 266, …). That is the old 78-cycle loop plus six extra memory-wait cycles now that `LDW R13, [R12, 0x4]` is a real load instead of the R13 hack. Hardware `Blink2hw` uses `maxIterations := 262144` and is not the sim default.
-
-Sim-only delay: set `BLINK2_CODE` if you want a different image (the hardware image is a long delay loop and is not the default):
+FPGA bitstream for the Nano 4K:
 
 ```sh
-BLINK2_CODE=tests/Blink2test.code mill chisel-blinky.runMain gcd.CPUSimTop
-make -C sim run CYCLES=800 TOGGLES=6
+tools/gowin_build.sh
+tools/sram_load.sh -b tangnano4k nano4k/gowin/impl/pnr/<bitstream>.fs
 ```
 
-FPGA bitstream generation is unchanged: `./build.sh` still emits `CPUMinimalWrapper.v` from `tests/Blink2hw.code`.
-
-## Visualizer (Phase 2)
-
-Local web page (Python 3 stdlib HTTP server). Works on Arch Linux and macOS.
+Visualizer:
 
 ```sh
 tools/run_visualizer.sh
 # then open http://127.0.0.1:8765/
 ```
 
-Shows a pretend Tang Nano 4K with a live LED, the RISC5 instruction stream (mnemonics + registers + immediates) with a moving PC marker, Oberon source from `tests/Blink2test.Mod` when a mapping exists, and R0–R3 (R4–R15 are shown when present in the trace). Keyboard: Space run/pause, S step, R reset, `[` / `]` speed.
+CPU tests: `mill chisel-blinky.test` from the repo root, or `tools/run_cpu_with_trace.sh`.
 
----
+## nano4k
 
-Chisel Project Template
-=======================
+Tang Nano 4K (`GW1NSR-4C`). Gowin sources in [`nano4k/gowin/`](nano4k/gowin/), constraints [`nano4k/tang-nano-4k.cst`](nano4k/tang-nano-4k.cst). Blink after the layout move: [`nano4k/docs/blink-measure/layout-pr7/`](nano4k/docs/blink-measure/layout-pr7/) (**3.437 Hz**). Earlier runs: [`nano4k/docs/blink-measure/`](nano4k/docs/blink-measure/).
 
-You've done the [Chisel Bootcamp](https://github.com/freechipsproject/chisel-bootcamp), and now you
-are ready to start your own Chisel project.  The following procedure should get you started
-with a clean running [Chisel3](https://www.chisel-lang.org/) project.
+## primer20k
 
-## Make your own Chisel3 project
-
-### Dependencies
-
-#### JDK 11 or newer
-
-We recommend using Java 11 or later LTS releases. While Chisel itself works with Java 8, our preferred build tool Mill requires Java 11. You can install the JDK as your operating system recommends, or use the prebuilt binaries from [Adoptium](https://adoptium.net/) (formerly AdoptOpenJDK).
-
-#### SBT or mill
-
-SBT is the most common build tool in the Scala community. You can download it [here](https://www.scala-sbt.org/download.html).  
-mill is another Scala/Java build tool without obscure DSL like SBT. You can download it [here](https://github.com/com-lihaoyi/mill/releases)
-
-#### Verilator
-
-The test with `svsim` needs Verilator installed.
-See Verilator installation instructions [here](https://verilator.org/guide/latest/install.html).
-
-### How to get started
-
-#### Create a repository from the template
-
-This repository is a Github template. You can create your own repository from it by clicking the green `Use this template` in the top right.
-Please leave `Include all branches` **unchecked**; checking it will pollute the history of your new repository.
-For more information, see ["Creating a repository from a template"](https://docs.github.com/en/free-pro-team@latest/github/creating-cloning-and-archiving-repositories/creating-a-repository-from-a-template).
-
-#### Wait for the template cleanup workflow to complete
-
-After using the template to create your own blank project, please wait a minute or two for the `Template cleanup` workflow to run which will removes some template-specific stuff from the repository (like the LICENSE).
-Refresh the repository page in your browser until you see a 2nd commit by `actions-user` titled `Template cleanup`.
-
-
-#### Clone your repository
-
-Once you have created a repository from this template and the `Template cleanup` workflow has completed, you can click the green button to get a link for cloning your repository.
-Note that it is easiest to push to a repository if you set up SSH with Github, please see the [related documentation](https://docs.github.com/en/free-pro-team@latest/github/authenticating-to-github/connecting-to-github-with-ssh). SSH is required for pushing to a Github repository when using two-factor authentication.
+Tang Primer 20K Dock. Pins and SRAM rule: [`primer20k/board-notes.md`](primer20k/board-notes.md). Wiki blinky: [`primer20k/gowin/`](primer20k/gowin/). Measurements (1.000 Hz then 2.003 Hz): [`primer20k/blink-measure/`](primer20k/blink-measure/).
 
 ```sh
-git clone git@github.com:lypanov/chisel-blinky.git
-cd chisel-blinky
+tools/gowin_build_primer20k.sh
+tools/sram_load.sh -b tangprimer20k primer20k/gowin/impl/pnr/primer20k_blink.fs
 ```
 
-#### Set project organization and name in build.sbt
+## retro — NESTang
 
-The cleanup workflow will have attempted to provide sensible defaults for `ThisBuild / organization` and `name` in the `build.sbt`.
-Feel free to use your text editor of choice to change them as you see fit.
+All NESTang work lives here, not under `primer20k/`. Submodule [`retro/nestang`](https://github.com/nand2mario/nestang) pinned at tag **v0.4** (last release with Primer 20K). Dock CST overlay, UART loader, HDMI stills: [`retro/nestang.md`](retro/nestang.md).
 
-#### Clean up the README.md file
+Free ROMs only. UART loader, not FPGA flash and not SD.
 
-Again, use you editor of choice to make the README specific to your project.
+## tools
 
-#### Add a LICENSE file
-
-It is important to have a LICENSE for open source (or closed source) code.
-This template repository has the Unlicense in order to allow users to add any license they want to derivative code.
-The Unlicense is stripped when creating a repository from this template so that users do not accidentally unlicense their own work.
-
-For more information about a license, check out the [Github Docs](https://docs.github.com/en/free-pro-team@latest/github/building-a-strong-community/adding-a-license-to-a-repository).
-
-#### Commit your changes
-```sh
-git commit -m 'Starting chisel-blinky'
-git push origin main
-```
-
-### Did it work?
-
-You should now have a working Chisel3 project.
-
-You can run the included test with:
-```sh
-sbt test
-```
-
-Alternatively, if you use Mill:
-```sh
-mill chisel-blinky.test
-```
-
-You should see a whole bunch of output that ends with something like the following lines
-```
-[info] Tests: succeeded 1, failed 0, canceled 0, ignored 0, pending 0
-[info] All tests passed.
-[success] Total time: 5 s, completed Dec 16, 2020 12:18:44 PM
-```
-If you see the above then...
-
-### It worked!
-
-You are ready to go. We have a few recommended practices and things to do.
-
-* Use packages and following conventions for [structure](https://www.scala-sbt.org/1.x/docs/Directories.html) and [naming](http://docs.scala-lang.org/style/naming-conventions.html)
-* Package names should be clearly reflected in the testing hierarchy
-* Build tests for all your work
-* Read more about testing in SBT in the [SBT docs](https://www.scala-sbt.org/1.x/docs/Testing.html)
-* This template includes a [test dependency](https://www.scala-sbt.org/1.x/docs/Library-Dependencies.html#Per-configuration+dependencies) on [ScalaTest](https://www.scalatest.org/). This, coupled with `svsim` (included with Chisel) and `verilator`, are a starting point for testing Chisel generators.
-  * You can remove this dependency in the build.sbt file if you want to
-* Change the name of your project in the build.sbt file
-* Change your README.md
-
-## Problems? Questions?
-
-Check out the [Chisel Users Community](https://www.chisel-lang.org/community.html) page for links to get in contact!
+- `tools/gowin_build.sh` — Nano 4K Chisel + Gowin
+- `tools/gowin_build_primer20k.sh` — Primer wiki blinky
+- `tools/sram_load.sh` — SRAM only; requires `-b`
+- `tools/measure_blink.sh` — LED Hz from `/dev/video0`
+- [`tools/webcam-mcp/`](tools/webcam-mcp/) — streamable HTTP MCP on **127.0.0.1:8766** (`capture_still`, `list_cameras`, `capture_burst`)

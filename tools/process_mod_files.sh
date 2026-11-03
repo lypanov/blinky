@@ -17,7 +17,7 @@ fi
 export NOREBO_PATH="$HOME_DIR/ob/project-norebo/Norebo:$HOME_DIR/ob/project-norebo/Oberon:$HOME_DIR/ob/project-norebo/Bootstrap"
 
 # Change to the tests directory
-cd "$(dirname "$0")/../tests" || exit 1
+cd "$(dirname "$0")/../core/tests" || exit 1
 
 # Process each .Mod file
 for mod_file in *.Mod; do

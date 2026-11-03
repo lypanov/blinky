@@ -7,7 +7,8 @@
 #   COUNT_VALUE=6749999 tools/gowin_build_primer20k.sh   # 2 Hz
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PRIMER="$REPO/primer20k"
 export PATH="${HOME}/bin:/usr/local/bin:${PATH}"
 
 if [[ -z "${QT_QPA_PLATFORM:-}" ]]; then
@@ -23,26 +24,26 @@ if ! command -v gw_sh >/dev/null 2>&1; then
 fi
 
 COUNT_VALUE="${COUNT_VALUE:-13499999}"
-SRC="$ROOT/gowin/primer20k/led.v"
+SRC="$PRIMER/gowin/led.v"
 if [[ ! -f "$SRC" ]]; then
   echo "error: missing $SRC" >&2
   exit 1
 fi
 
 # Prepend `define so the wiki default can be overridden without editing led.v.
-GEN="$ROOT/gowin/primer20k/led_build.v"
+GEN="$PRIMER/gowin/led_build.v"
 {
   echo "\`define COUNT_VALUE ${COUNT_VALUE}"
   cat "$SRC"
 } > "$GEN"
 
 echo "==> Gowin syn+PNR (GW2A-LV18PG256C8/I7) COUNT_VALUE=${COUNT_VALUE}"
-cd "$ROOT/gowin/primer20k"
-gw_sh "$ROOT/gowin/primer20k/gowin_build.tcl"
+cd "$PRIMER/gowin"
+gw_sh "$PRIMER/gowin/gowin_build.tcl"
 
-FS="$ROOT/gowin/primer20k/impl/pnr/primer20k_blink.fs"
+FS="$PRIMER/gowin/impl/pnr/primer20k_blink.fs"
 if [[ ! -f "$FS" ]]; then
-  mapfile -t FOUND < <(find "$ROOT/gowin/primer20k" -name '*.fs' -type f | sort)
+  mapfile -t FOUND < <(find "$PRIMER/gowin" -name '*.fs' -type f | sort)
   if [[ ${#FOUND[@]} -eq 0 ]]; then
     echo "error: no .fs bitstream produced" >&2
     exit 1
@@ -54,6 +55,6 @@ echo "==> Bitstream  $FS"
 echo "    COUNT_VALUE=${COUNT_VALUE}"
 echo ""
 echo "SRAM load only (never flash):"
-echo "  tools/sram_load.sh $FS"
+echo "  tools/sram_load.sh -b tangprimer20k $FS"
 echo "  openFPGALoader -b tangprimer20k -m $FS"
 echo "Do NOT pass -f / --write-flash / --external-flash."

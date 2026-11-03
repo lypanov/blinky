@@ -43,10 +43,12 @@ if [ $# -gt 0 ]; then
     TEST_NAME="$1"
 fi
 
-# Get the absolute path to the project root (parent directory of tools/)
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# mill lives at the repo root; Oberon .code files live under core/.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$REPO/core"
 echo "Setting CHISEL_CPU_PROJECT_ROOT to: $PROJECT_ROOT"
 export CHISEL_CPU_PROJECT_ROOT="$PROJECT_ROOT"
+cd "$REPO"
 
 # Create trace directory if it doesn't exist
 TRACE_DIR="$PROJECT_ROOT/trace"

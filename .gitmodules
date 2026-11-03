@@ -1,0 +1,3 @@
+[submodule "retro/nestang"]
+	path = retro/nestang
+	url = https://github.com/nand2mario/nestang.git
