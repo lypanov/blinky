@@ -26,7 +26,6 @@ jobs:
         uses: coursier/setup-action@v1
         with:
           jvm: adopt:11
-          apps: sbt
       - name: Setup Mill
         run: |
           curl -L https://github.com/com-lihaoyi/mill/releases/download/0.12.5/0.12.5 > mill && chmod +x mill
@@ -56,7 +55,10 @@ jobs:
           echo "$(pwd)/${{ env.verilator-install-dir }}/bin" >> $GITHUB_PATH
           echo VERILATOR_ROOT="$(pwd)/${{ env.verilator-install-dir }}/share/verilator" >> $GITHUB_ENV
           ln -sf $(pwd)/${{ env.verilator-install-dir }}/bin/verilator_bin $(pwd)/${{ env.verilator-install-dir }}/share/verilator/verilator_bin
-      - name: SBT Test
-        run: sbt test
+      # This repo is Mill, not sbt. `sbt test` has no build.sbt and uses Scala
+      # 2.12, which rejects numeric underscores in Blinky.scala (27_000_000).
+      # That failure is identical on main / a68a501; mill uses Scala 2.13.15.
       - name: mill Test
+        env:
+          CHISEL_CPU_PROJECT_ROOT: ${{ github.workspace }}
         run: ./mill _.test
