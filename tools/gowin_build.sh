@@ -35,17 +35,17 @@ if [[ ! -f "$V" ]]; then
   exit 1
 fi
 
-echo "==> Checking 4x delay word 0x60000002 (MHI R0,0x2 = 131072) in Verilog"
-if grep -q '60000002' "$V"; then
-  echo "    found 60000002 in $V"
-  grep -n '60000002' "$V" | head
+echo "==> Checking 2x delay word 0x60000004 (MHI R0,0x4 = 262144) in Verilog"
+if grep -q '60000004' "$V"; then
+  echo "    found 60000004 in $V"
+  grep -n '60000004' "$V" | head
 else
-  echo "error: 60000002 not in $V — Blink2hw.code patch did not reach instruction memory" >&2
+  echo "error: 60000004 not in $V — Blink2hw.code patch did not reach instruction memory" >&2
   grep -n '6000000' "$V" || true
   exit 1
 fi
-if grep -q '60000008' "$V"; then
-  echo "error: old 1 Hz word 60000008 still present in $V" >&2
+if grep -qE '6000000[28]' "$V"; then
+  echo "error: old delay word 60000002 or 60000008 still present in $V" >&2
   exit 1
 fi
 
