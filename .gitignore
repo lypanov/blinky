@@ -352,3 +352,7 @@ sim/obj_dir/
 sim/visualizer/trace.json
 sim/visualizer/program.json
 .mill/
+gowin/impl/
+gowin/src/
+gowin/*.gprj.user
+gowin/ip/gowin_sp/
