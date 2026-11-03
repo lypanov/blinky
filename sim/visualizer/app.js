@@ -15,9 +15,19 @@ const REG_NAMES = [
   "R8", "R9", "R10", "R11", "MT/R12", "SB/R13", "SP/R14", "LNK/R15",
 ];
 
+const WATCH_ORDER = [
+  [0x50, "AMMT light / LED var"],
+  [0x70, "LightToggle counter"],
+  [0x74, "maxIterations"],
+  [0x14, "MT[1]"],
+  [0x18, "MT[2]"],
+  [0x10, "LED snoop 0x10"],
+];
+
 const state = {
-  trace: null,
-  program: [],
+  traces: { blink2: null, blink3: null },
+  programs: { blink2: [], blink3: [] },
+  image: "blink2",
   i: 0,
   running: false,
   timer: null,
@@ -36,14 +46,32 @@ function hex32(v) {
   return "0x" + (Number(v) >>> 0).toString(16).padStart(8, "0");
 }
 
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+function currentTrace() { return state.traces[state.image]; }
+function currentProgram() { return state.programs[state.image] || []; }
+
 function renderSource(modLines) {
   const ol = $("source");
   ol.innerHTML = "";
-  modLines.forEach((line) => {
+  (modLines || []).forEach((line) => {
     const li = document.createElement("li");
     li.textContent = line || " ";
+    if (String(line).startsWith("----- ")) li.classList.add("hdr");
     ol.appendChild(li);
   });
+}
+
+function tagFor(mark) {
+  if (mark === "failure-bl") return '<span class="tag tag-fail">BROKEN BL</span>';
+  if (mark === "wrong-land") return '<span class="tag tag-wrong">LANDS HERE</span>';
+  if (mark === "expected-target") return '<span class="tag tag-ok">TOGGLE</span>';
+  if (mark === "return-addr") return '<span class="tag tag-wrong">SHOULD RETURN HERE</span>';
+  return "";
 }
 
 function renderAsm(program) {
@@ -51,18 +79,17 @@ function renderAsm(program) {
   root.innerHTML = "";
   program.forEach((e) => {
     const row = document.createElement("div");
-    row.className = "row";
+    row.className = "row" + (e.mark ? ` ${e.mark}` : "");
     row.dataset.addr = String(e.addr);
     row.innerHTML = `
       <span class="arrow"></span>
       <span class="addr">${hex32(e.addr).replace("0x", "")}</span>
       <span class="hex">${e.hex}</span>
-      <span class="mn">${escapeHtml(e.disasm)}</span>`;
+      <span class="mn">${escapeHtml(e.disasm)}${tagFor(e.mark)}</span>`;
     root.appendChild(row);
     if (e.src || e.note) {
       const src = document.createElement("div");
       src.className = "src";
-      src.style.padding = "0 10px 4px 98px";
       src.textContent = e.src ? `; ${e.src}` : `; ${e.note}`;
       src.dataset.addr = String(e.addr);
       root.appendChild(src);
@@ -75,17 +102,11 @@ function renderRegsGrid() {
   root.innerHTML = "";
   for (let i = 0; i < 16; i++) {
     const d = document.createElement("div");
-    d.className = "reg";
+    d.className = "reg" + (i === 15 ? " lnk" : "");
     d.id = `reg-${i}`;
     d.innerHTML = `<div class="n">${REG_NAMES[i]}</div><div class="v">—</div>`;
     root.appendChild(d);
   }
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
 }
 
 function setLed(on) {
@@ -121,13 +142,25 @@ function setLed(on) {
   }
 }
 
+function scrollPane(el, block) {
+  const pane = el && el.closest(".code");
+  if (!el || !pane) return;
+  const er = el.getBoundingClientRect();
+  const pr = pane.getBoundingClientRect();
+  if (block === "nearest" && er.top >= pr.top && er.bottom <= pr.bottom) return;
+  const mid = block === "center";
+  const elY = er.top + (mid ? er.height / 2 : 0);
+  const paneY = pr.top + (mid ? pr.height / 2 : 0);
+  pane.scrollTop += elY - paneY;
+}
+
 function highlight(pc, srcLine) {
   document.querySelectorAll("#source li.current").forEach((n) => n.classList.remove("current"));
   if (srcLine) {
     const li = $("source").children[srcLine - 1];
     if (li) {
       li.classList.add("current");
-      li.scrollIntoView({ block: "nearest" });
+      scrollPane(li, "nearest");
     }
   }
   document.querySelectorAll("#asm .current").forEach((n) => n.classList.remove("current"));
@@ -137,16 +170,40 @@ function highlight(pc, srcLine) {
   const row = document.querySelector(`#asm .row[data-addr="${pc}"]`);
   if (row) {
     row.querySelector(".arrow").textContent = "▶";
-    row.scrollIntoView({ block: "nearest" });
+    scrollPane(row, "center");
   }
 }
 
+function renderDmem(dmem) {
+  const root = $("dmem");
+  root.innerHTML = "";
+  WATCH_ORDER.forEach(([addr, fallback]) => {
+    const rec = dmem && (dmem[String(addr)] || dmem[addr]);
+    const cell = document.createElement("div");
+    cell.className = "cell";
+    const name = rec ? rec.name : fallback;
+    const val = rec ? hex32(rec.value) : "—";
+    cell.innerHTML = `<span>${hex32(addr)}</span><span>${escapeHtml(name)}</span><span class="val">${val}</span>`;
+    root.appendChild(cell);
+  });
+}
+
+function failBannerHtml(f) {
+  if (!f) return "";
+  const r15ok = f.r15_written;
+  return `BL at <code>${hex32(f.bl_pc)}</code> jumped to <code>${hex32(f.actual_target)}</code>
+    (MOV R0, 0 inside LightToggle), not Toggle at <code>${hex32(f.expected_target)}</code>.
+    R15 ${r15ok ? "was written" : "stayed " + hex32(f.r15_after) + " — CPU never saved PC+4 (" + hex32(f.r15_expected) + ")"}.`;
+}
+
 function applyCycle() {
-  const t = state.trace;
+  const t = currentTrace();
   if (!t || !t.cycles.length) return;
   const i = Math.max(0, Math.min(state.i, t.cycles.length - 1));
   state.i = i;
   const c = t.cycles[i];
+  $("stepn").textContent = String(i);
+  $("steptotal").textContent = String(t.cycles.length - 1);
   $("cycle").textContent = String(c.cycle);
   $("pc").textContent = hex32(c.pc);
   setLed(!!c.led);
@@ -154,18 +211,23 @@ function applyCycle() {
     ? `${hex32(c.pc)}  ${c.disasm}${c.src ? "   // " + c.src : (c.note ? "   // " + c.note : "")}`
     : "—";
   highlight(c.pc, c.srcLine);
+  renderDmem(c.dmem);
 
-  const regs = [c.r0, c.r1, c.r2, c.r3];
   for (let r = 0; r < 16; r++) {
     const el = $(`reg-${r}`);
-    const val = (typeof c["r" + r] === "number") ? c["r" + r]
-              : (r < 4 ? regs[r] : undefined);
+    const val = (typeof c["r" + r] === "number") ? c["r" + r] : undefined;
     const text = (typeof val === "number") ? hex32(val) : "—";
     const v = el.querySelector(".v");
     el.classList.toggle("changed", state.lastRegs[r] !== undefined && state.lastRegs[r] !== text);
     v.textContent = text;
     if (typeof val === "number") state.lastRegs[r] = text;
   }
+
+  const f = t.failure;
+  const atFail = !!(f && (i === f.step_index || i === f.landing_step_index));
+  $("reg-15").classList.toggle("stale", !!(f && !f.r15_written && atFail));
+  $("fail-banner").classList.toggle("here", atFail);
+  $("brand-dot").classList.toggle("fail", state.image === "blink3");
 
   const edges = t.led_toggles || (t.summary && t.summary.toggle_cycles) || [];
   const periods = [];
@@ -190,18 +252,21 @@ function stop() {
   btn.classList.remove("running");
 }
 
-function tick() {
-  if (state.i >= state.trace.cycles.length - 1) {
-    stop();
+function tick(dir) {
+  const t = currentTrace();
+  if (!t) return;
+  const next = state.i + (dir || 1);
+  if (next < 0 || next >= t.cycles.length) {
+    if (dir > 0) stop();
     return;
   }
-  state.i += 1;
+  state.i = next;
   applyCycle();
 }
 
 function play() {
-  if (!state.trace) return;
-  if (state.i >= state.trace.cycles.length - 1) state.i = 0;
+  if (!currentTrace()) return;
+  if (state.i >= currentTrace().cycles.length - 1) state.i = 0;
   state.running = true;
   const btn = $("btn-run");
   btn.textContent = "Pause";
@@ -224,19 +289,55 @@ function schedule() {
   if (ms === 0) {
     const pump = () => {
       if (!state.running) return;
-      for (let n = 0; n < 8 && state.running; n++) tick();
+      for (let n = 0; n < 8 && state.running; n++) tick(1);
       if (state.running) requestAnimationFrame(pump);
     };
     requestAnimationFrame(pump);
     return;
   }
-  state.timer = setInterval(tick, ms);
+  state.timer = setInterval(() => tick(1), ms);
+}
+
+function selectImage(name) {
+  stop();
+  state.image = name;
+  state.i = 0;
+  state.lastRegs = {};
+  $("btn-blink2").classList.toggle("active", name === "blink2");
+  $("btn-blink3").classList.toggle("active", name === "blink3");
+  const t = currentTrace();
+  const p = currentProgram();
+  if (!t) {
+    $("instr-line").textContent = `No ${name} trace. Run make -C sim traces`;
+    return;
+  }
+  $("title").textContent = t.title || name;
+  $("subtitle").textContent = t.subtitle || "";
+  $("mod-file").textContent = t.mod_file || "";
+  $("btn-fail").classList.toggle("hidden", !t.failure);
+  $("fail-banner").classList.toggle("hidden", !t.failure);
+  if (t.failure) $("fail-text").innerHTML = failBannerHtml(t.failure);
+  renderSource(t.mod_source || []);
+  renderAsm(p);
+  applyCycle();
+}
+
+function jumpToFailure() {
+  const t = currentTrace();
+  if (!t || !t.failure) return;
+  stop();
+  state.i = t.failure.step_index;
+  applyCycle();
 }
 
 function bind() {
   $("btn-run").onclick = () => (state.running ? stop() : play());
-  $("btn-step").onclick = () => { stop(); tick(); };
+  $("btn-step").onclick = () => { stop(); tick(1); };
+  $("btn-back").onclick = () => { stop(); tick(-1); };
   $("btn-reset").onclick = () => { stop(); state.i = 0; state.lastRegs = {}; applyCycle(); };
+  $("btn-fail").onclick = jumpToFailure;
+  $("btn-blink2").onclick = () => selectImage("blink2");
+  $("btn-blink3").onclick = () => selectImage("blink3");
   $("speed").oninput = () => {
     $("speed-label").textContent = SPEEDS[Number($("speed").value)].label;
     if (state.running) schedule();
@@ -245,8 +346,12 @@ function bind() {
   document.addEventListener("keydown", (ev) => {
     if (ev.target.tagName === "INPUT") return;
     if (ev.code === "Space") { ev.preventDefault(); state.running ? stop() : play(); }
-    else if (ev.key === "s" || ev.key === "S") { stop(); tick(); }
+    else if (ev.key === "s" || ev.key === "S" || ev.key === "ArrowRight") { stop(); tick(1); }
+    else if (ev.key === "a" || ev.key === "A" || ev.key === "ArrowLeft") { stop(); tick(-1); }
     else if (ev.key === "r" || ev.key === "R") { $("btn-reset").click(); }
+    else if (ev.key === "f" || ev.key === "F") { jumpToFailure(); }
+    else if (ev.key === "2") selectImage("blink2");
+    else if (ev.key === "3") selectImage("blink3");
     else if (ev.key === "[") {
       $("speed").value = Math.max(0, Number($("speed").value) - 1);
       $("speed").dispatchEvent(new Event("input"));
@@ -261,19 +366,27 @@ async function main() {
   bind();
   renderRegsGrid();
   try {
-    const [trace, programDoc] = await Promise.all([
-      loadJson("./trace.json"),
-      loadJson("./program.json").catch(() => null),
+    const [b2, b3, p2, p3] = await Promise.all([
+      loadJson("./traces/blink2.json"),
+      loadJson("./traces/blink3.json"),
+      loadJson("./traces/blink2_program.json").catch(() => null),
+      loadJson("./traces/blink3_program.json").catch(() => null),
     ]);
-    state.trace = trace;
-    const program = (programDoc && programDoc.entries) || [];
-    state.program = program;
-    $("mod-file").textContent = trace.mod_file || "tests/Blink2test.Mod";
-    renderSource(trace.mod_source || []);
-    renderAsm(program);
-    applyCycle();
+    state.traces.blink2 = b2;
+    state.traces.blink3 = b3;
+    state.programs.blink2 = (p2 && p2.entries) || [];
+    state.programs.blink3 = (p3 && p3.entries) || [];
+    const params = new URLSearchParams(location.search);
+    const want = params.get("p") === "blink3" ? "blink3" : "blink2";
+    selectImage(want);
+    if (params.get("fail") != null || params.get("step") === "fail") {
+      jumpToFailure();
+    } else if (params.get("i") != null) {
+      state.i = Number(params.get("i")) || 0;
+      applyCycle();
+    }
   } catch (err) {
-    $("instr-line").textContent = "Failed to load trace.json. Run tools/run_verilator_sim.sh first, then tools/run_visualizer.sh.";
+    $("instr-line").textContent = "Failed to load traces. On Bee: make -C sim traces && tools/run_visualizer.sh";
     console.error(err);
   }
 }

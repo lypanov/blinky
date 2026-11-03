@@ -67,14 +67,33 @@ The clone lands in `tools/project-norebo/` (gitignored). After the monorepo layo
 
 ## Visualizer (Phase 2)
 
-Local web page (Python 3 stdlib HTTP server). Works on Arch Linux and macOS.
+Local web page (Python 3 stdlib HTTP server). Blink2 and Blink3 buttons load
+**real Verilator traces** of the current unfixed loader and CPU (Blink3 shows
+the broken `BL` at `0x108C`). Stepping is one **instruction** (PC change), not
+one clock. `F` jumps to the Blink3 failure.
+
+On Bee (this Linux PC):
 
 ```sh
-tools/run_visualizer.sh
-# then open http://127.0.0.1:8765/
+tools/run_visualizer.sh          # binds 127.0.0.1:8765 only
+# regenerate traces after CPU/loader/sim changes:
+make -C sim traces
 ```
 
-Shows a pretend Tang Nano 4K with a live LED, the RISC5 instruction stream (mnemonics + registers + immediates) with a moving PC marker, Oberon source from `tests/Blink2test.Mod` when a mapping exists, and R0–R3 (R4–R15 are shown when present in the trace). Keyboard: Space run/pause, S step, R reset, `[` / `]` speed.
+On Alex's Mac, leave that running on Bee and forward the port. Nothing is
+exposed to the internet:
+
+```sh
+ssh -N -L 8765:127.0.0.1:8765 bee
+open http://127.0.0.1:8765/           # Blink2
+open http://127.0.0.1:8765/?p=blink3  # Blink3 failure
+```
+
+Same Wi-Fi as Bee, still not the internet: `tools/run_visualizer.sh --bind 0.0.0.0`
+then `http://<bee-lan-ip>:8765/`.
+
+Keyboard: Space run/pause, `S` / `→` next instruction, `A` / `←` previous, `R`
+reset, `F` jump to the broken BL, `2` / `3` switch program, `[` / `]` speed.
 
 ---
 

@@ -45,6 +45,7 @@ struct Options {
   int max_cycles = 800;
   int reset_cycles = 4;
   int min_toggles = 6;
+  std::string program = "blink2";
   std::string fst_path = "sim/out/blink2.fst";
   std::string led_path = "sim/out/led_toggles.csv";
   std::string trace_path = "sim/out/blink2_trace.json";
@@ -55,8 +56,9 @@ static void usage(const char* argv0) {
   fprintf(stderr,
           "Usage: %s [options]\n"
           "  --cycles N       Max cycles after reset (default 800)\n"
-          "  --toggles N      Stop after N LED edges (default 6)\n"
+          "  --toggles N      Stop after N LED edges (default 6; 0 = never stop on LED)\n"
           "  --reset N        Reset cycles (default 4)\n"
+          "  --program NAME   Label stored in the JSON (blink2 / blink3)\n"
           "  --fst PATH       FST waveform output\n"
           "  --trace PATH     JSON cycle trace output\n"
           "  --led PATH       LED toggle CSV output\n",
@@ -76,6 +78,7 @@ static Options parse_args(int argc, char** argv) {
     if (!strcmp(argv[i], "--cycles")) o.max_cycles = atoi(need("--cycles"));
     else if (!strcmp(argv[i], "--toggles")) o.min_toggles = atoi(need("--toggles"));
     else if (!strcmp(argv[i], "--reset")) o.reset_cycles = atoi(need("--reset"));
+    else if (!strcmp(argv[i], "--program")) o.program = need("--program");
     else if (!strcmp(argv[i], "--fst")) o.fst_path = need("--fst");
     else if (!strcmp(argv[i], "--trace")) o.trace_path = need("--trace");
     else if (!strcmp(argv[i], "--led")) o.led_path = need("--led");
@@ -126,7 +129,7 @@ int main(int argc, char** argv) {
   std::ofstream trace(opt.trace_path);
   led_csv << "cycle,led_prev,led_next,pc,r0\n";
   wave_csv << "cycle,led,pc,halted,mem_write,mem_addr,mem_wdata,r0,r1,r2,r3\n";
-  trace << "{\n  \"program\": \"Blink2test (sim delay maxIterations=5)\",\n";
+  trace << "{\n  \"program\": \"" << opt.program << "\",\n";
   trace << "  \"reset_cycles\": " << opt.reset_cycles << ",\n";
   trace << "  \"cycles\": [\n";
 
@@ -152,6 +155,7 @@ int main(int argc, char** argv) {
 
     const int nflag = top->rootp->CPUSimTop__DOT__cpu__DOT__n ? 1 : 0;
     const int zflag = top->rootp->CPUSimTop__DOT__cpu__DOT__z ? 1 : 0;
+    const int mem_rd = top->io_memRead ? 1 : 0;
 
     wave_csv << cycle << "," << led << "," << pc << "," << halted << ","
              << mem_wr << "," << mem_addr << "," << mem_wdata << ","
@@ -164,6 +168,7 @@ int main(int argc, char** argv) {
           << ",\"led\":" << led
           << ",\"halted\":" << halted
           << ",\"memWrite\":" << (mem_wr ? "true" : "false")
+          << ",\"memRead\":" << (mem_rd ? "true" : "false")
           << ",\"memAddr\":" << mem_addr
           << ",\"memWriteData\":" << mem_wdata
           << ",\"n\":" << nflag
@@ -181,7 +186,7 @@ int main(int argc, char** argv) {
              cycle, prev_led, led, pc, r0);
       fflush(stdout);
       prev_led = led;
-      if (toggles >= opt.min_toggles) {
+      if (opt.min_toggles > 0 && toggles >= opt.min_toggles) {
         cycle++;  // count the cycle we just ran
         break;
       }
@@ -230,5 +235,6 @@ int main(int argc, char** argv) {
     fprintf(stderr, "[SIM] WARNING: LED did not toggle enough times to measure a period\n");
   }
 
+  if (opt.min_toggles <= 0) return 0;
   return (toggles >= 2) ? 0 : 1;
 }

@@ -12,7 +12,10 @@ import java.io.File
  * in a few hundred cycles. Hardware still uses tests/Blink2hw.code
  * (maxIterations = 262144, 2x delay) via CPUSubset0.main / build.sh.
  */
-class CPUSimTop(programInstructions: Seq[String]) extends Module {
+class CPUSimTop(
+    programInstructions: Seq[String],
+    customMemoryImage: Option[Seq[String]] = None
+) extends Module {
   val io = IO(new Bundle {
     val led = Output(Bool())
     val pc = Output(UInt(32.W))
@@ -27,7 +30,7 @@ class CPUSimTop(programInstructions: Seq[String]) extends Module {
     val memRead = Output(Bool())
   })
 
-  val cpu = Module(new CPUSubset0(programInstructions))
+  val cpu = Module(new CPUSubset0(programInstructions, customMemoryImage = customMemoryImage))
   val memoryController = Module(new MemoryController(useRealGowin = false))
 
   memoryController.io.cpuAddr := cpu.io.memAddr
@@ -76,16 +79,37 @@ object CPUSimTop {
 
   def main(args: Array[String]): Unit = {
     val projectRoot = getProjectRoot()
-    val defaultCode = new File(projectRoot, "tests/Blink2test.code").getAbsolutePath
-    val codePath = sys.env.getOrElse("BLINK2_CODE", defaultCode)
-    val programInstructions = loadInstructionsFromFile(codePath)
-    println(s"CPUSimTop: loaded ${programInstructions.length} instructions from $codePath")
-
+    val image = sys.env.getOrElse("SIM_IMAGE", "blink2")
     val targetDir = "generated"
     new File(targetDir).mkdirs()
 
+    val (gen, outFile, label) = image match {
+      case "blink3" =>
+        val imemPath = new File(
+          projectRoot,
+          sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
+        ).getAbsolutePath
+        val words = loadInstructionsFromFile(imemPath)
+        println(s"CPUSimTop: Blink3 custom IMEM ${words.length} words from $imemPath")
+        (
+          () => new CPUSimTop(Seq.empty, customMemoryImage = Some(words)),
+          s"$targetDir/CPUSimTopBlink3.v",
+          "blink3"
+        )
+      case _ =>
+        val defaultCode = new File(projectRoot, "tests/Blink2test.code").getAbsolutePath
+        val codePath = sys.env.getOrElse("BLINK2_CODE", defaultCode)
+        val programInstructions = loadInstructionsFromFile(codePath)
+        println(s"CPUSimTop: loaded ${programInstructions.length} instructions from $codePath")
+        (
+          () => new CPUSimTop(programInstructions),
+          s"$targetDir/CPUSimTop.v",
+          "blink2"
+        )
+    }
+
     val verilog = ChiselStage.emitSystemVerilog(
-      gen = new CPUSimTop(programInstructions),
+      gen = gen(),
       firtoolOpts = Array(
         "-disable-all-randomization",
         "-strip-debug-info",
@@ -93,10 +117,9 @@ object CPUSimTop {
       )
     )
 
-    val outFile = s"$targetDir/CPUSimTop.v"
     val writer = new java.io.PrintWriter(new File(outFile))
     writer.write(verilog)
     writer.close()
-    println(s"Simulation Verilog written to $outFile")
+    println(s"Simulation Verilog ($label) written to $outFile")
   }
 }
