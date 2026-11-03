@@ -83,14 +83,30 @@ python3 -u tools/nestang_uart_load.py -c /dev/ttyUSB1 -b 921600 \
 tools/sram_load.sh /home/lypanov/fpga/nestang-v04/impl/pnr/nestang_dock.fs
 ```
 
-Free ROM only: `nestest.nes` (Kevtris CPU test, freely redistributable). No
-commercial games, no FPGA flash, no SD.
+Free ROMs only. No commercial games, no FPGA flash, no SD.
 
-## Result
+## Result — nestest
 
 Webcam `/dev/video0` on the ThinkVision after the one-shot load:
 
 - [`hdmi-monitor-nestest.jpg`](hdmi-monitor-nestest.jpg) — nestest menu
   (`* Run all tests`, Branch/Flag/Immediate/…, `Start: run test`)
+
+## Alter Ego (Shiru, 2011, freeware NROM)
+
+Zip from [pdroms.de/alter-ego](https://pdroms.de/files/nintendo-nes-famicom/alter-ego)
+(`Alter_Ego.nes`, iNES mapper 0, 32 KB PRG + 8 KB CHR, vertical mirroring).
+notes.txt: released as freeware, not public domain. Same UART path as nestest
+(open `ttyUSB1` first, SRAM-load, then send). After `Game loading done.`, pulse
+Start (`addr 0x40`, bit 3) to leave the dark title screen:
+
+```sh
+python3 -u tools/nestang_uart_load.py -c /dev/ttyUSB1 -b 921600 \
+  --listen 20 --listen-after 2 --joy-after 0x08 \
+  /home/lypanov/fpga/nestang-v04/games/Alter_Ego.nes
+```
+
+- [`hdmi-monitor-alter-ego.jpg`](hdmi-monitor-alter-ego.jpg) — first level
+  (`HELLO WORLD`, bricks, water). HDMI audio carries Kulor’s music.
 
 HDMI + UART loader + SRAM-only NESTang v0.4 on the Primer 20K Dock is working.

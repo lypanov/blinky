@@ -186,6 +186,10 @@ def main() -> int:
     p.add_argument("--listen-after", type=float, default=0.5)
     p.add_argument("--reset-ms", type=float, default=50.0)
     p.add_argument("--no-reset", action="store_true")
+    p.add_argument("--joy-after", type=lambda s: int(s, 0), default=None,
+                   help="after ROM load, pulse this NES joypad byte on addr 0x40 (e.g. 0x08=Start)")
+    p.add_argument("--joy-hold-ms", type=float, default=250.0)
+    p.add_argument("--joy-repeats", type=int, default=3)
     args = p.parse_args()
     if not 1 <= args.chunk <= 255:
         p.error("chunk must be 1..255")
@@ -222,6 +226,16 @@ def main() -> int:
             print(f"listening {args.listen_after:.1f}s after send…", flush=True)
             got = listen(fd, args.listen_after)
             print(f"\n[after got {len(got)} bytes]", flush=True)
+
+        if args.joy_after is not None:
+            pressed = bytes([args.joy_after & 0xFF])
+            released = b"\x00"
+            for i in range(args.joy_repeats):
+                send_addr(fd, 0x40, pressed, 1, 0)
+                time.sleep(args.joy_hold_ms / 1000.0)
+                send_addr(fd, 0x40, released, 1, 0)
+                time.sleep(args.joy_hold_ms / 1000.0)
+            print(f"pulsed joypad 0x{args.joy_after:02x} x{args.joy_repeats}", flush=True)
         return 0
     finally:
         os.close(fd)
