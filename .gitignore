@@ -356,3 +356,7 @@ gowin/impl/
 gowin/src/
 gowin/*.gprj.user
 gowin/ip/gowin_sp/
+gowin/primer20k/impl/
+gowin/primer20k/led_build.v
+gowin/primer20k/*.gprj.user
+gowin/primer20k/led.v.bak
