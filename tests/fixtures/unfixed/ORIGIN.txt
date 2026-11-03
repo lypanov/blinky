@@ -1,0 +1,21 @@
+Historical RAW (unfixed) Oberon code-section dumps.
+Hex words only; these are not .rsc binaries.
+
+AMemoryMappedToggle.code
+  git show e5743c8:tests/AMemoryMappedToggle.code
+  source today: tests/AMemoryMappedToggle.Mod (unchanged)
+
+Blink3test.code
+  git show e5743c8:tests/Blink3test.code
+  source today: tests/Blink3test.Mod (MODULE LightToggle; unchanged)
+  includes the imported-call placeholder BL 0xf7102011
+
+Blink2test.code
+  git show 073dda5:tests/Blink2test.code
+  last unfixed dump of the current tests/Blink2test.Mod source
+  (counter := 0; maxIterations := 5). Earlier f3dd680 Blink2.Mod used
+  counter := 2 and maxIterations := 16777216, so that dump is a different
+  program and is not used here.
+
+Blink2hw.Mod is not in this set: its delay constant changed after the
+unfixed-dump era (2^24 -> 262144) so a bit-for-bit match is not expected.

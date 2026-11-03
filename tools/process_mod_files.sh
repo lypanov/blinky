@@ -1,70 +1,63 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Compile tests/*.Mod with the pinned Norebo ORP, keep RAW .rsc/code, then
+# (unchanged) run the existing Python fixup path into .code/.asm.
+set -euo pipefail
 
-# Script to process .Mod files in the tests directory
-# It compiles each .Mod file using norebo, then disassembles it
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=norebo_env.sh
+source "$ROOT/tools/norebo_env.sh"
 
-# Get the user's home directory
-HOME_DIR="$HOME"
-
-# Check if project-norebo exists
-if [ ! -d "$HOME_DIR/ob/project-norebo" ]; then
-    echo "Error: project-norebo directory not found at $HOME_DIR/ob/project-norebo"
-    echo "Please clone it from: https://github.com/pdewacht/project-norebo.git"
-    exit 1
+if ! norebo_export; then
+  echo "Attempting tools/setup_norebo.sh ..."
+  "$ROOT/tools/setup_norebo.sh"
+  norebo_export
 fi
 
-# Set up environment variables
-export NOREBO_PATH="$HOME_DIR/ob/project-norebo/Norebo:$HOME_DIR/ob/project-norebo/Oberon:$HOME_DIR/ob/project-norebo/Bootstrap"
+TESTS_DIR="$ROOT/tests"
+RAW_DIR="$TESTS_DIR/raw"
+mkdir -p "$RAW_DIR"
 
-# Change to the tests directory
-cd "$(dirname "$0")/../tests" || exit 1
+cd "$TESTS_DIR" || exit 1
 
-# Process each .Mod file
-for mod_file in *.Mod; do
-    # Skip if no .Mod files found
-    [ -e "$mod_file" ] || { echo "No .Mod files found in tests directory"; exit 1; }
-    
-    # Extract the base name without extension
-    base_name="${mod_file%.Mod}"
-    
-    echo "Processing $mod_file..."
-    
-    # Extract module name from the file (first line should contain MODULE Name;)
-    module_name=$(grep -m 1 "MODULE" "$mod_file" | sed -E 's/MODULE\s+([^;]+);.*/\1/')
-    
-    echo "Compiling and disassembling $module_name"
+shopt -s nullglob
+mod_files=(*.Mod)
+if [ ${#mod_files[@]} -eq 0 ]; then
+  echo "No .Mod files found in tests directory"
+  exit 1
+fi
 
-    # Clear up the stale .rsc file and .smb file
-    rm -f "$module_name.rsc"
-    rm -f "$module_name.smb"
-    
-    # Compile the module using norebo
-    "$HOME_DIR/ob/project-norebo/norebo" ORP.Compile "$mod_file"
-    
-    # Check if compilation was successful by looking for .rsc file
-    if [ ! -f "$module_name.rsc" ]; then
-        echo "Error: Compilation failed for $mod_file"
-        exit 1
-    fi
-    
-    # Parse the .rsc file
-    ../tools/rsc_parser.py "$module_name.rsc" fixup > input.txt
-    
-    # Generate assembly
-    python3 ../tools/instruction_parser.py > "$base_name.asm"
-    
-    # Save the code
-    mv input.txt "$base_name.code"
-    
-    # Remove BEGIN and END lines from the code file
-    sed -i '/^BEGIN$/d; /^END$/d' "$base_name.code"
-    
-    echo "Successfully processed $mod_file"
-    echo "Output files: $base_name.asm, $base_name.code"
-    echo ""
+for mod_file in "${mod_files[@]}"; do
+  base_name="${mod_file%.Mod}"
+  module_name="$(grep -m 1 "MODULE" "$mod_file" | sed -E 's/MODULE[[:space:]]+([^;]+);.*/\1/')"
+
+  echo "Processing $mod_file (MODULE $module_name)..."
+
+  rm -f "$module_name.rsc" "$module_name.smb"
+
+  "$NOREBO_BIN" ORP.Compile "$mod_file"
+
+  if [ ! -f "$module_name.rsc" ]; then
+    echo "Error: Compilation failed for $mod_file"
+    exit 1
+  fi
+
+  # RAW object file + code section, before any Python fixup.
+  cp "$module_name.rsc" "$RAW_DIR/${base_name}.rsc"
+  python3 "$ROOT/tools/extract_rsc_code.py" "$module_name.rsc" > "$RAW_DIR/${base_name}.code"
+  echo "Raw code: $RAW_DIR/${base_name}.code  (also $RAW_DIR/${base_name}.rsc)"
+
+  # Existing fixup / disassembly path (used by the CPU tests; do not skip).
+  python3 "$ROOT/tools/rsc_parser.py" "$module_name.rsc" fixup > input.txt
+  python3 "$ROOT/tools/instruction_parser.py" > "$base_name.asm"
+  mv input.txt "$base_name.code"
+  sed -i '/^BEGIN$/d; /^END$/d' "$base_name.code"
+
+  echo "Fixup output: $base_name.asm, $base_name.code"
+  echo ""
 done
 
-../tools/module_loader.py
-../tools/image_dump.py final_system.code
+python3 "$ROOT/tools/module_loader.py"
+python3 "$ROOT/tools/image_dump.py" final_system.code
 
-echo "All .Mod files processed successfully" 
+echo "All .Mod files processed successfully"
+echo "Raw (unfixed) artifacts are in $RAW_DIR — gitignored, not the CPU-test images."
