@@ -1,0 +1,29 @@
+[*]
+[*] GTKWave Analyzer v3.3.116
+[*]
+[timestart] 0
+[size] 1400 720
+[pos] -1 -1
+[-1] -12
+[sst_width] 240
+[signals_width] 220
+[sst_expanded] 1
+[sst_vpaned_height] 400
+@28
+CPUSimTop.clock
+CPUSimTop.reset
+@200
+-
+LED (store to 0x10)
+@28
+CPUSimTop.io_led
+@22
+CPUSimTop.io_pc[31:0]
+CPUSimTop.io_r0[31:0]
+@28
+CPUSimTop.io_memWrite
+@22
+CPUSimTop.io_memAddr[31:0]
+CPUSimTop.io_memWriteData[31:0]
+[pattern_trace] 1
+[pattern_trace] 0

@@ -78,22 +78,23 @@ def disassemble(instr):
             cond_name = cond_names[cond]
             return f"B{'L' if v else ''}{cond_name}, off={off}"
 
-with open('input.txt', 'r') as f:
-    lines = f.readlines()
+if __name__ == "__main__":
+    with open('input.txt', 'r') as f:
+        lines = f.readlines()
 
-instructions = []
-in_block = False
-for line in lines:
-    line = line.strip()
-    if line == "BEGIN":
-        in_block = True
-        continue
-    elif line == "END":
-        in_block = False
-        continue
-    if in_block:
-        instr = int(line, 16)
-        instructions.append(instr)
+    instructions = []
+    in_block = False
+    for line in lines:
+        line = line.strip()
+        if line == "BEGIN":
+            in_block = True
+            continue
+        elif line == "END":
+            in_block = False
+            continue
+        if in_block:
+            instr = int(line, 16)
+            instructions.append(instr)
 
-for instr in instructions:
-    print(disassemble(instr))
+    for instr in instructions:
+        print(disassemble(instr))
