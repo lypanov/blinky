@@ -242,15 +242,17 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         io.memWriteData := regs(regA)
         io.memWrite := true.B
         
-        // Check if this is a write to the memory-mapped LED address (0x10)
-        when (effectiveAddr === 0x10.U) {
+        // LED MMIO: a68a501 snooped 0x10 (R13 hack). After 9d190e2, Blink2
+        // stores `light` at the module variable block 0x50. Snoop both so
+        // old 0x10 programs and the 0x50 map both drive io.led.
+        when (effectiveAddr === 0x10.U || effectiveAddr === 0x50.U) {
           // Update LED state with bit 0 of the value being stored
           ledState := regs(regA)(0)
           // Use a single LED event code and pass the state as an extra 8-bit value.
           Logger.log(io, Logger.Codes.LedToggle, ledState.asUInt)
           // Debug output
-          printf(p"Memory-mapped LED write detected at address 0x10: Setting LED to ${regs(regA)(0)}\n")
-          CPUSubset0Companion.printTrace(s"Memory-mapped LED write detected at address 0x10: Setting LED to ${regs(regA)(0)}\n")
+          printf(p"Memory-mapped LED write detected at address ${effectiveAddr}: Setting LED to ${regs(regA)(0)}\n")
+          CPUSubset0Companion.printTrace("Memory-mapped LED write detected (snoop 0x10 or 0x50)\n")
         }
         
         // Debug output

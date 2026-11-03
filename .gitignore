@@ -339,6 +339,7 @@ project/plugins/project/
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 
+__pycache__/
 generated/
 *.rsc
 *.smb
@@ -346,4 +347,12 @@ input.*
 .bloop
 .metals
 trace/
-__pycache__
+sim/out/
+sim/obj_dir/
+sim/visualizer/trace.json
+sim/visualizer/program.json
+.mill/
+gowin/impl/
+gowin/src/
+gowin/*.gprj.user
+gowin/ip/gowin_sp/

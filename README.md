@@ -1,3 +1,59 @@
+# Blinky — Project Oberon RISC5 subset (Tang Nano 4K)
+
+Chisel 6.6 / Mill 0.12.5 CPU. **Not RISC-V.** ISA: [`docs/risc_5_arch.txt`](docs/risc_5_arch.txt). Memory map: [`docs/memory_map.txt`](docs/memory_map.txt).
+
+Commit `a68a501` is the last known-good-on-hardware snapshot: Oberon `Blink2hw` plus UART. This branch is **main-forward**: `main`'s Logger / linker / MT work on top of the blink2-4x Verilator/visualizer/webcam/Gowin tooling. Hardware still uses `tests/Blink2hw.Mod` (`maxIterations := 262144`, 2x delay word `0x60000004`). Simulation uses `tests/Blink2test.Mod` (`maxIterations := 5`). LED MMIO snoops stores to `0x10` or `0x50` (module vars moved to 0x50 on `main`).
+
+## Verilator simulation (Phase 1)
+
+Needs: JDK 11+, Mill 0.12.x on `PATH`, Verilator 5.x, Python 3 with `matplotlib` (for the PNG), optional GTKWave.
+
+```sh
+# from the repo root
+tools/run_verilator_sim.sh
+# equivalent:
+make -C sim sim
+```
+
+What you get:
+
+| artifact | path |
+|---|---|
+| FST waveform (GTKWave) | `sim/out/blink2.fst` |
+| LED edge log | `sim/out/led_toggles.csv` |
+| timing-diagram PNG | `sim/out/led_waveform.png` |
+| cycle trace | `sim/out/blink2_trace.json` |
+
+Open the waveform:
+
+```sh
+gtkwave -S sim/gtkwave_led.tcl sim/out/blink2.fst sim/gtkwave_led.gtkw
+```
+
+The sim prints `[LED] cycle=…` lines and a mean period. After the `main` MT/0x50 map, Verilator measures a **steady 84-cycle** LED period (edges at 98, 182, 266, …). That is the old 78-cycle loop plus six extra memory-wait cycles now that `LDW R13, [R12, 0x4]` is a real load instead of the R13 hack. Hardware `Blink2hw` uses `maxIterations := 262144` and is not the sim default.
+
+Sim-only delay: set `BLINK2_CODE` if you want a different image (the hardware image is a long delay loop and is not the default):
+
+```sh
+BLINK2_CODE=tests/Blink2test.code mill chisel-blinky.runMain gcd.CPUSimTop
+make -C sim run CYCLES=800 TOGGLES=6
+```
+
+FPGA bitstream generation is unchanged: `./build.sh` still emits `CPUMinimalWrapper.v` from `tests/Blink2hw.code`.
+
+## Visualizer (Phase 2)
+
+Local web page (Python 3 stdlib HTTP server). Works on Arch Linux and macOS.
+
+```sh
+tools/run_visualizer.sh
+# then open http://127.0.0.1:8765/
+```
+
+Shows a pretend Tang Nano 4K with a live LED, the RISC5 instruction stream (mnemonics + registers + immediates) with a moving PC marker, Oberon source from `tests/Blink2test.Mod` when a mapping exists, and R0–R3 (R4–R15 are shown when present in the trace). Keyboard: Space run/pause, S step, R reset, `[` / `]` speed.
+
+---
+
 Chisel Project Template
 =======================
 

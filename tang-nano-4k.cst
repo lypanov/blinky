@@ -1,15 +1,23 @@
-# LED output
+# LED output (bank 0 is 3.3 V on the Nano 4K)
 IO_LOC "io_led" 10;
-IO_PORT "io_led" PULL_MODE=NONE DRIVE=8;
+IO_PORT "io_led" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 
 # KEY_1
 # IO_LOC "io_speed_up_n" 14;
 # IO_PORT "io_speed_up_n" PULL_MODE=UP;
 
-# Reset signal
+# Reset: USR KEY pin 15. a68a501 used PULL_DOWN + Chisel active-high
+# (unpressed = 0 = run). blinky_top does not invert this pin.
 IO_LOC "reset" 15;
-IO_PORT "reset" PULL_MODE=DOWN;
+IO_PORT "reset" IO_TYPE=LVCMOS18 PULL_MODE=DOWN;
 
-# Clock signal
+# Clock signal (27 MHz oscillator, LPLL_T_in)
 IO_LOC "clock" 45;
-IO_PORT "clock" PULL_MODE=UP;
+IO_PORT "clock" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+# UART — Sipeed Tang Nano 4K header IOB13A / IOB13B.
+# Gowin EMPU 4K examples use pin 19 as UART_TX; pin 18 is the adjacent RX.
+IO_LOC "io_uart_tx" 19;
+IO_PORT "io_uart_tx" IO_TYPE=LVCMOS18 PULL_MODE=NONE DRIVE=8;
+IO_LOC "io_uart_rx" 18;
+IO_PORT "io_uart_rx" IO_TYPE=LVCMOS18 PULL_MODE=UP;
