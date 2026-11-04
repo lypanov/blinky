@@ -37,9 +37,11 @@ VGA output is enabled (`IncludeVGA`).
 submodule was not updated. The build writes a patched copy under
 `retro/beeb/build/` (gitignored) and uses that as the top. The patch
 maps `vga_*` onto the existing VGA pins. `hsync_ref` is tied low,
-because that port is gone and the old process that released the
-pixel-clock divider on hsync never runs. `CLKDIV` for `clock_27`, and
-the four `OSER10` serializers, stay in reset until `pll2_lock`.
+because that port is gone. `clock_27` is the 27 MHz crystal. A
+`CLKDIV` of the 135 MHz PLL used to make that clock, with `CALIB`
+held high, and that phase-stepped the scandoubler until it stopped
+producing pixels. The 135 MHz PLL is unused after that change and
+Gowin removes it.
 
 ## ROMs, without writing flash
 
@@ -96,10 +98,11 @@ Checked against `docs/primer20k/board-notes.md`. The overlay is
 | WS2812 | T9 | Was unconstrained; placed on the onboard LED data pin |
 | Config flash | M9, L10, R10, P10 | Held idle. Not a flash writer |
 
-HDMI stays a combined `IO_LOC` on the `_p` ports because the top uses
-`ELVDS_OBUF` (O and OB). The pin report shows the pairs as LVCMOS33D
-on those balls. 1-bit VGA stays on PMOD J14 (T6, P6, T7, R8, T8),
-which is the mic header, not the Dock HDMI port.
+HDMI constraints are separate `IO_LOC`s on each leg of the pair, with
+`DRIVE=8`, matching NESTang v0.4. The top still uses `ELVDS_OBUF`
+(O and OB). The pin report shows the pairs as LVCMOS33D on those
+balls. 1-bit VGA stays on PMOD J14 (T6, P6, T7, R8, T8), which is the
+mic header, not the Dock HDMI port.
 
 ## Utilisation and timing
 
@@ -109,74 +112,95 @@ Gowin 1.9.12.04, device GW2A-LV18PG256C8/I7 (`gw2a18c-011`). Reports:
 
 | Resource | Used | Device | |
 |---|---:|---:|---:|
-| Logic | 10441 | 20736 | 51% |
-| of which LUT | 9399 | | |
-| ALU | 976 | | |
-| Register | 4719 | 16173 | 30% |
+| Logic | 12506 | 20736 | 61% |
+| of which LUT | 11493 | | |
+| ALU | 953 | | |
+| SSRAM | 10 | | |
+| Register | 5658 | 16173 | 35% |
 | BSRAM | 46 | 46 | 100% |
 | DSP (MULT18X18 + ALU54) | 3.5 | 24 | 15% |
 | rPLL | 2 | 4 | |
+| CLKDIV | 1 | 8 | |
 
+The two PLLs are the 48/96 MHz CPU clock and the 371.25 MHz HDMI
+serial clock. The one `CLKDIV` divides that by 5 to 74.25 MHz.
 BSRAM is full: 48 KiB ROM plus 32 KiB RAM is about 640 Kbit of the
-828 Kbit on this part, and the character/line-buffer RAMs take the
-rest. That is the whole device. Do not turn the resampler back on
-without deleting something else.
+828 Kbit on this part, and the character generator takes the rest.
+The HDMI line store is registers for that reason. Do not turn the
+resampler back on without deleting something else.
 
-| Clock | Constraint | Fmax | Setup violations | Hold violations |
+| Clock | Constraint | Fmax | Setup endpoints | Hold endpoints |
 |---|---:|---:|---:|---:|
 | `sys_clk` | 27.000 MHz (37.037 ns) | (no fabric paths) | 0 | 0 |
-| `clock_27` | 27.000 MHz | 105.244 MHz | 0 | 0 |
-| `clock_48` | 48.000 MHz | 62.995 MHz | 0 | 0 |
-| `clock_96` | 96.000 MHz | 280.230 MHz | 0 | 0 |
-| `i2s_clk` | 6.144 MHz | 311.770 MHz | 0 | 0 |
-| `clock_135` | PLL 135 MHz, not in the SDC | (OSER10, no fabric Fmax) | | |
+| `clock_27` | 27.000 MHz | 94.869 MHz | 0 | 0 |
+| `clock_48` | 48.000 MHz | 62.497 MHz | 0 | 0 |
+| `clock_96` | 96.000 MHz | 259.796 MHz | 0 | 0 |
+| `i2s_clk` | 6.144 MHz | 169.926 MHz | 0 | 0 |
+| `clock_7425` | 74.250 MHz | 84.693 MHz | 0 | 0 |
+| `clock_371` | PLL 371.25 MHz | (OSER10, no fabric Fmax) | 0 | 0 |
 
-Setup-violated endpoints: 0. Hold-violated endpoints: 11, all in
-`gen_i2s.p_i2s_clk_gen.r_acc`. Worst hold slack is -4.225 ns, from
-`i2s_clk` into the other bits of that accumulator, which are clocked
-by `clock_96`.
+Setup-violated endpoints: 7. Hold-violated endpoints: 5.
 
-That is the failure noted in upstream `TODO.txt` ("timing fails on i2s
-phase acc"). The SDC declares bit 0 of the phase accumulator as
-`i2s_clk` (`clock_96` times 8/125). Those flops are also data in the
-same `clock_96` process, so the hold check is the bit racing itself.
-The pixel clock and the 48 MHz CPU clock meet their constraints. The
-bitstream is still generated. HDMI does not depend on the I2S DAC.
+Six of the setup paths and all five hold paths are in
+`gen_i2s.p_i2s_clk_gen.r_acc`. Worst setup slack there is -2.395 ns.
+Worst hold slack is -1.322 ns, from `i2s_clk` into the other bits of
+that accumulator, which are clocked by `clock_96`. That is the
+failure noted in upstream `TODO.txt` ("timing fails on i2s phase
+acc"). The SDC declares bit 0 of the phase accumulator as `i2s_clk`
+(`clock_96` times 8/125). Those flops are also data in the same
+`clock_96` process, so the hold check is the bit racing itself.
+
+The other setup path is the monochrome line store: a bit written on
+`clock_27` and read on `clock_7425`, slack -3.144 ns. STA relates
+those two clocks by 3.367 ns. The store is a free-running sample of
+the scandoubler, so the clocks are not a synchronous pair. The 48 MHz
+CPU clock and the 74.25 MHz pixel clock meet their own constraints.
+The bitstream is still generated. HDMI does not depend on the I2S DAC.
 
 ## HDMI
 
-Pixel clock `clock_27` is 27 MHz. Serial clock `clock_135` is 135 MHz.
-The 720x480 counters in `hdmi.vhd` are commented out. The stream is the
-scandoubler: 32 µs lines, a line buffer 864 deep, sampled at 27 MHz.
-HDMI audio is enabled at power-up, and that path's active window is
-720 by 576 lines with a vertical offset of 39. That is the upstream
-50 Hz mode.
+The Dock output is CEA-861 1280x720p60. `pll3` is 27 × 55 / 4 =
+371.25 MHz, the same ratios as NESTang v0.4, and `CLKDIV` by 5 makes
+the 74.25 MHz pixel clock. Three `OSER10` serializers shift the TMDS
+data lanes. The clock pair is the pixel clock itself through
+`ELVDS_OBUF`. An `OSER10` pattern of `1111100000` on that pair did not
+come out as a clock this monitor or the capture card would lock.
+
+`retro/beeb/hdmi_720p.vhd` keeps one scandoubler line, 864 samples at
+27 MHz, in two register banks. A pixel is white when any nibble of the
+scandoubler RGB is non-zero. The bank is drawn in the left 864 pixels
+of the 1280-wide active line. BSRAM is already full, so this is not a
+colour frame store, and the capture is not locked to the Beeb's 50 Hz
+frame. The picture can drift.
+
+The core's video latch used to sample `ext_Dout` one cycle early
+(`div3_counter = 2`). That read the BSRAM before the byte was valid,
+so mode 7 fetched zeros and the screen stayed black while the CPU
+ran. The patched core latches `ext_Dout` on every cycle of the video
+window, the same way the CPU latch does. The ROM self-test still
+passes at synthesis (49152 bytes, including `BBC Computer`).
 
 Reset lasts about 2^24 cycles of the 48 MHz clock (a third of a second)
 after configuration, and for as long as S1 is held.
 
-### Capture on 4 Nov 2026
+### Capture on 5 Nov 2026
 
-The bitstream was SRAM-loaded on bus 3 device 78 (`-m`, RAM only).
-After the reset interval the UGREEN 15389 (`/dev/video0`) was grabbed
-at 720x480, 720x576 and 1280x720, in MJPG and YUYV, at 50 fps and at
-60 fps. Commands are in [`docs/capture-card.md`](../capture-card.md).
-Every frame was a flat field. The 720x576 YUYV frame is RGB (0, 0, 0).
-The `BBC Computer 32K` / `BASIC` banner was not in the picture.
+An earlier build put the scandoubler out as a 27 MHz / 720x576 stream.
+The UGREEN 15389 did not lock it. Every grab was a flat field. That
+frame is `beeb/capture-720x576.png`. The same card did lock NESTang
+720p on this cable (`beeb/nestang-720p.png`).
 
-![BBC HDMI grab, 720x576 YUYV, flat black](beeb/capture-720x576.png)
+The 720p bitstream was SRAM-loaded on bus 3 device 78 (`-m`, RAM
+only). After the card locked, a 720x480 MJPEG grab from `/dev/video0`
+showed the MOS banner. The text matches the ROM: `BBC Computer 32K`,
+`Model B MMFS MM`, `BASIC`, and the `>` prompt. PMOD J12 had no PS/2
+keyboard. The Beeb was left running in SRAM. Blink3 was not loaded
+back, and the Tang Nano 4K was not programmed.
 
-The same card and the same cable did lock a 1280x720 source. A SRAM
-load of the local NESTang Dock bitstream (GW2A-18C, 1280x720, not part
-of this repo) showed colour bars at 1280x720. Opening that source as
-720x480 showed the card's "No Signal" overlay. 720p locks on this
-card. This Beeb stream did not.
+A grab in the first second after configuration can be black while the
+card locks. Commands are in [`docs/capture-card.md`](../capture-card.md).
 
-![NESTang 720p on the same capture card](beeb/nestang-720p.png)
-
-PMOD J12 had no PS/2 keyboard, so no key was sent. After the grabs the
-20K was SRAM-loaded back to Blink3 (`blink3_n262144.fs`, N=262144, bus
-3 device 78).
+![BBC Micro boot screen, 720p60 downscaled to 720x480](beeb/boot-720p.png)
 
 ## Games on SD (not in git)
 

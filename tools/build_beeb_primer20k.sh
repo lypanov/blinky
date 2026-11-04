@@ -229,13 +229,179 @@ new_div = "            RESETN => pll2_lock, -- release /5 only after the 135 MHz
 if old_div not in text:
     raise SystemExit("could not retie clkdiv5 RESETN")
 text = text.replace(old_div, new_div, 1)
-old_oser = "                FCLK  => clock_135,\n                RESET => '0',"
-new_oser = "                FCLK  => clock_135,\n                RESET => not pll2_lock,"
+old_oser = "                PCLK  => clock_27,\n                FCLK  => clock_135,\n                RESET => '0',"
+new_oser = "                PCLK  => clock_7425,\n                FCLK  => clock_371,\n                RESET => not pll3_lock,"
 if text.count(old_oser) != 4:
     raise SystemExit(f"expected 4 OSER10 resets, found {text.count(old_oser)}")
 text = text.replace(old_oser, new_oser)
+# NESTang v0.4 drives the TMDS clock pair with the pixel clock itself.
+# The OSER10 1111100000 clock on this Dock does not come out as a clock
+# the monitor will lock. The data lanes stay on OSER10.
+old_clk = (
+    "        OBUFDS_c : ELVDS_OBUF\n"
+    "            port map (\n"
+    "                I  => serialized_c,\n"
+    "                O  => tmds_clk_p,\n"
+    "                OB => tmds_clk_n\n"
+    "             );"
+)
+new_clk = (
+    "        -- Pixel clock straight onto the TMDS clock pair, as NESTang does.\n"
+    "        -- ser_c still builds the 1111100000 pattern but nothing uses it.\n"
+    "        OBUFDS_c : ELVDS_OBUF\n"
+    "            port map (\n"
+    "                I  => clock_7425,\n"
+    "                O  => tmds_clk_p,\n"
+    "                OB => tmds_clk_n\n"
+    "             );"
+)
+if old_clk not in text:
+    raise SystemExit("could not retie the TMDS clock ELVDS")
+text = text.replace(old_clk, new_clk, 1)
+old_clk27 = "    signal clock_27        : std_logic;\n"
+new_clk27 = """    signal clock_27        : std_logic;
+    signal clock_27_div    : std_logic;
+    attribute syn_keep : boolean;
+    attribute syn_keep of clock_27 : signal is true;
+"""
+if old_clk27 not in text:
+    raise SystemExit("could not mark clock_27")
+text = text.replace(old_clk27, new_clk27, 1)
+old_sig = "    signal clock_135       : std_logic;\n"
+new_sig = """    signal clock_135       : std_logic;
+    signal clock_371       : std_logic;
+    signal clock_7425      : std_logic;
+    signal pll3_lock       : std_logic;
+    signal tmds720_r       : std_logic_vector(9 downto 0);
+    signal tmds720_g       : std_logic_vector(9 downto 0);
+    signal tmds720_b       : std_logic_vector(9 downto 0);
+"""
+if old_sig not in text:
+    raise SystemExit("could not add 720p clock signals")
+text = text.replace(old_sig, new_sig, 1)
+text = text.replace("=> tmds_b(", "=> tmds720_b(")
+text = text.replace("=> tmds_g(", "=> tmds720_g(")
+text = text.replace("=> tmds_r(", "=> tmds720_r(")
+old_pix = """            CLKOUT => clock_27,         -- 27MHz HDMI Pixel Clock
+            CALIB  => '1'
+        );
+"""
+new_pix = """            CLKOUT => clock_27_div,     -- not the video clock; crystal drives clock_27
+            CALIB  => '0'
+        );
+
+    -- 74.25 MHz 720p clock. Same ratios as NESTang v0.4, which locks
+    -- on this Dock: 27 * 55 / 4 = 371.25, /5 = 74.25. VCO is 742.5 MHz.
+    pll3 : rPLL
+        generic map (
+            FCLKIN => "27",
+            DEVICE => "GW2A-18C",
+            IDIV_SEL => 3,
+            FBDIV_SEL => 54,
+            ODIV_SEL => 2,
+            DYN_SDIV_SEL => 2,
+            DYN_DA_EN => "true",
+            DUTYDA_SEL => "1000",
+            PSDA_SEL => "0000"
+        )
+        port map (
+            CLKIN    => sys_clk,
+            CLKOUT   => clock_371,
+            CLKOUTP  => open,
+            CLKOUTD  => open,
+            CLKOUTD3 => open,
+            LOCK     => pll3_lock,
+            RESET    => '0',
+            RESET_P  => '0',
+            CLKFB    => '0',
+            FBDSEL   => (others => '0'),
+            IDSEL    => (others => '0'),
+            ODSEL    => (others => '0'),
+            PSDA     => (others => '0'),
+            DUTYDA   => (others => '0'),
+            FDLY     => (others => '0')
+        );
+
+    clkdiv_7425 : CLKDIV
+        generic map (
+            DIV_MODE => "5",
+            GSREN => "false"
+        )
+        port map (
+            RESETN => pll3_lock,
+            HCLKIN => clock_371,
+            CLKOUT => clock_7425,
+            CALIB  => '0'
+        );
+
+    u_720p : entity work.hdmi_720p
+        port map (
+            clk_27  => clock_27,
+            r4      => i_VGA_R,
+            g4      => i_VGA_G,
+            b4      => i_VGA_B,
+            hs      => vga_hs,
+            vs      => vga_vs,
+            pll1_lock => pll1_lock,
+            reset_n => hard_reset_n,
+            mon     => hdmi_dbg,
+            clk_pix => clock_7425,
+            tmds_r  => tmds720_r,
+            tmds_g  => tmds720_g,
+            tmds_b  => tmds720_b
+        );
+"""
+if old_pix not in text:
+    raise SystemExit("could not insert the 720p PLL")
+text = text.replace(old_pix, new_pix, 1)
 old_tie = "    vid_debug      <= '0';\n"
-new_tie = "    vid_debug      <= '0';\n    hsync_ref      <= '0'; -- port removed from the core; CLKDIV waits on pll2_lock\n"
+new_tie = """    vid_debug      <= '0';
+    hsync_ref      <= '0'; -- port removed from the core
+    -- The 27 MHz crystal, not CLKDIV. Holding CLKDIV CALIB high phase-steps
+    -- the scandoubler clock on every other edge, and the core then never
+    -- produces pixels. The HDMI raster has its own 74.25 MHz PLL.
+    clock_27       <= sys_clk;
+
+    -- HDMI status boxes, left to right, colour = 1:
+    --   0 red     ext_nWE_long was low (a write of any address)
+    --   1 green   ext_nWE was low (the short write strobe)
+    --   2 blue    a main-RAM read returned non-zero
+    --   3 yellow  a write to main RAM (address 1100), ignoring A_stb
+    --   4 magenta that write's data was non-zero
+    --   5 cyan    ROM self-test DONE
+    dbg_mem : process (clock_48)
+    begin
+        if rising_edge(clock_48) then
+            hdmi_dbg(5) <= monitor_leds(5);
+            if ext_nWE_long = '0' then
+                hdmi_dbg(0) <= '1';
+            end if;
+            -- Non-zero write into the top 1K of main RAM, which is the
+            -- mode 7 screen (&7C00). The clear loop stores zeros; the
+            -- banner stores characters.
+            if ext_nCS = '0' and ext_nWE_long = '0'
+               and ext_A(18 downto 15) = "1100"
+               and ext_A(14 downto 10) = "11111"
+               and ext_Din /= x"00" then
+                hdmi_dbg(1) <= '1';
+            end if;
+            ram_was_read <= '0';
+            if ext_nCS = '0' and ext_A(18 downto 15) = "1100" then
+                if ext_nWE_long = '0' then
+                    hdmi_dbg(3) <= '1';
+                    if ext_Din /= x"00" then
+                        hdmi_dbg(4) <= '1';
+                    end if;
+                elsif ext_nOE = '0' and ext_A_stb = '1' then
+                    ram_was_read <= '1';
+                end if;
+            end if;
+            if ram_was_read = '1' and ext_Dout /= x"00" then
+                hdmi_dbg(2) <= '1';
+            end if;
+        end if;
+    end process;
+"""
 if old_tie not in text:
     raise SystemExit("could not tie hsync_ref")
 text = text.replace(old_tie, new_tie, 1)
@@ -247,6 +413,21 @@ new_root = f'PRJ_ROOT           : string  := "{beeb}";'
 if old_root not in text:
     raise SystemExit("could not retarget PRJ_ROOT")
 text = text.replace(old_root, new_root, 1)
+# The memory self-test watches the reset vector and the first two
+# instructions. Its led output (state xor "111111") is shown on HDMI.
+old_mon = "        IncludeMonitor     : boolean := false;"
+new_mon = "        IncludeMonitor     : boolean := true;"
+if old_mon not in text:
+    raise SystemExit("could not enable IncludeMonitor")
+text = text.replace(old_mon, new_mon, 1)
+old_leds = "    signal monitor_leds    :   std_logic_vector(5 downto 0);\n"
+new_leds = old_leds + (
+    "    signal ram_was_read    :   std_logic := '0';\n"
+    "    signal hdmi_dbg        :   std_logic_vector(5 downto 0) := (others => '0');\n"
+)
+if old_leds not in text:
+    raise SystemExit("could not declare hdmi_dbg")
+text = text.replace(old_leds, new_leds, 1)
 patched = build / "bbc_micro_tang20k_patched.vhd"
 patched.write_text(text, encoding="utf-8")
 swapped = False
@@ -259,8 +440,38 @@ for kind, src in files:
         rewritten.append((kind, src))
 if not swapped:
     raise SystemExit("did not find tang_primer20k bbc_micro_tang20k.vhd to replace")
-files = rewritten
+files = []
+for kind, src in rewritten:
+    if src == patched.resolve():
+        files.append(("file.vhdl", (build.parent / "hdmi_720p.vhd").resolve()))
+    files.append((kind, src))
 print(f"patched top: {patched}")
+
+# The CPU latches ext_Dout on every cycle of its memory window, which is
+# late enough for the BSRAM. The video latch still sampled one early
+# cycle, so mode 7 fetched zeros and the screen stayed black while the
+# CPU itself ran and wrote the banner into RAM.
+core_src = next(src for kind, src in files if src.name == "bbc_micro_core.vhd")
+core_text = core_src.read_text(encoding="utf-8")
+old_vid = """                vid_mem_cycle <= '1';
+                -- Latch read data at the end of the cycle
+                if div3_counter = 2 and clken_counter(0) = '1' then
+                    vid_mem_data <= ext_Dout;
+                end if;"""
+new_vid = """                vid_mem_cycle <= '1';
+                -- Same as the CPU latch above: keep the latest ext_Dout
+                -- in the window. One early sample reads the BSRAM before
+                -- the byte is valid, and mode 7 stays black.
+                vid_mem_data <= ext_Dout;"""
+if old_vid not in core_text:
+    raise SystemExit("could not retarget the video memory latch")
+core_patched = build / "bbc_micro_core_patched.vhd"
+core_patched.write_text(core_text.replace(old_vid, new_vid, 1), encoding="utf-8")
+files = [
+    (kind, core_patched.resolve() if src == core_src else src)
+    for kind, src in files
+]
+print(f"patched core: {core_patched}")
 
 sdc = (gprj.parent / "../src/bbc_micro_tang20k.sdc").resolve()
 if not sdc.is_file():

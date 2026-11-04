@@ -24,11 +24,16 @@ with nothing driving the input, came back as a pure black 1024x576 PNG
 1360x768, 1280x1024, 1280x960, 1280x720, 1024x768, 800x600, 720x576,
 720x480. Most sizes do 60/50/30/20/10 fps. 2560x1440 tops out at 30.
 
-BeebFpga HDMI on this Dock is the scandoubler 50 Hz mode: a 27 MHz
-pixel clock and a 720x576 active window. Open 720x576, and also try
-1280x720. On 4 Nov 2026 the card locked a 1280x720 NESTang picture on
-this cable and returned a flat field for the Beeb stream. The grabs
-are in `docs/primer20k/beeb.md`.
+The Primer 20K Beeb bitstream is 1280x720p60 (74.25 MHz pixel clock).
+The card downscales that to the open format. The grab that shows the
+boot screen is 720x480 MJPEG. A 27 MHz / 720x576 Beeb stream on the
+same cable did not lock. NESTang 720p on this cable did. Both are in
+`docs/primer20k/beeb.md`.
+
+Wait a couple of seconds after an SRAM load before grabbing. A frame
+taken while the card is locking is black. Opening and closing the
+device in a tight loop can also return an MJPEG buffer with no JPEG
+data; one frame after the card has locked is the reliable grab.
 
 ## Commands
 

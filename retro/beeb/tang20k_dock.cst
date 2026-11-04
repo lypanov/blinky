@@ -61,20 +61,29 @@ IO_PORT "vga_b" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
 IO_LOC "btn3_n" D7;
 IO_PORT "btn3_n" IO_TYPE=LVCMOS15 PULL_MODE=UP;
 
-// HDMI / DVI-TX on Dock J3. ELVDS_OBUF pairs, same balls as
-// Sipeed dk_video.cst and NESTang v0.4 nestang_dock.cst.
+// HDMI on Dock J3. Same balls and the same separate p/n constraints
+// as the working NESTang v0.4 nestang_dock.cst. The clock pair is
+// the 74.25 MHz pixel clock through ELVDS_OBUF, not an OSER10 pattern.
 //   clock  G16/H15
 //   data0  H14/H16
 //   data1  J15/K16
 //   data2  K14/K15
-IO_LOC "tmds_d_p[0]" H14,H16;
-IO_PORT "tmds_d_p[0]" PULL_MODE=NONE;
-IO_LOC "tmds_d_p[1]" J15,K16;
-IO_PORT "tmds_d_p[1]" PULL_MODE=NONE;
-IO_LOC "tmds_d_p[2]" K14,K15;
-IO_PORT "tmds_d_p[2]" PULL_MODE=NONE;
-IO_LOC "tmds_clk_p" G16,H15;
-IO_PORT "tmds_clk_p" PULL_MODE=NONE;
+IO_LOC "tmds_clk_p" G16;
+IO_PORT "tmds_clk_p" PULL_MODE=NONE DRIVE=8;
+IO_LOC "tmds_clk_n" H15;
+IO_PORT "tmds_clk_n" PULL_MODE=NONE DRIVE=8;
+IO_LOC "tmds_d_p[0]" H14;
+IO_PORT "tmds_d_p[0]" PULL_MODE=NONE DRIVE=8;
+IO_LOC "tmds_d_n[0]" H16;
+IO_PORT "tmds_d_n[0]" PULL_MODE=NONE DRIVE=8;
+IO_LOC "tmds_d_p[1]" J15;
+IO_PORT "tmds_d_p[1]" PULL_MODE=NONE DRIVE=8;
+IO_LOC "tmds_d_n[1]" K16;
+IO_PORT "tmds_d_n[1]" PULL_MODE=NONE DRIVE=8;
+IO_LOC "tmds_d_p[2]" K14;
+IO_PORT "tmds_d_p[2]" PULL_MODE=NONE DRIVE=8;
+IO_LOC "tmds_d_n[2]" K15;
+IO_PORT "tmds_d_n[2]" PULL_MODE=NONE DRIVE=8;
 
 // I2S / amp enable. Upstream balls (IOT side, not bank 4).
 IO_LOC  "i2s_lrclk" P16;
