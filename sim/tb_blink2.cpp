@@ -50,6 +50,13 @@ struct Options {
   std::string led_path = "sim/out/led_toggles.csv";
   std::string trace_path = "sim/out/blink2_trace.json";
   std::string wave_csv_path = "sim/out/led_wave.csv";
+  // Cycle (after reset) at which to start an 8N1 frame. -1 = don't send.
+  // Press byte is 0x01, release byte is 0x00. Bit time is 27 MHz/115200.
+  int uart_press_at = -1;
+  int uart_release_at = -1;
+  // Active-low button. -1 = leave released. Down is inclusive, up is exclusive.
+  int btn_down_at = -1;
+  int btn_up_at = -1;
 };
 
 static void usage(const char* argv0) {
@@ -62,7 +69,11 @@ static void usage(const char* argv0) {
           "  --fst PATH       FST waveform output\n"
           "  --trace PATH     JSON cycle trace output\n"
           "  --led PATH       LED toggle CSV output\n"
-          "  --wave PATH      Per-cycle LED CSV (default sim/out/led_wave.csv)\n",
+          "  --wave PATH      Per-cycle LED CSV (default sim/out/led_wave.csv)\n"
+          "  --uart-press N   At cycle N, send 0x01 (press, force LED pin off)\n"
+          "  --uart-release N At cycle N, send 0x00 (release, pin follows CPU)\n"
+          "  --btn-down N     Hold the active-low button from cycle N\n"
+          "  --btn-up N       Release the button at cycle N\n",
           argv0);
 }
 
@@ -84,6 +95,10 @@ static Options parse_args(int argc, char** argv) {
     else if (!strcmp(argv[i], "--trace")) o.trace_path = need("--trace");
     else if (!strcmp(argv[i], "--led")) o.led_path = need("--led");
     else if (!strcmp(argv[i], "--wave")) o.wave_csv_path = need("--wave");
+    else if (!strcmp(argv[i], "--uart-press")) o.uart_press_at = atoi(need("--uart-press"));
+    else if (!strcmp(argv[i], "--uart-release")) o.uart_release_at = atoi(need("--uart-release"));
+    else if (!strcmp(argv[i], "--btn-down")) o.btn_down_at = atoi(need("--btn-down"));
+    else if (!strcmp(argv[i], "--btn-up")) o.btn_up_at = atoi(need("--btn-up"));
     else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
       usage(argv[0]);
       exit(0);
@@ -95,6 +110,34 @@ static Options parse_args(int argc, char** argv) {
   }
   return o;
 }
+
+// 8N1 transmitter into io_uart_rx. One bit is 27e6/115200 = 234 sim cycles,
+// matching UartLedGate's UartRx divider.
+struct UartDrive {
+  static constexpr int kBitCycles = 27000000 / 115200;
+  int countdown = 0;
+  int bits_left = 0;
+  uint16_t shifter = 0;
+
+  void start(uint8_t data) {
+    shifter = static_cast<uint16_t>((1u << 9) | (static_cast<unsigned>(data) << 1));
+    bits_left = 10;
+    countdown = 0;
+  }
+
+  void on_cycle(VCPUSimTop* top) {
+    if (bits_left == 0) {
+      top->io_uart_rx = 1;
+      return;
+    }
+    if (countdown == 0) countdown = kBitCycles;
+    top->io_uart_rx = shifter & 1u;
+    if (--countdown == 0) {
+      shifter >>= 1;
+      bits_left--;
+    }
+  }
+};
 
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
@@ -118,6 +161,11 @@ int main(int argc, char** argv) {
     main_time += 10;
   };
 
+  // Idle-high UART. A stuck-low RX looks like a break to UartRx.
+  UartDrive uart;
+  top->io_uart_rx = 1;
+  top->io_btn_n = 1;
+
   // Active-high synchronous reset (Chisel default).
   top->reset = 1;
   top->clock = 0;
@@ -130,21 +178,41 @@ int main(int argc, char** argv) {
   std::ofstream wave_csv(opt.wave_csv_path);
   std::ofstream trace(opt.trace_path);
   led_csv << "cycle,led_prev,led_next,pc,r0\n";
-  wave_csv << "cycle,led,pc,halted,mem_write,mem_addr,mem_wdata,r0,r1,r2,r3\n";
+  wave_csv << "cycle,led,pc,halted,mem_write,mem_addr,mem_wdata,r0,r1,r2,r3,cpu_led,pressed\n";
   trace << "{\n  \"program\": \"" << opt.program << "\",\n";
   trace << "  \"reset_cycles\": " << opt.reset_cycles << ",\n";
   trace << "  \"cycles\": [\n";
 
   int prev_led = top->io_led ? 1 : 0;
+  int prev_cpu_led = top->io_cpu_led ? 1 : 0;
+  int prev_pressed = top->io_pressed ? 1 : 0;
   int toggles = 0;
   std::vector<int> toggle_cycles;
+  std::vector<int> cpu_toggle_cycles;
   bool first_json = true;
 
   int cycle = 0;
   for (; cycle < opt.max_cycles; cycle++) {
+    if (opt.uart_press_at >= 0 && cycle == opt.uart_press_at) {
+      printf("[UART] cycle=%d send 0x01 (press)\n", cycle);
+      uart.start(0x01);
+    } else if (opt.uart_release_at >= 0 && cycle == opt.uart_release_at) {
+      printf("[UART] cycle=%d send 0x00 (release)\n", cycle);
+      uart.start(0x00);
+    }
+    const bool btn_held = opt.btn_down_at >= 0 && cycle >= opt.btn_down_at &&
+                          (opt.btn_up_at < 0 || cycle < opt.btn_up_at);
+    top->io_btn_n = btn_held ? 0 : 1;
+    if (opt.btn_down_at >= 0 && cycle == opt.btn_down_at)
+      printf("[BTN] cycle=%d down (active-low)\n", cycle);
+    if (opt.btn_up_at >= 0 && cycle == opt.btn_up_at)
+      printf("[BTN] cycle=%d up\n", cycle);
+    uart.on_cycle(top);
     tick();
 
     const int led = top->io_led ? 1 : 0;
+    const int cpu_led = top->io_cpu_led ? 1 : 0;
+    const int pressed = top->io_pressed ? 1 : 0;
     const uint32_t pc = static_cast<uint32_t>(top->io_pc);
     const uint32_t r0 = static_cast<uint32_t>(top->io_r0);
     const uint32_t r1 = static_cast<uint32_t>(top->io_r1);
@@ -161,13 +229,16 @@ int main(int argc, char** argv) {
 
     wave_csv << cycle << "," << led << "," << pc << "," << halted << ","
              << mem_wr << "," << mem_addr << "," << mem_wdata << ","
-             << r0 << "," << r1 << "," << r2 << "," << r3 << "\n";
+             << r0 << "," << r1 << "," << r2 << "," << r3 << ","
+             << cpu_led << "," << pressed << "\n";
 
     if (!first_json) trace << ",\n";
     first_json = false;
     trace << "    {\"cycle\":" << cycle
           << ",\"pc\":" << pc
           << ",\"led\":" << led
+          << ",\"cpu_led\":" << cpu_led
+          << ",\"pressed\":" << pressed
           << ",\"halted\":" << halted
           << ",\"memWrite\":" << (mem_wr ? "true" : "false")
           << ",\"memRead\":" << (mem_rd ? "true" : "false")
@@ -179,6 +250,17 @@ int main(int argc, char** argv) {
       trace << ",\"r" << ri << "\":" << cpu_reg(top, ri);
     }
     trace << "}";
+
+    if (pressed != prev_pressed) {
+      printf("[UART] cycle=%d pressed %d -> %d  pin=%d cpu_led=%d pc=0x%08x\n",
+             cycle, prev_pressed, pressed, led, cpu_led, pc);
+      fflush(stdout);
+      prev_pressed = pressed;
+    }
+    if (cpu_led != prev_cpu_led) {
+      cpu_toggle_cycles.push_back(cycle);
+      prev_cpu_led = cpu_led;
+    }
 
     if (led != prev_led) {
       toggles++;
@@ -206,6 +288,11 @@ int main(int argc, char** argv) {
   for (size_t i = 0; i < toggle_cycles.size(); i++) {
     if (i) trace << ", ";
     trace << toggle_cycles[i];
+  }
+  trace << "],\n  \"cpu_led_toggles\": [";
+  for (size_t i = 0; i < cpu_toggle_cycles.size(); i++) {
+    if (i) trace << ", ";
+    trace << cpu_toggle_cycles[i];
   }
   trace << "]\n}\n";
 

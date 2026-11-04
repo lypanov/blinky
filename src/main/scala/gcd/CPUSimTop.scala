@@ -5,7 +5,8 @@ import _root_.circt.stage.ChiselStage
 import java.io.File
 
 /**
- * Simulation-only top: CPUSubset0 + mock RAM, no UART / Gowin IP.
+ * Simulation-only top: CPUSubset0 + mock RAM, no Gowin IP.
+ * UART RX only gates the LED pin (UartLedGate); it does not stall the CPU.
  *
  * Does not change CPU behaviour. The Blink2 *program* loaded here is the
  * short-delay test image (maxIterations = 5) so a LED period is observable
@@ -28,6 +29,10 @@ class CPUSimTop(
     val memWriteData = Output(UInt(32.W))
     val memWrite = Output(Bool())
     val memRead = Output(Bool())
+    val uart_rx = Input(Bool())
+    val btn_n = Input(Bool())
+    val cpu_led = Output(Bool())
+    val pressed = Output(Bool())
   })
 
   val cpu = Module(new CPUSubset0(programInstructions, customMemoryImage = customMemoryImage))
@@ -39,7 +44,13 @@ class CPUSimTop(
   memoryController.io.cpuRead := cpu.io.memRead
   cpu.io.memReadData := memoryController.io.cpuReadData
 
-  io.led := cpu.io.led
+  val ledGate = Module(new UartLedGate)
+  ledGate.io.cpuLed := cpu.io.led
+  ledGate.io.uartRx := io.uart_rx
+  ledGate.io.btn_n := io.btn_n
+  io.led := ledGate.io.led
+  io.cpu_led := cpu.io.led
+  io.pressed := ledGate.io.pressed
   io.pc := cpu.io.pc
   io.halted := cpu.io.halted
   io.r0 := cpu.io.r0

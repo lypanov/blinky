@@ -9,7 +9,8 @@ module blinky_top (
   input  reset,
   output io_led,
   input  io_uart_rx,
-  output io_uart_tx
+  output io_uart_tx,
+  input  io_btn_n
 );
 
   wire clk_sys;
@@ -36,7 +37,8 @@ module blinky_top (
     .io_deadbeef (unused_deadbeef),
     .io_addr     (unused_addr),
     .io_uart_rx  (io_uart_rx),
-    .io_uart_tx  (io_uart_tx)
+    .io_uart_tx  (io_uart_tx),
+    .io_btn_n    (io_btn_n)
   );
 
 endmodule

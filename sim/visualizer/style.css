@@ -33,6 +33,7 @@ body { display: flex; flex-direction: column; }
 .prog-toggle button.active { background: #1a6b40; color: #eafff2; }
 .prog-toggle button#btn-blink3.active { background: #6b1a2a; }
 .prog-toggle button#btn-blink3n5.active { background: #1d4e89; }
+.prog-toggle button#btn-uartgate.active { background: #8a5a12; }
 .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 button {
   background: #22304c; color: var(--ink); border: 1px solid #33486c;

@@ -19,6 +19,7 @@
       <button id="btn-blink2" class="active" title="Load Blink2 trace">Blink2</button>
       <button id="btn-blink3" title="Load Blink3 trace (hardware delay, 800 cycles)">Blink3</button>
       <button id="btn-blink3n5" class="hidden" title="Blink3 with maxIterations = 5 (LED period 15N+18)">Blink3 N=5</button>
+      <button id="btn-uartgate" class="hidden" title="UART press forces the LED pin off">UART gate</button>
     </div>
     <div class="controls">
       <button id="btn-reset" title="Reset (R)">Reset</button>
@@ -40,6 +41,8 @@
       <div>clock <strong id="cycle">0</strong></div>
       <div>PC <strong id="pc">0x0080</strong></div>
       <div>LED <strong id="led-state">OFF</strong></div>
+      <div id="cpu-led-wrap" class="hidden">CPU LED <strong id="cpu-led-state">—</strong></div>
+      <div id="uart-wrap" class="hidden">UART <strong id="uart-pressed">released</strong></div>
       <div>period <strong id="period">—</strong></div>
     </div>
   </header>
@@ -51,6 +54,10 @@
   <div id="delay-banner" class="init-banner hidden" role="status">
     <strong>Hardware delay.</strong>
     <span id="delay-text">maxIterations := 262144; MHI R0, 4 then STW dmem[0x74].</span>
+  </div>
+  <div id="uart-banner" class="init-banner hidden" role="status">
+    <strong>UART gate.</strong>
+    <span id="uart-text">A press byte forces the LED pin off. The CPU register keeps toggling.</span>
   </div>
   <div id="fail-banner" class="fail-banner hidden" role="status">
     <strong id="fail-title">Blink3 BL.</strong>

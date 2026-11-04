@@ -2,9 +2,11 @@
 IO_LOC "io_led" 10;
 IO_PORT "io_led" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 
-# KEY_1
-# IO_LOC "io_speed_up_n" 14;
-# IO_PORT "io_speed_up_n" PULL_MODE=UP;
+# S1 / KEY1, schematic Tang_Nano_4K_3603 pin 14 (IOB4B).
+# 100 kΩ to 1.8 V, switch to GND, 100 nF to GND. Active-low.
+# S2 is pin 15 and stays the reset input below.
+IO_LOC "io_btn_n" 14;
+IO_PORT "io_btn_n" IO_TYPE=LVCMOS18 PULL_MODE=UP;
 
 # Reset: USR KEY pin 15. a68a501 used PULL_DOWN + Chisel active-high
 # (unpressed = 0 = run). blinky_top does not invert this pin.
@@ -15,8 +17,10 @@ IO_PORT "reset" IO_TYPE=LVCMOS18 PULL_MODE=DOWN;
 IO_LOC "clock" 45;
 IO_PORT "clock" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 
-# UART — Sipeed Tang Nano 4K header IOB13A / IOB13B.
-# Gowin EMPU 4K examples use pin 19 as UART_TX; pin 18 is the adjacent RX.
+# UART pins in this bitstream: package 19 TX, package 18 RX, 8N1 115200.
+# Schematic Tang_Nano_4K_3603 uses those balls for camera PIXDATA, and the
+# onboard BL702 UART GPIOs are not wired to the FPGA. See
+# docs/uart-led-gate/hardware.md.
 IO_LOC "io_uart_tx" 19;
 IO_PORT "io_uart_tx" IO_TYPE=LVCMOS18 PULL_MODE=NONE DRIVE=8;
 IO_LOC "io_uart_rx" 18;
