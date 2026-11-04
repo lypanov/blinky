@@ -129,9 +129,7 @@ openFPGALoader --busdev-num 003:081 -b tangnano4k -m gowin/impl/pnr/blink3_n2621
 The `.fs` files are gitignored. The loader was `-m` only. Log: `write to ram`,
 `Load SRAM 100%`, `CRC check: Success`.
 
-After that load the Logitech the webcam MCP uses
-(`046d:0991`, `/dev/video2`) is aimed at the monitor light bar, not at the
-boards. `check_all(duration=10)` reported both boards "present but not
-blinking", and the frame has no red LED in it. That call is written up in
-[`hardware.md`](hardware.md). The 4K was left running this SRAM image. The
-button has not been held for a camera measurement yet.
+The Logitech stayed aimed at the monitor for the Primer 20K BBC work, so
+there is no webcam re-check. Alex confirmed by eye that holding S1 cuts the
+4K LED off. That is the hardware proof. The 4K was left running this SRAM
+image. Write-up: [`hardware.md`](hardware.md).

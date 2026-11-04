@@ -91,6 +91,10 @@ IDCODE still `0x100981b`. Log: `write to ram`, `Load SRAM 100%`, `CRC check: Suc
 
 `check_all(duration=10)` at `http://127.0.0.1:8766/mcp` took 13.25 s and returned both boards as "present but not blinking" (`nano4k` and `primer20k` frequency null). The clip is `~/fpga/blink-measure/20261104-223623-check/clip.mkv`. The annotated frame is the monitor light bar. A scan of that frame for red LED pixels (R > 80 and well above G and B) found one pixel. The previous clip that actually saw the boards, `20261104-214232-check`, measured the 4K at 3.316 Hz with the user LED around pixel (344, 243).
 
-The MCP was not modified. A direct grab of `/dev/video2` (Logitech `046d:0991`, the camera `check_all` uses) is the same monitor view. `/dev/video0` is the UGREEN HDMI stick and returned a black frame. The button has not been held for a measurement. The 4K was left running the button SRAM image.
+The MCP was not modified. A direct grab of `/dev/video2` (Logitech `046d:0991`, the camera `check_all` uses) is the same monitor view. `/dev/video0` is the UGREEN HDMI stick and returned a black frame. The camera stays on the monitor for the Primer 20K BBC work, so it was not turned back to the 4K.
+
+## Hardware proof
+
+Alex confirmed by eye that holding **S1** on the Tang Nano 4K cuts the LED off. That is the button gate on the SRAM image above: pin 14, active-low, after the CPU LED register. The 4K was left running that image.
 
 ![Webcam after the button load: the frame is the monitor, not the boards](hardware/05-camera-aim-annotated.jpg)
