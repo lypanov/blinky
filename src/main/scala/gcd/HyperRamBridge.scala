@@ -1,6 +1,7 @@
 package gcd
 
 import chisel3._
+import chisel3.experimental.IntParam
 import chisel3.util._
 
 /**
@@ -129,8 +130,15 @@ class HyperRamBridge extends Module {
   }
 }
 
-/** Behavioural stand-in for the encrypted controller. See sim/HyperRamUserModel.v. */
-class HyperRamUserModel extends BlackBox {
+/**
+ * Behavioural stand-in for the encrypted controller. See sim/HyperRamUserModel.v.
+ *
+ * firstValid 12 is the pre-load model (read data inside the 15-clock gap).
+ * firstValid 13 is the one-clock-later read fitted after the 0.500 Hz measurement.
+ */
+class HyperRamUserModel(firstValid: Int = 12) extends BlackBox(Map(
+  "FIRST_VALID" -> IntParam(firstValid)
+)) {
   override def desiredName = "HyperRamUserModel"
   val io = IO(new Bundle {
     val clk = Input(Clock())

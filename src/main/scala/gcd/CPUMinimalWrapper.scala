@@ -19,7 +19,8 @@ class CPUMinimalWrapper(
     useRealGowin: Boolean = true,
     programInstructions: Seq[String] = Seq.empty[String],
     customMemoryImage: Option[Seq[String]] = None,
-    memBackend: String = "blockram"
+    memBackend: String = "blockram",
+    hyperFirstValid: Int = 12
 ) extends Module {
   val hyper = memBackend == "hyperram"
   val exposeHyper = hyper && useRealGowin
@@ -59,7 +60,7 @@ class CPUMinimalWrapper(
       bridge.io.hr.rd_data_valid := hr.rd_data_valid
       bridge.io.hr.init_calib := hr.init_calib
     } else {
-      val model = Module(new HyperRamUserModel)
+      val model = Module(new HyperRamUserModel(hyperFirstValid))
       model.io.clk := clock
       model.io.memory_clk := clock
       model.io.pll_lock := true.B

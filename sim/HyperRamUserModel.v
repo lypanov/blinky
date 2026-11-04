@@ -12,11 +12,21 @@
 //   * addr is a 16-bit-word address (byte address >> 1), 22 bits for 8 MB.
 //     A 16-byte burst starts on an address whose low 3 bits are 0.
 //   * rd_data_valid stays high for four clocks. Figure 4-11 shows a gap
-//     after cmd_en and does not give its length. FIRST_VALID below places
-//     the first valid 13 user clocks after the cmd_en edge, inside the
-//     Table 4-2 minimum of 15 user clocks between commands (burst 16,
-//     memory clock <= 166 MHz). The bridge waits for both, so a longer
-//     real-IP gap only slows the hardware; it does not change the data.
+//     after cmd_en and does not give its length. FIRST_VALID is the
+//     countdown loaded on the cmd_en cycle, so the first valid is
+//     FIRST_VALID+1 user clocks later.
+//
+//     FIRST_VALID = 12 (the default) puts that pulse 13 user clocks after
+//     cmd_en, inside the Table 4-2 minimum of 15 user clocks between
+//     commands (burst 16, memory clock <= 166 MHz). The bridge waits for
+//     both, so this setting is limited by the command gap. It is the
+//     model that predicted 0.520 Hz before the board was loaded.
+//
+//     FIRST_VALID = 13 delays the whole read burst by one user clock.
+//     Every load then stalls one cycle past that gap. Stores do not,
+//     because a write is released on the gap alone. This value was fitted
+//     after the Nano 4K measured 0.500 Hz on the same bitstream. It is not
+//     a pre-load prediction.
 //   * init_calib rises and stays high. Real calibration is milliseconds;
 //     INIT_CYCLES is short so a trace can show the stall. The blink rate
 //     is measured after calibration on both sides.
@@ -46,10 +56,8 @@ module HyperRamUserModel (
 
   localparam integer WORDS = 2048;
   localparam integer INIT_CYCLES = 64;
-  // Loaded into the countdown the cmd_en cycle. The countdown runs on
-  // later clocks, so the first rd_data_valid is FIRST_VALID+1 user
-  // clocks after cmd_en. 12 → first valid at +13, inside Tcmd = 15.
-  localparam integer FIRST_VALID = 12;
+  // See the header. 12 is the pre-load model. 13 is the post-measurement fit.
+  parameter integer FIRST_VALID = 12;
   localparam integer TCMD = 15;
 
   assign clk_out = clk;
