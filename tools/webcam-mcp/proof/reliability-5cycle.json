@@ -1,0 +1,547 @@
+[
+  {
+    "cycle": 1,
+    "wall_s": 33.6,
+    "gain": 48,
+    "exposure": 305,
+    "sat": 64,
+    "wb": 4000,
+    "score": 196.54,
+    "mean_luma": 2.13,
+    "med_peak": 255.0,
+    "n_blobs_still": 6,
+    "assign": "upper=primer20k n=3 orange=1 lower=nano4k n=2 orange=0 cy=122/275",
+    "n20": 3,
+    "n4": 2,
+    "blink20": 1,
+    "blink4": 1,
+    "detect20": {
+      "n": 3,
+      "n_blink": 1,
+      "target": 0,
+      "measure_roi": {
+        "x": 351,
+        "y": 73,
+        "w": 44,
+        "h": 46
+      },
+      "leds": [
+        {
+          "id": 0,
+          "xy": [
+            369.0,
+            91.0
+          ],
+          "color": "red",
+          "state": "blinking",
+          "hz": 0.992
+        },
+        {
+          "id": 3,
+          "xy": [
+            275.0,
+            139.2
+          ],
+          "color": "orange",
+          "state": "steady",
+          "hz": null
+        },
+        {
+          "id": 5,
+          "xy": [
+            304.0,
+            136.0
+          ],
+          "color": "red",
+          "state": "steady",
+          "hz": null
+        }
+      ]
+    },
+    "detect4": {
+      "n": 2,
+      "n_blink": 1,
+      "target": 1,
+      "measure_roi": {
+        "x": 220,
+        "y": 247,
+        "w": 56,
+        "h": 50
+      },
+      "leds": [
+        {
+          "id": 1,
+          "xy": [
+            253.0,
+            267.0
+          ],
+          "color": "red",
+          "state": "blinking",
+          "hz": 3.373
+        },
+        {
+          "id": 2,
+          "xy": [
+            298.5,
+            282.7
+          ],
+          "color": "red",
+          "state": "steady",
+          "hz": null
+        }
+      ]
+    },
+    "nano4k_hz": 3.4181994375508196,
+    "nano4k_edge": 3.4181994375508196,
+    "nano4k_fft": 3.3813779999370137,
+    "nano4k_trusted": "edge",
+    "nano4k_conf": 0.9829,
+    "nano4k_err": -0.43772518251977294,
+    "nano4k_roi": "220,247,56,50",
+    "nano4k_reason": "edge/threshold period agrees with FFT",
+    "primer20k_hz": 0.9941559585228315,
+    "primer20k_edge": 0.9941559585228315,
+    "primer20k_fft": 0.9945229411579453,
+    "primer20k_trusted": "edge",
+    "primer20k_conf": 0.9963,
+    "primer20k_roi": "351,73,44,46",
+    "primer20k_reason": "edge/threshold period agrees with FFT",
+    "delivered_fps": 30.083
+  },
+  {
+    "cycle": 2,
+    "wall_s": 33.0,
+    "gain": 112,
+    "exposure": 305,
+    "sat": 64,
+    "wb": 4000,
+    "score": 178.08,
+    "mean_luma": 4.84,
+    "med_peak": 187.0,
+    "n_blobs_still": 7,
+    "assign": "upper=primer20k n=3 orange=3 lower=nano4k n=2 orange=1 cy=132/274",
+    "n20": 3,
+    "n4": 2,
+    "blink20": 1,
+    "blink4": 1,
+    "detect20": {
+      "n": 3,
+      "n_blink": 1,
+      "target": 0,
+      "measure_roi": {
+        "x": 352,
+        "y": 85,
+        "w": 37,
+        "h": 37
+      },
+      "leds": [
+        {
+          "id": 0,
+          "xy": [
+            370.0,
+            103.0
+          ],
+          "color": "orange",
+          "state": "blinking",
+          "hz": 0.995
+        },
+        {
+          "id": 3,
+          "xy": [
+            252.1,
+            135.9
+          ],
+          "color": "orange",
+          "state": "steady",
+          "hz": null
+        },
+        {
+          "id": 5,
+          "xy": [
+            361.2,
+            155.7
+          ],
+          "color": "orange",
+          "state": "steady",
+          "hz": null
+        }
+      ]
+    },
+    "detect4": {
+      "n": 2,
+      "n_blink": 1,
+      "target": 1,
+      "measure_roi": {
+        "x": 225,
+        "y": 249,
+        "w": 37,
+        "h": 37
+      },
+      "leds": [
+        {
+          "id": 1,
+          "xy": [
+            243.0,
+            267.0
+          ],
+          "color": "orange",
+          "state": "blinking",
+          "hz": 3.381
+        },
+        {
+          "id": 2,
+          "xy": [
+            288.0,
+            281.0
+          ],
+          "color": "red",
+          "state": "steady",
+          "hz": null
+        }
+      ]
+    },
+    "nano4k_hz": 3.4201902351265625,
+    "nano4k_edge": 3.4201902351265625,
+    "nano4k_fft": 3.383347352295742,
+    "nano4k_trusted": "edge",
+    "nano4k_conf": 0.9829,
+    "nano4k_err": -0.3797390003313776,
+    "nano4k_roi": "225,249,37,37",
+    "nano4k_reason": "edge/threshold period agrees with FFT",
+    "primer20k_hz": 0.9947349660700201,
+    "primer20k_edge": 0.9947349660700201,
+    "primer20k_fft": 0.9951021624399241,
+    "primer20k_trusted": "edge",
+    "primer20k_conf": 0.9963,
+    "primer20k_roi": "353,78,37,37",
+    "primer20k_reason": "edge/threshold period agrees with FFT",
+    "delivered_fps": 30.083
+  },
+  {
+    "cycle": 3,
+    "wall_s": 33.0,
+    "gain": 112,
+    "exposure": 310,
+    "sat": 64,
+    "wb": 4000,
+    "score": 178.81,
+    "mean_luma": 5.73,
+    "med_peak": 168.0,
+    "n_blobs_still": 13,
+    "assign": "upper=primer20k n=3 orange=3 lower=nano4k n=2 orange=1 cy=124/274",
+    "n20": 3,
+    "n4": 2,
+    "blink20": 1,
+    "blink4": 1,
+    "detect20": {
+      "n": 3,
+      "n_blink": 1,
+      "target": 0,
+      "measure_roi": {
+        "x": 353,
+        "y": 68,
+        "w": 37,
+        "h": 47
+      },
+      "leds": [
+        {
+          "id": 0,
+          "xy": [
+            371.0,
+            96.0
+          ],
+          "color": "orange",
+          "state": "blinking",
+          "hz": 0.988
+        },
+        {
+          "id": 3,
+          "xy": [
+            301.4,
+            139.3
+          ],
+          "color": "orange",
+          "state": "steady",
+          "hz": null
+        },
+        {
+          "id": 4,
+          "xy": [
+            252.1,
+            135.9
+          ],
+          "color": "orange",
+          "state": "steady",
+          "hz": null
+        }
+      ]
+    },
+    "detect4": {
+      "n": 2,
+      "n_blink": 1,
+      "target": 1,
+      "measure_roi": {
+        "x": 225,
+        "y": 249,
+        "w": 37,
+        "h": 37
+      },
+      "leds": [
+        {
+          "id": 1,
+          "xy": [
+            243.0,
+            267.0
+          ],
+          "color": "orange",
+          "state": "blinking",
+          "hz": 3.359
+        },
+        {
+          "id": 2,
+          "xy": [
+            289.0,
+            281.0
+          ],
+          "color": "red",
+          "state": "steady",
+          "hz": null
+        }
+      ]
+    },
+    "nano4k_hz": 3.419905693509664,
+    "nano4k_edge": 3.419905693509664,
+    "nano4k_fft": 3.383065875810527,
+    "nano4k_trusted": "edge",
+    "nano4k_conf": 0.9829,
+    "nano4k_err": -0.38802687562251875,
+    "nano4k_roi": "225,249,37,37",
+    "nano4k_reason": "edge/threshold period agrees with FFT",
+    "primer20k_hz": 0.9983361064891847,
+    "primer20k_edge": 0.9983361064891847,
+    "primer20k_fft": 0.9950193752383902,
+    "primer20k_trusted": "edge",
+    "primer20k_conf": 1.0,
+    "primer20k_roi": "353,78,37,37",
+    "primer20k_reason": "edge/threshold period agrees with FFT",
+    "delivered_fps": 30.083
+  },
+  {
+    "cycle": 4,
+    "wall_s": 33.1,
+    "gain": 112,
+    "exposure": 305,
+    "sat": 64,
+    "wb": 4000,
+    "score": 180.94,
+    "mean_luma": 5.39,
+    "med_peak": 175.0,
+    "n_blobs_still": 10,
+    "assign": "upper=primer20k n=3 orange=3 lower=nano4k n=2 orange=1 cy=129/274",
+    "n20": 3,
+    "n4": 2,
+    "blink20": 1,
+    "blink4": 1,
+    "detect20": {
+      "n": 3,
+      "n_blink": 1,
+      "target": 0,
+      "measure_roi": {
+        "x": 353,
+        "y": 68,
+        "w": 37,
+        "h": 47
+      },
+      "leds": [
+        {
+          "id": 0,
+          "xy": [
+            371.0,
+            96.0
+          ],
+          "color": "orange",
+          "state": "blinking",
+          "hz": 0.987
+        },
+        {
+          "id": 3,
+          "xy": [
+            252.1,
+            135.9
+          ],
+          "color": "orange",
+          "state": "steady",
+          "hz": null
+        },
+        {
+          "id": 4,
+          "xy": [
+            361.3,
+            155.9
+          ],
+          "color": "orange",
+          "state": "steady",
+          "hz": null
+        }
+      ]
+    },
+    "detect4": {
+      "n": 2,
+      "n_blink": 1,
+      "target": 1,
+      "measure_roi": {
+        "x": 225,
+        "y": 249,
+        "w": 37,
+        "h": 37
+      },
+      "leds": [
+        {
+          "id": 1,
+          "xy": [
+            243.0,
+            267.0
+          ],
+          "color": "orange",
+          "state": "blinking",
+          "hz": 3.355
+        },
+        {
+          "id": 2,
+          "xy": [
+            289.0,
+            281.0
+          ],
+          "color": "red",
+          "state": "steady",
+          "hz": null
+        }
+      ]
+    },
+    "nano4k_hz": 3.428927680798006,
+    "nano4k_edge": 3.428927680798006,
+    "nano4k_fft": 3.3802536847250644,
+    "nano4k_trusted": "edge",
+    "nano4k_conf": 0.9821,
+    "nano4k_err": -0.12524244943195179,
+    "nano4k_roi": "225,249,37,37",
+    "nano4k_reason": "edge/threshold period agrees with FFT",
+    "primer20k_hz": 0.9975062344139651,
+    "primer20k_edge": 0.9975062344139651,
+    "primer20k_fft": 0.9941922602132542,
+    "primer20k_trusted": "edge",
+    "primer20k_conf": 1.0,
+    "primer20k_roi": "353,68,37,47",
+    "primer20k_reason": "edge/threshold period agrees with FFT",
+    "delivered_fps": 30.083
+  },
+  {
+    "cycle": 5,
+    "wall_s": 33.2,
+    "gain": 112,
+    "exposure": 310,
+    "sat": 64,
+    "wb": 4000,
+    "score": 178.24,
+    "mean_luma": 5.65,
+    "med_peak": 167.0,
+    "n_blobs_still": 10,
+    "assign": "upper=primer20k n=3 orange=3 lower=nano4k n=2 orange=1 cy=132/265",
+    "n20": 3,
+    "n4": 2,
+    "blink20": 1,
+    "blink4": 1,
+    "detect20": {
+      "n": 3,
+      "n_blink": 1,
+      "target": 0,
+      "measure_roi": {
+        "x": 352,
+        "y": 68,
+        "w": 40,
+        "h": 54
+      },
+      "leds": [
+        {
+          "id": 0,
+          "xy": [
+            370.0,
+            103.0
+          ],
+          "color": "orange",
+          "state": "blinking",
+          "hz": 0.993
+        },
+        {
+          "id": 3,
+          "xy": [
+            252.1,
+            135.9
+          ],
+          "color": "orange",
+          "state": "steady",
+          "hz": null
+        },
+        {
+          "id": 4,
+          "xy": [
+            361.2,
+            155.9
+          ],
+          "color": "orange",
+          "state": "steady",
+          "hz": null
+        }
+      ]
+    },
+    "detect4": {
+      "n": 2,
+      "n_blink": 1,
+      "target": 1,
+      "measure_roi": {
+        "x": 225,
+        "y": 249,
+        "w": 37,
+        "h": 37
+      },
+      "leds": [
+        {
+          "id": 1,
+          "xy": [
+            243.0,
+            267.0
+          ],
+          "color": "orange",
+          "state": "blinking",
+          "hz": 3.375
+        },
+        {
+          "id": 2,
+          "xy": [
+            304.9,
+            263.7
+          ],
+          "color": "red",
+          "state": "steady",
+          "hz": null
+        }
+      ]
+    },
+    "nano4k_hz": 3.4196211992335206,
+    "nano4k_edge": 3.4196211992335206,
+    "nano4k_fft": 3.3827844461561036,
+    "nano4k_trusted": "edge",
+    "nano4k_conf": 0.9829,
+    "nano4k_err": -0.3963133720142198,
+    "nano4k_roi": "231,247,37,37",
+    "nano4k_reason": "edge/threshold period agrees with FFT",
+    "primer20k_hz": 0.9945694665331979,
+    "primer20k_edge": 0.9945694665331979,
+    "primer20k_fft": 0.9949366018106187,
+    "primer20k_trusted": "edge",
+    "primer20k_conf": 0.9963,
+    "primer20k_roi": "354,69,37,54",
+    "primer20k_reason": "edge/threshold period agrees with FFT",
+    "delivered_fps": 30.083
+  }
+]

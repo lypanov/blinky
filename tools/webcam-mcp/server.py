@@ -75,13 +75,16 @@ LED_PROFILE = {
 }
 LED_GAIN_EXP = [
     (48, 300),
-    (16, 300),
-    (12, 300),
-    (24, 300),
+    (64, 300),
+    (80, 300),
+    (40, 300),
+    (96, 300),
     (32, 300),
-    (40, 280),
-    (48, 250),
+    (112, 300),
 ]
+# gain 16 is only tried when cores are already too bright (see auto_adjust).
+LED_GAIN_LOW = (16, 300)
+AUTO_ADJUST_HYSTERESIS = 12.0
 # Optional per-call software eq, off by default. The previous capture_still
 # default (brightness=0.25/contrast=1.6/gamma=1.8) washed out the Logitech.
 ENHANCE_VF = "eq=brightness=0.25:contrast=1.6:gamma=1.8"
@@ -610,7 +613,7 @@ def resolve_detected_roi(board: str, detection: dict[str, Any]) -> str | None:
     info = (detection.get("boards") or {}).get(board)
     if not info:
         return None
-    roi = info.get("measure_roi") or info.get("roi")
+    roi = info.get("measure_roi")
     if not roi:
         return None
     return f"{int(roi['x'])},{int(roi['y'])},{int(roi['w'])},{int(roi['h'])}"
@@ -701,13 +704,35 @@ def auto_adjust(
         )
 
         apply_control_updates(device, dict(LED_PROFILE))
+        saved = load_saved_controls().get(device, {})
         candidates: list[dict[str, int]] = []
-        for gain, exp in LED_GAIN_EXP:
+        seen_gain_exp: set[tuple[int, int]] = set()
+
+        def add_cand(gain: int, exp: int, extra: dict[str, int] | None = None) -> None:
+            key = (int(gain), int(exp))
+            if extra is None and key in seen_gain_exp:
+                return
+            if extra is None:
+                seen_gain_exp.add(key)
             cand = dict(LED_PROFILE)
-            cand["gain"] = gain
-            cand["exposure_time_absolute"] = exp
+            cand["gain"] = int(gain)
+            cand["exposure_time_absolute"] = int(exp)
+            if extra:
+                cand.update(extra)
             candidates.append(cand)
-        # After the first pass, try a couple of WB/sat variants on the best pair.
+
+        # Score the persisted knobs first so close ties keep a stable setting.
+        if isinstance(saved.get("gain"), int) and isinstance(
+            saved.get("exposure_time_absolute"), int
+        ):
+            extra = {}
+            if isinstance(saved.get("saturation"), int):
+                extra["saturation"] = saved["saturation"]
+            if isinstance(saved.get("white_balance_temperature"), int):
+                extra["white_balance_temperature"] = saved["white_balance_temperature"]
+            add_cand(saved["gain"], saved["exposure_time_absolute"], extra or None)
+        for gain, exp in LED_GAIN_EXP:
+            add_cand(gain, exp)
         extra_wb_sat = [
             {"white_balance_temperature": 3200},
             {"white_balance_temperature": 3800, "saturation": 80},
@@ -744,16 +769,54 @@ def auto_adjust(
             apply_control_updates(device, cand)
             capture_scored(f"auto{i:02d}", 6 if i else warmup_frames)
 
+        # Only hunt WB/sat when orange vs red is missing. Otherwise the
+        # extras tie on score and flip 3200/4000 every call.
         remaining = max_iters - (len(history) - 1)
-        if remaining > 0 and best_ctrls:
+        both_colours = bool(best_ctrls) and any(
+            s.get("has_red") and s.get("has_orange") for s in history if s.get("path") == str(best_path)
+        )
+        if remaining > 0 and best_ctrls and not both_colours:
             variants = extra_wb_sat[:remaining]
             for j, extra in enumerate(variants):
                 cand = dict(LED_PROFILE)
                 cand["gain"] = best_ctrls.get("gain", 48)
-                cand["exposure_time_absolute"] = best_ctrls.get("exposure_time_absolute", 80)
+                cand["exposure_time_absolute"] = best_ctrls.get(
+                    "exposure_time_absolute", 300
+                )
                 cand.update(extra)
                 apply_control_updates(device, cand)
                 capture_scored(f"autowb{j:02d}", 6)
+        elif remaining > 0 and best_ctrls:
+            best_metrics = next(
+                (s.get("metrics") or {} for s in reversed(history) if s.get("path") == str(best_path)),
+                {},
+            )
+            med_peak = float(best_metrics.get("med_peak") or 0)
+            if med_peak >= 220:
+                add_low = dict(LED_PROFILE)
+                add_low["gain"] = LED_GAIN_LOW[0]
+                add_low["exposure_time_absolute"] = LED_GAIN_LOW[1]
+                apply_control_updates(device, add_low)
+                capture_scored("auto-low", 6)
+
+        # Hysteresis: keep the persisted gain/exp if it is within a few
+        # score points of the winner so falling light does not chatter.
+        saved_gain = saved.get("gain")
+        saved_exp = saved.get("exposure_time_absolute")
+        if isinstance(saved_gain, int) and isinstance(saved_exp, int) and history:
+            saved_steps = [
+                s
+                for s in history
+                if (s.get("values") or {}).get("gain") == saved_gain
+                and abs(int((s.get("values") or {}).get("exposure_time_absolute") or 0) - saved_exp) <= 15
+            ]
+            if saved_steps:
+                saved_best = max(saved_steps, key=lambda s: float(s.get("score") or -1e9))
+                saved_score = float(saved_best.get("score") or -1e9)
+                if best_score - saved_score <= AUTO_ADJUST_HYSTERESIS:
+                    best_score = saved_score
+                    best_path = Path(saved_best["path"]) if saved_best.get("path") else best_path
+                    best_ctrls = dict(saved_best.get("values") or best_ctrls)
 
         if best_ctrls:
             apply_control_updates(device, best_ctrls)
@@ -1061,13 +1124,15 @@ def measure_blink(
     Records with the same continuous ffmpeg v4l2 session as capture_video
     (camera held open, AE frozen like tools/measure_blink.sh — not a burst of
     stills). Or pass video= to a clip path capture_video already returned.
-    Returns both frequencies, which method is trusted (FFT when the edge
-    detector undercounts, as at ~6.9 Hz), JSON path, and brightness.png +
-    roi.png. duration/warmup are seconds (defaults 25 / 8). roi: auto, full,
-    top, bottom, nano4k, primer20k, or x,y,w,h. nano4k/primer20k run LED
-    detection on the clip and meter the blinking LED of that board (geometry
-    + colour, not USB, not a fixed crop). Falls back to top/bottom halves if
-    detection misses. Does not program the FPGA. tools/measure_blink.sh still exists.
+    Returns both frequencies, which method is trusted (edge when it agrees
+    with FFT; untrusted when they disagree — FFT leakage from the other
+    board is not silently adopted). JSON path, and brightness.png + roi.png.
+    duration/warmup are seconds (defaults 25 / 8). roi: auto, full, top,
+    bottom, nano4k, primer20k, or x,y,w,h. nano4k/primer20k run LED
+    detection on the clip and meter that board's blinking LED only (never a
+    steady LED; ROI is clipped away from the other board). Falls back to
+    top/bottom halves only if the board itself is missing. Does not program
+    the FPGA. tools/measure_blink.sh still exists.
     """
     device = parse_device(device)
     width, height = parse_size(resolution)
@@ -1102,6 +1167,7 @@ def measure_blink(
     detection: dict[str, Any] | None = None
     analyze_roi = roi
     annotated: Path | None = None
+    result: dict[str, Any] | None = None
     if board:
         annotated = outdir / "leds-annotated.jpg"
         det_json = outdir / "leds.json"
@@ -1110,8 +1176,20 @@ def measure_blink(
         xywh = resolve_detected_roi(board, detection)
         if xywh:
             analyze_roi = xywh
+        elif (detection.get("boards") or {}).get(board):
+            result = {
+                "frequency_hz": None,
+                "edge_frequency_hz": None,
+                "fft_frequency_hz": None,
+                "trusted_method": "untrusted",
+                "trusted_reason": f"no blinking LED found on {board}",
+                "confidence": 0.0,
+                "warnings": [f"no blinking LED found on {board}; not metering a steady LED"],
+                "paths": {},
+            }
     delivered = None if rec is None else rec.get("delivered_fps")
-    result = analyze_blink_clip(clip, outdir, warmup, analyze_roi, fps=delivered)
+    if result is None:
+        result = analyze_blink_clip(clip, outdir, warmup, analyze_roi, fps=delivered)
     plot = Path(result.get("paths", {}).get("plot") or (outdir / "brightness.png"))
     roi_png = Path(result.get("paths", {}).get("roi_frame") or (outdir / "roi.png"))
     edge = result.get("edge_frequency_hz")

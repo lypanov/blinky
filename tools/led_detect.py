@@ -29,10 +29,18 @@ BOARD_PRIMER20K = "primer20k"
 # Complete-linkage merge cutoff. On Bee's 640x480 Logitech, LEDs on one
 # board are ~40–90 px apart; the two boards are ~150–220 px apart.
 CLUSTER_CUTOFF_PX = 120.0
-MERGE_PX = 12.0
+MERGE_PX = 18.0
 MIN_BLOB_AREA = 4
-MAX_BLOB_AREA = 280
-MAX_BLOB_SPAN = 48
+MAX_BLOB_AREA = 420
+MAX_BLOB_SPAN = 56
+MIN_BLINK_HZ = 0.85
+MAX_BLINK_HZ = 8.0
+BLINKER_PAD_PX = 12
+BOARD_GAP_MARGIN_PX = 16
+BLINKER_NMS_PX = 80.0
+STEADY_NMS_PX = 24.0
+NEAR_BLINKER_PX = 14.0
+STD_PEAK_RADIUS = 6
 
 
 def rgb_to_hsv(r: float, g: float, b: float) -> tuple[float, float, float]:
@@ -204,8 +212,10 @@ def _merge_nearby(blobs: list[dict[str, Any]], dist: float = MERGE_PX) -> list[d
             merged.append(dict(blob))
             continue
         n = hit["area"] + blob["area"]
-        hit["x"] = (hit["x"] * hit["area"] + blob["x"] * blob["area"]) / n
-        hit["y"] = (hit["y"] * hit["area"] + blob["y"] * blob["area"]) / n
+        # Keep the brighter core's position so a split LED is not sampled
+        # in the dark gap between fragments.
+        if float(blob.get("peak_r") or 0) > float(hit.get("peak_r") or 0):
+            hit["x"], hit["y"] = blob["x"], blob["y"]
         hit["x0"] = min(hit["x0"], blob["x0"])
         hit["y0"] = min(hit["y0"], blob["y0"])
         hit["w"] = max(hit["x0"] + hit["w"], blob["x0"] + blob["w"]) - hit["x0"]
@@ -237,13 +247,17 @@ def score_led_exposure(rgb: np.ndarray) -> dict[str, Any]:
     bloom = 0.0
     for blob in core:
         score += 28.0 * min(float(blob["sat"]), 0.85)
-        if blob["area"] > 220:
-            extra = blob["area"] - 220
+        pr = float(blob["peak_r"])
+        # Sweet-spot core brightness: dim cores lose as room light falls,
+        # clipped/bloomed cores lose when gain is too high.
+        score -= 0.004 * (pr - 170.0) ** 2
+        if blob["area"] > 140:
+            extra = blob["area"] - 140
             bloom += extra
-            score -= 0.05 * extra
+            score -= 0.12 * extra
         if blob["clip_frac"] > 0.40 and blob["area"] > 60:
             score -= 22.0
-        if blob["peak_r"] < 80:
+        if pr < 80:
             score -= 10.0
         if blob["sat"] >= 0.18:
             hues.append(float(blob["hue"]))
@@ -258,12 +272,25 @@ def score_led_exposure(rgb: np.ndarray) -> dict[str, Any]:
             score += 20.0
     if mean_luma > 70:
         score -= 0.55 * (mean_luma - 70)
+    core_peaks = [float(b["peak_r"]) for b in core]
+    med_peak = float(np.median(core_peaks)) if core_peaks else 0.0
+    if med_peak < 150:
+        score -= 0.55 * (150.0 - med_peak)
+    if mean_luma < 2.2:
+        score -= 14.0 * (2.2 - mean_luma)
     if clip_hi > 0.004:
         score -= 500.0 * clip_hi
-    if n < 2:
-        score -= 30.0
-    if n > 6:
-        score -= 5.0 * (n - 6)
+    # Five real LEDs. Drift to 2 or to silk/reflections should lose.
+    if n == 5:
+        score += 22.0
+    elif n == 4:
+        score += 8.0
+    elif n == 6:
+        score += 4.0
+    elif n < 3:
+        score -= 28.0
+    elif n > 7:
+        score -= 10.0 * (n - 7)
     return {
         "score": round(float(score), 2),
         "n_blobs": n,
@@ -272,6 +299,7 @@ def score_led_exposure(rgb: np.ndarray) -> dict[str, Any]:
         "has_red": "red" in colors,
         "has_orange": "orange" in colors,
         "bloom_px": round(bloom, 1),
+        "med_peak": round(med_peak, 1),
         "blobs": blobs,
     }
 
@@ -307,8 +335,9 @@ def fft_peak_hz(values: np.ndarray, fps: float) -> tuple[float | None, float]:
     x = x - x.mean()
     spec = np.abs(np.fft.rfft(x))
     freqs = np.fft.rfftfreq(n, d=1.0 / fps)
-    # Ignore DC and very slow wander; LEDs here blink a few Hz.
-    keep = (freqs >= 0.6) & (freqs <= min(12.0, fps / 2.2))
+    # Real blinkers here are ~1 Hz (20K) and ~3.43 Hz (4K). Reflections
+    # wander near 0.6–0.8 Hz; keep them out of the blink band.
+    keep = (freqs >= MIN_BLINK_HZ) & (freqs <= min(MAX_BLINK_HZ, fps / 2.2))
     if not np.any(keep):
         return None, 0.0
     band = spec[keep]
@@ -317,25 +346,29 @@ def fft_peak_hz(values: np.ndarray, fps: float) -> tuple[float | None, float]:
     med = float(np.median(band)) if band.size else 0.0
     snr = peak / max(med, 1e-6)
     hz = float(freqs[keep][peak_i])
-    return (hz if snr >= 2.5 else None), snr
+    return (hz if snr >= 3.0 else None), snr
 
 
-def classify_temporal(series: np.ndarray, fps: float) -> tuple[str, float | None, float]:
+def classify_temporal(series: np.ndarray, fps: float) -> tuple[str, float | None, float, float]:
     x = np.asarray(series, dtype=np.float64)
     if len(x) < 8:
-        return "unknown", None, 0.0
+        return "unknown", None, 0.0, 0.0
     mean = float(x.mean())
     std = float(x.std())
     ptp = float(x.max() - x.min())
     cv = std / max(abs(mean), 1e-6)
     hz, snr = fft_peak_hz(x, fps)
-    if cv >= 0.16 and ptp >= 18.0:
-        return "blinking", hz, cv
-    if hz is not None and snr >= 6.0 and cv >= 0.14 and ptp >= 15.0:
-        return "blinking", hz, cv
+    if (
+        hz is not None
+        and MIN_BLINK_HZ <= hz <= MAX_BLINK_HZ
+        and snr >= 4.0
+        and cv >= 0.15
+        and ptp >= 12.0
+    ):
+        return "blinking", hz, cv, snr
     if mean >= 10.0:
-        return "steady", None, cv
-    return "unknown", None, cv
+        return "steady", None, cv, snr
+    return "unknown", None, cv, snr
 
 
 def _agglomerative(points: list[tuple[float, float]], cutoff: float) -> list[list[int]]:
@@ -398,12 +431,25 @@ def assign_boards(
         return {"boards": {}, "reason": "no LEDs"}
     points = [(float(led["x"]), float(led["y"])) for led in leds]
     groups = _agglomerative(points, cutoff or CLUSTER_CUTOFF_PX)
-    if len(groups) == 1 and len(leds) >= 4:
+    # Prefer the large vertical gap between the two boards. Complete-linkage
+    # otherwise isolates the 20K blinker when a nearby silk blob inflates
+    # the upper cluster diameter.
+    if len(leds) >= 4:
         split = _split_by_largest_gap(leds)
         if len(split) == 2:
-            groups = split
+            ys0 = [leds[i]["y"] for i in split[0]]
+            ys1 = [leds[i]["y"] for i in split[1]]
+            if abs(float(np.mean(ys0)) - float(np.mean(ys1))) >= 40:
+                groups = split
     if len(groups) > 2:
-        groups = sorted(groups, key=lambda g: -len(g))[:2]
+        groups = sorted(
+            groups,
+            key=lambda g: (
+                sum(1 for i in g if leds[i].get("state") == "blinking"),
+                len(g),
+            ),
+            reverse=True,
+        )[:2]
 
     scored: list[dict[str, Any]] = []
     for idxs in groups:
@@ -447,7 +493,8 @@ def assign_boards(
     if len(scored) == 1:
         only = scored[0]
         name = BOARD_PRIMER20K if only["score_20k"] >= only["score_4k"] else BOARD_NANO4K
-        boards = {name: _board_record(name, only["members"])}
+        want = 3 if name == BOARD_PRIMER20K else 2
+        boards = {name: _board_record(name, _prune_board_members(only["members"], want))}
         return {"boards": boards, "reason": "single cluster", "clusters": scored}
 
     # Relative layout is preserved: Primer 20K stays above Nano 4K. Count and
@@ -455,15 +502,66 @@ def assign_boards(
     a, b = scored[0], scored[1]
     upper, lower = (a, b) if a["cy"] < b["cy"] else (b, a)
     boards = {
-        BOARD_PRIMER20K: _board_record(BOARD_PRIMER20K, upper["members"]),
-        BOARD_NANO4K: _board_record(BOARD_NANO4K, lower["members"]),
+        BOARD_PRIMER20K: _board_record(
+            BOARD_PRIMER20K, _prune_board_members(upper["members"], 3)
+        ),
+        BOARD_NANO4K: _board_record(
+            BOARD_NANO4K, _prune_board_members(lower["members"], 2)
+        ),
     }
+    _isolate_measure_rois(boards)
     reason = (
-        f"upper=primer20k n={upper['n']} orange={upper['n_orange']} "
-        f"lower=nano4k n={lower['n']} orange={lower['n_orange']} "
-        f"cy={upper['cy']:.0f}/{lower['cy']:.0f}"
+        f"upper=primer20k n={boards[BOARD_PRIMER20K]['n_leds']} "
+        f"orange={sum(1 for m in boards[BOARD_PRIMER20K]['leds'] if m.get('color')=='orange')} "
+        f"lower=nano4k n={boards[BOARD_NANO4K]['n_leds']} "
+        f"orange={sum(1 for m in boards[BOARD_NANO4K]['leds'] if m.get('color')=='orange')} "
+        f"cy={boards[BOARD_PRIMER20K]['cy']:.0f}/{boards[BOARD_NANO4K]['cy']:.0f}"
     )
     return {"boards": boards, "reason": reason, "clusters": scored}
+
+
+def _prune_board_members(members: list[dict[str, Any]], want: int) -> list[dict[str, Any]]:
+    """Keep one blinker plus the brightest steady cores; drop silk/reflections."""
+    blink = [m for m in members if m.get("state") == "blinking"]
+    blink.sort(
+        key=lambda m: (
+            float(m.get("std") or 0),
+            float(m.get("cv") or 0),
+            float(m.get("mean_chroma") or 0),
+        ),
+        reverse=True,
+    )
+    chosen = {id(blink[0])} if blink else set()
+    rest = [m for m in members if id(m) not in chosen]
+    rest.sort(key=lambda m: float(m.get("mean_chroma") or 0), reverse=True)
+    out: list[dict[str, Any]] = []
+    if blink:
+        out.append(blink[0])
+    for m in rest:
+        if len(out) >= want:
+            break
+        out.append(m)
+    primary = out[0] if out and out[0].get("state") == "blinking" else None
+    if primary is not None:
+        for m in out:
+            if m is not primary and m.get("state") == "blinking":
+                m["state"] = "steady"
+                m["frequency_hz"] = None
+    return out
+
+
+def _target_blinker(members: list[dict[str, Any]]) -> dict[str, Any] | None:
+    blinkers = [m for m in members if m.get("state") == "blinking"]
+    if not blinkers:
+        return None
+    return max(
+        blinkers,
+        key=lambda m: (
+            float(m.get("std") or 0),
+            float(m.get("cv") or 0),
+            float(m.get("mean_chroma") or 0),
+        ),
+    )
 
 
 def _board_record(name: str, members: list[dict[str, Any]]) -> dict[str, Any]:
@@ -474,23 +572,19 @@ def _board_record(name: str, members: list[dict[str, Any]]) -> dict[str, Any]:
     y0 = max(0, int(min(m["y0"] for m in members) - pad))
     x1 = int(max(m["x0"] + m["w"] for m in members) + pad)
     y1 = int(max(m["y0"] + m["h"] for m in members) + pad)
-    blinkers = [m for m in members if m.get("state") == "blinking"]
-    if blinkers:
-        target = max(blinkers, key=lambda m: float(m.get("cv") or 0))
-    else:
-        target = max(members, key=lambda m: m.get("sat", 0))
-    cx = float(np.mean(xs))
-    cy = float(np.mean(ys))
+    target = _target_blinker(members)
+    cx = float(np.mean(xs)) if xs else 0.0
+    cy = float(np.mean(ys)) if ys else 0.0
     orientation = _orientation(members, cx, cy)
     board_roi = {"x": x0, "y": y0, "w": max(1, x1 - x0), "h": max(1, y1 - y0)}
-    # Meter the whole board so analyze_blink sees the blinker among neighbours.
+    measure_roi = _padded_roi(target, BLINKER_PAD_PX) if target is not None else None
     return {
         "name": name,
         "cx": round(cx, 1),
         "cy": round(cy, 1),
         "roi": board_roi,
-        "measure_roi": board_roi,
-        "target_led_id": target.get("id"),
+        "measure_roi": measure_roi,
+        "target_led_id": None if target is None else target.get("id"),
         "n_leds": len(members),
         "n_blinking": sum(1 for m in members if m.get("state") == "blinking"),
         "n_steady": sum(1 for m in members if m.get("state") == "steady"),
@@ -498,6 +592,25 @@ def _board_record(name: str, members: list[dict[str, Any]]) -> dict[str, Any]:
         "orientation": orientation,
         "leds": members,
     }
+
+
+def _isolate_measure_rois(boards: dict[str, Any]) -> None:
+    """Clip each blinker ROI so it cannot reach the other board."""
+    upper = boards.get(BOARD_PRIMER20K)
+    lower = boards.get(BOARD_NANO4K)
+    if not upper or not lower:
+        return
+    gap = int(round((float(upper["cy"]) + float(lower["cy"])) / 2.0))
+    uroi = upper.get("measure_roi")
+    if uroi:
+        y1 = min(uroi["y"] + uroi["h"], gap - BOARD_GAP_MARGIN_PX)
+        uroi["h"] = max(12, y1 - uroi["y"])
+    lroi = lower.get("measure_roi")
+    if lroi:
+        y0 = max(lroi["y"], gap + BOARD_GAP_MARGIN_PX)
+        bottom = lroi["y"] + lroi["h"]
+        lroi["y"] = y0
+        lroi["h"] = max(12, bottom - y0)
 
 
 def _padded_roi(led: dict[str, Any], pad: int = 10) -> dict[str, int]:
@@ -524,39 +637,139 @@ def _orientation(members: list[dict[str, Any]], cx: float, cy: float) -> dict[st
     }
 
 
+def _nms_leds(leds: list[dict[str, Any]], min_dist: float) -> list[dict[str, Any]]:
+    """Keep the highest-ranked LED and drop neighbours within min_dist."""
+    kept: list[dict[str, Any]] = []
+    for led in leds:
+        if any((led["x"] - k["x"]) ** 2 + (led["y"] - k["y"]) ** 2 < min_dist ** 2 for k in kept):
+            continue
+        kept.append(led)
+    return kept
+
+
 def _keep_likely_leds(
     leds: list[dict[str, Any]],
-    limit: int = 6,
+    limit: int = 5,
     frame_wh: tuple[int, int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Drop reflections / silk; keep blinking spots and bright red/orange cores."""
+    """Keep the five real LEDs: two blinkers and three bright steady cores."""
     w = h = None
     if frame_wh:
         w, h = frame_wh
-    kept: list[dict[str, Any]] = []
+    filtered: list[dict[str, Any]] = []
     for led in leds:
         if w and h:
             if led["y"] > 0.88 * h or led["y"] < 0.05 * h:
                 continue
             if led["x"] < 0.08 * w or led["x"] > 0.92 * w:
                 continue
-        if led.get("state") == "blinking":
-            kept.append(led)
+        filtered.append(led)
+
+    def chroma(led: dict[str, Any]) -> float:
+        return float(led.get("mean_chroma") or 0)
+
+    def blink_key(led: dict[str, Any]) -> tuple[float, float, float]:
+        return (
+            float(led.get("std") or 0),
+            chroma(led),
+            float(led.get("cv") or 0),
+        )
+
+    blinkers = [led for led in filtered if led.get("state") == "blinking"]
+    blinkers.sort(key=blink_key, reverse=True)
+    if blinkers:
+        floor = 0.35 * chroma(blinkers[0])
+        blinkers = [led for led in blinkers if chroma(led) >= floor]
+    # Two real blinkers sit on different boards (~150 px). Glow around a
+    # blinker also FFTs at that rate — drop it with NMS.
+    blinkers = _nms_leds(blinkers, BLINKER_NMS_PX)[:2]
+    used = {(led["x"], led["y"]) for led in blinkers}
+
+    def near_blinker(led: dict[str, Any]) -> bool:
+        return any(
+            (led["x"] - b["x"]) ** 2 + (led["y"] - b["y"]) ** 2 < NEAR_BLINKER_PX ** 2
+            for b in blinkers
+        )
+
+    leftover_blink = [
+        led
+        for led in filtered
+        if led.get("state") == "blinking" and (led["x"], led["y"]) not in used
+    ]
+    steady = [
+        led
+        for led in filtered
+        if (led["x"], led["y"]) not in used
+        and not near_blinker(led)
+        and led.get("color") in ("red", "orange")
+        and chroma(led) >= 20.0
+        and (led.get("state") != "blinking" or led in leftover_blink)
+    ]
+    steady.sort(key=chroma, reverse=True)
+    if steady:
+        floor = max(22.0, 0.22 * chroma(steady[0]))
+        steady = [led for led in steady if chroma(led) >= floor]
+    steady = _nms_leds(steady, STEADY_NMS_PX)
+    kept = blinkers + steady
+    return kept[: max(limit, 6)]
+
+
+def _local_maxima(
+    field: np.ndarray, radius: int = 6, max_peaks: int = 8
+) -> list[tuple[int, int, float]]:
+    """Strong isolated peaks of a 2-D field, strongest first."""
+    h, w = field.shape
+    thr = max(12.0, float(np.percentile(field, 99.0)))
+    ys, xs = np.where(field >= thr)
+    if len(xs) == 0:
+        return []
+    order = np.argsort(-field[ys, xs])
+    taken = np.zeros(len(xs), dtype=bool)
+    peaks: list[tuple[int, int, float]] = []
+    sep2 = float((2 * radius) ** 2)
+    for idx in order:
+        if taken[idx]:
             continue
-        if led.get("color") not in ("red", "orange"):
+        x, y = int(xs[idx]), int(ys[idx])
+        val = float(field[y, x])
+        y0, y1 = max(0, y - radius), min(h, y + radius + 1)
+        x0, x1 = max(0, x - radius), min(w, x + radius + 1)
+        if val < float(field[y0:y1, x0:x1].max()) - 1e-6:
             continue
-        if float(led.get("mean_chroma") or 0) < 18.0 and float(led.get("sat") or 0) < 0.35:
-            continue
-        kept.append(led)
-    kept.sort(
-        key=lambda led: (
-            1 if led.get("state") == "blinking" else 0,
-            float(led.get("mean_chroma") or 0),
-            float(led.get("sat") or 0),
-        ),
-        reverse=True,
-    )
-    return kept[:limit]
+        peaks.append((x, y, val))
+        taken |= (xs.astype(np.float32) - x) ** 2 + (ys.astype(np.float32) - y) ** 2 <= sep2
+        if len(peaks) >= max_peaks:
+            break
+    return peaks
+
+
+def _blob_from_peak(rgb: np.ndarray, x: int, y: int, radius: int = 6) -> dict[str, Any]:
+    h, w, _ = rgb.shape
+    x0 = max(0, int(x) - radius)
+    x1 = min(w, int(x) + radius + 1)
+    y0 = max(0, int(y) - radius)
+    y1 = min(h, int(y) + radius + 1)
+    peak = rgb[min(h - 1, max(0, int(y))), min(w - 1, max(0, int(x)))]
+    pr, pg, pb = float(peak[0]), float(peak[1]), float(peak[2])
+    hue, sat, _val = rgb_to_hsv(pr, pg, pb)
+    return {
+        "x": float(x),
+        "y": float(y),
+        "x0": x0,
+        "y0": y0,
+        "w": max(1, x1 - x0),
+        "h": max(1, y1 - y0),
+        "area": max(1, (x1 - x0) * (y1 - y0) // 4),
+        "r": pr,
+        "g": pg,
+        "b": pb,
+        "hue": round(hue, 1),
+        "sat": round(float(sat), 3),
+        "peak_r": pr,
+        "clip_frac": 0.0,
+        "color": classify_led_color(pr, pg, pb),
+        "luma": float(0.299 * pr + 0.587 * pg + 0.114 * pb),
+    }
 
 
 def analyze_frames(
@@ -571,39 +784,39 @@ def analyze_frames(
     # Std of red-minus-green finds blinkers even when mean is modest.
     rg = stacked[:, :, :, 0].astype(np.float32) - stacked[:, :, :, 1].astype(np.float32)
     std_rg = rg.std(axis=0)
-    blobs = detect_blobs(max_rgb)
-    # Also pick up blink-only spots that the max-projection mask may split.
-    extra_mask = std_rg >= max(8.0, float(np.percentile(std_rg, 99.2)))
-    extra = _connected_components(extra_mask, 3, 400)
-    for pix in extra:
-        ys, xs = pix[:, 0], pix[:, 1]
-        x, y = float(xs.mean()), float(ys.mean())
-        if any((x - b["x"]) ** 2 + (y - b["y"]) ** 2 < MERGE_PX ** 2 for b in blobs):
+    blobs = _merge_nearby(detect_blobs(max_rgb))
+    # Blinkers are local maxima of temporal (R−G) variance. Max-projection
+    # blobs miss them when they bloom past MAX_BLOB_AREA, or shrink to a
+    # 4 px remnant whose centroid is off the core. Do not merge after
+    # snapping — that would pull the variance peak off the core.
+    for x, y, stdv in _local_maxima(std_rg, radius=STD_PEAK_RADIUS, max_peaks=8):
+        peak_blob = _blob_from_peak(max_rgb, x, y, radius=STD_PEAK_RADIUS)
+        peak_blob["std"] = stdv
+        near = None
+        best_d2 = MERGE_PX ** 2
+        for blob in blobs:
+            d2 = (blob["x"] - x) ** 2 + (blob["y"] - y) ** 2
+            if d2 <= best_d2:
+                near = blob
+                best_d2 = d2
+        if near is None:
+            blobs.append(peak_blob)
             continue
-        yy = min(max_rgb.shape[0] - 1, max(0, int(round(y))))
-        xx = min(max_rgb.shape[1] - 1, max(0, int(round(x))))
-        peak = max_rgb[yy, xx]
-        blobs.append(
-            {
-                "x": x,
-                "y": y,
-                "x0": int(xs.min()),
-                "y0": int(ys.min()),
-                "w": int(xs.max() - xs.min() + 1),
-                "h": int(ys.max() - ys.min() + 1),
-                "area": int(len(pix)),
-                "r": float(peak[0]),
-                "g": float(peak[1]),
-                "b": float(peak[2]),
-                "hue": round(rgb_to_hsv(*peak.tolist())[0], 1),
-                "sat": round(rgb_to_hsv(*peak.tolist())[1], 3),
-                "peak_r": float(peak[0]),
-                "clip_frac": 0.0,
-                "color": classify_led_color(*peak.tolist()),
-                "luma": float(np.mean(peak)),
-            }
-        )
-    blobs = _merge_nearby(blobs)
+        near["x"], near["y"] = float(x), float(y)
+        near["std"] = stdv
+        near["x0"] = min(int(near["x0"]), int(peak_blob["x0"]))
+        near["y0"] = min(int(near["y0"]), int(peak_blob["y0"]))
+        near["w"] = max(
+            int(near["x0"]) + int(near["w"]),
+            int(peak_blob["x0"]) + int(peak_blob["w"]),
+        ) - int(near["x0"])
+        near["h"] = max(
+            int(near["y0"]) + int(near["h"]),
+            int(peak_blob["y0"]) + int(peak_blob["h"]),
+        ) - int(near["y0"])
+        if float(peak_blob["peak_r"]) >= float(near.get("peak_r") or 0):
+            for key in ("r", "g", "b", "hue", "sat", "peak_r", "color"):
+                near[key] = peak_blob[key]
 
     leds: list[dict[str, Any]] = []
     for i, blob in enumerate(blobs):
@@ -611,7 +824,7 @@ def analyze_frames(
             [sample_disk(frame, blob["x"], blob["y"])[3] for frame in frames],
             dtype=np.float32,
         )
-        state, hz, cv = classify_temporal(series, fps)
+        state, hz, cv, snr = classify_temporal(series, fps)
         # Re-sample colour from the brightest frame at this location.
         peak_frame = frames[int(np.argmax(series))]
         sample = sample_disk(peak_frame, blob["x"], blob["y"], radius=3)
@@ -636,6 +849,8 @@ def analyze_frames(
                 "state": state,
                 "frequency_hz": None if hz is None else round(float(hz), 3),
                 "cv": round(float(cv), 3),
+                "snr": round(float(snr), 2),
+                "std": round(float(blob.get("std") or 0.0), 1),
                 "mean_chroma": round(float(series.mean()), 2),
             }
         )
@@ -653,6 +868,7 @@ def analyze_frames(
         for led in leds:
             if any(led["id"] == m["id"] for m in board["leds"]):
                 led["board"] = name
+    leds = [led for led in leds if led.get("board")]
     still = np.clip(0.55 * mean_rgb + 0.45 * max_rgb, 0, 255).astype(np.uint8)
     return {
         "leds": leds,
@@ -785,7 +1001,9 @@ def board_measure_roi(result: dict[str, Any], name: str) -> tuple[int, int, int,
     board = (result.get("boards") or {}).get(board_name)
     if not board:
         return None
-    roi = board.get("measure_roi") or board.get("roi")
+    roi = board.get("measure_roi")
+    if not roi:
+        return None
     return int(roi["x"]), int(roi["y"]), int(roi["w"]), int(roi["h"])
 
 

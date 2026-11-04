@@ -113,20 +113,26 @@ def choose_trusted(
     edge_count: int,
     duration_s: float,
 ) -> tuple[str, str]:
-    """Pick edge/threshold vs FFT. FFT wins when edges undercount (the ~6.9 Hz case)."""
+    """Pick edge/threshold vs FFT, or untrusted when they disagree.
+
+    A steady LED next to another board can show a strong FFT peak at the
+    neighbour's rate while edges wander. Do not silently trust FFT then.
+    """
+    del edge_count, duration_s
     if edge_hz is None and not fft_hz:
-        return "none", "neither detector found a blink"
+        return "untrusted", "neither detector found a blink"
     if edge_hz is None:
         return "fft", "edge detector found no period; using FFT peak"
     if not fft_hz:
         return "edge", "FFT had no peak; using edge/threshold period"
 
     rel = abs(edge_hz - fft_hz) / max(edge_hz, fft_hz)
-    expected_edges = duration_s * fft_hz * 2.0  # rising + falling
-    undercount = duration_s > 0 and edge_count < 0.7 * expected_edges
-    if fft_snr >= 4.0 and (undercount or rel > 0.12):
-        why = "edge detector undercounted" if undercount else "edge and FFT disagree"
-        return "fft", f"{why}; trusting FFT peak (snr={fft_snr:.1f})"
+    if rel > 0.12:
+        return (
+            "untrusted",
+            f"edge {edge_hz:.3f} Hz and FFT {fft_hz:.3f} Hz disagree "
+            f"(rel={100.0 * rel:.1f}%)",
+        )
     if fft_snr < 4.0:
         return "edge", "FFT SNR is weak; using edge/threshold period"
     return "edge", "edge/threshold period agrees with FFT"

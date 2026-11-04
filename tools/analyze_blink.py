@@ -294,7 +294,10 @@ def measure_series(
         edge_count=int(len(edges)),
         duration_s=duration,
     )
-    if trusted == "fft" and fft_hz:
+    if trusted == "untrusted":
+        freq = None
+        warnings.append(trusted_reason)
+    elif trusted == "fft" and fft_hz:
         freq = fft_hz
         period = 1.0 / freq
         warnings.append(trusted_reason)
@@ -307,22 +310,27 @@ def measure_series(
 
     duty = float(states.mean()) if len(states) else None
 
-    # Confidence: period regularity × on/off separation × enough edges.
+    # Confidence must separate a clean blink from a missed/steady LED.
     conf = 0.0
-    if freq and period and span > 0:
+    if trusted == "untrusted":
+        conf = 0.12
+    elif freq and period:
         cv = (period_std / period) if (period_std is not None and period > 0) else 1.0
         regular = max(0.0, 1.0 - min(cv, 1.0))
-        sep = min(1.0, span / (np.std(brightness) * 2.0 + 1e-9))
-        n_need = max(4.0, duration * freq)
+        noise = float(np.std(brightness)) + 1e-9
+        sep = min(1.0, span / (2.0 * noise))
+        n_need = max(4.0, duration * freq * 1.5)
         enough = min(1.0, len(edges) / n_need) if n_need else 0.0
-        conf = float(max(0.0, min(1.0, 0.5 * regular + 0.3 * sep + 0.2 * enough)))
-        if edge_hz and fft_hz and abs(fft_hz - edge_hz) / max(edge_hz, 1e-9) > 0.25:
-            conf *= 0.6
+        agree = 1.0
+        if edge_hz and fft_hz:
+            rel = abs(fft_hz - edge_hz) / max(edge_hz, fft_hz, 1e-9)
+            agree = 1.0 if rel <= 0.12 else 0.2
+        snr_term = min(1.0, float(fft_snr) / 8.0)
+        conf = float(max(0.0, min(1.0, 0.35 * regular + 0.25 * enough + 0.2 * agree + 0.2 * snr_term)))
+        if agree < 1.0:
             warnings.append(
                 f"edge frequency {edge_hz:.3f} Hz disagrees with FFT peak {fft_hz:.3f} Hz"
             )
-    if fft_snr > 5 and conf < 0.3:
-        conf = min(0.7, conf + 0.3)
 
     nyquist = fps / 2.0
     aliasing = None
@@ -340,12 +348,14 @@ def measure_series(
             )
             warnings.append(aliasing)
 
-    if span < 5:
+    if trusted != "untrusted" and span < 3 and float(fft_snr) < 5:
         warnings.append("on/off brightness gap is small; ROI may have missed the LED")
-        conf = min(conf, 0.3)
-    if len(edges) < 4:
+        conf = min(conf, 0.35)
+    if trusted != "untrusted" and len(edges) < 4:
         warnings.append(f"only {len(edges)} edges in {duration:.1f}s; frequency is uncertain")
         conf = min(conf, 0.35)
+    if trusted == "untrusted":
+        conf = min(conf, 0.15)
 
     return {
         "frequency_hz": freq,
