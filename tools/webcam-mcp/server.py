@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Local webcam stills for Cursor agents (streamable HTTP MCP).
+"""Local webcam stills and V4L2 controls for Cursor agents (streamable HTTP MCP).
 
 Same capture approach as tools/webcam_still.sh: ffmpeg -f v4l2, one JPEG,
 then drop the device so scripts like tools/measure_blink.sh can use it.
+Does not touch the FPGA, serial ports, or openFPGALoader.
 """
 
 from __future__ import annotations
@@ -16,9 +17,26 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Image
+
+from controls import (
+    TARGET_MEAN,
+    apply_control_updates,
+    apply_saved_controls,
+    current_values,
+    driver_defaults,
+    freeze_auto_exposure,
+    list_device_controls,
+    load_saved_controls,
+    measure_jpeg,
+    resolve_updates,
+    save_device_controls,
+    suggest_nudge,
+    well_exposed,
+)
 
 HOST_DEFAULT = "127.0.0.1"
 PORT_DEFAULT = 8766
@@ -27,8 +45,9 @@ DEFAULT_DEVICE = os.environ.get("WEBCAM_MCP_DEVICE", "/dev/video0")
 DEFAULT_SIZE = "640x480"
 LOCK_TIMEOUT_S = 30.0
 FFMPEG_TIMEOUT_S = 25.0
-# Same look Alex liked on the HDMI-monitor stills. Applied only to the
-# MCP stills, never to tools/measure_blink.sh (that path stays raw).
+AUTO_ADJUST_MAX_ITERS = 8
+# Optional per-call software eq, off by default. The previous capture_still
+# default (brightness=0.25/contrast=1.6/gamma=1.8) washed out the Logitech.
 ENHANCE_VF = "eq=brightness=0.25:contrast=1.6:gamma=1.8"
 
 DEVICE_RE = re.compile(r"^/dev/video\d+$")
@@ -37,13 +56,15 @@ SIZE_RE = re.compile(r"^(\d+)x(\d+)$")
 mcp = MCPServer(
     "webcam",
     instructions=(
-        "Take still JPEGs from V4L2 cameras on this machine (Bee). "
-        "Today the Logitech is /dev/video0; an HDMI capture stick will show up "
-        "as another /dev/videoN. Call list_cameras if you are unsure. "
-        "Does not touch the FPGA or serial ports. "
-        "capture_still returns a brightened JPEG by default "
-        f"(ffmpeg -vf {ENHANCE_VF!r}); pass enhance=false for the raw frame. "
-        "Both files are saved under ~/fpga/captures/."
+        "Take still JPEGs from V4L2 cameras on this machine (Bee) and adjust "
+        "the Logitech QuickCam Pro for Notebooks (046d:0991, /dev/video0) with "
+        "real v4l2-ctl controls. capture_still returns the raw camera JPEG by "
+        "default; pass enhance=true only for an optional mild software eq. "
+        "If a frame looks washed out or too dark, call get_camera_controls, "
+        "then set_camera_controls (brightness/contrast/gain/auto_exposure/"
+        "exposure/white_balance) or auto_adjust. reset_camera_controls restores "
+        "driver defaults. Settings persist across captures and service restarts. "
+        "Does not touch the FPGA or serial ports. Files go under ~/fpga/captures/."
     ),
 )
 
@@ -136,8 +157,8 @@ def run_ffmpeg(cmd: list[str], what: str) -> None:
         )
     except FileNotFoundError as exc:
         raise RuntimeError("ffmpeg is not installed") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"ffmpeg {what} timed out") from exc
+    except subprocess.TimeoutExpired as extra:
+        raise RuntimeError(f"ffmpeg {what} timed out") from extra
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "").strip() or str(exc)
         raise RuntimeError(f"ffmpeg {what} failed: {detail}") from exc
@@ -165,8 +186,8 @@ def grab_still(device: str, out: Path, width: int, height: int, warmup_frames: i
         raise RuntimeError(f"ffmpeg wrote no image to {out}")
 
 
-def enhance_still(src: Path, dst: Path) -> None:
-    """Brighten a saved JPEG. Does not open the camera."""
+def enhance_still(src: Path, dst: Path, vf: str) -> None:
+    """Optional software eq on a saved JPEG. Does not open the camera."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "ffmpeg",
@@ -175,7 +196,7 @@ def enhance_still(src: Path, dst: Path) -> None:
         "-nostdin",
         "-y",
         "-i", str(src),
-        "-vf", ENHANCE_VF,
+        "-vf", vf,
         str(dst),
     ]
     run_ffmpeg(cmd, "enhance")
@@ -183,18 +204,57 @@ def enhance_still(src: Path, dst: Path) -> None:
         raise RuntimeError(f"ffmpeg wrote no enhanced image to {dst}")
 
 
-def capture_raw_and_enhanced(
+def prepare_device(device: str) -> dict[str, int]:
+    """Re-apply persisted v4l2 settings so they survive close/reopen and restarts."""
+    try:
+        return apply_saved_controls(device)
+    except RuntimeError:
+        # Device may not be ready yet at service start; capture will retry.
+        return {}
+
+
+def capture_raw(
     device: str,
     width: int,
     height: int,
     warmup_frames: int,
     suffix: str = "",
-) -> tuple[Path, Path]:
-    raw, enhanced = still_paths(device, suffix=suffix)
+) -> Path:
+    raw, _enhanced = still_paths(device, suffix=suffix)
     with camera_lock():
+        prepare_device(device)
         grab_still(device, raw, width, height, warmup_frames)
-    enhance_still(raw, enhanced)
-    return raw, enhanced
+    return raw
+
+
+def maybe_enhance(raw: Path, enhance: bool, enhance_vf: str | None) -> Path | None:
+    if not enhance:
+        return None
+    vf = (enhance_vf or ENHANCE_VF).strip()
+    if not vf or not re.fullmatch(r"[0-9A-Za-z_:=,.+-]+", vf):
+        raise ValueError("enhance_vf must be a simple ffmpeg filter like eq=brightness=0.05:contrast=1.1")
+    enhanced = raw.with_name(raw.name.replace("-raw.jpg", "-enhanced.jpg"))
+    if enhanced == raw:
+        enhanced = raw.with_name(raw.stem + "-enhanced.jpg")
+    enhance_still(raw, enhanced, vf)
+    return enhanced
+
+
+def snapshot_controls(device: str) -> dict[str, Any]:
+    controls = list_device_controls(device)
+    return {
+        "device": device,
+        "saved": load_saved_controls().get(device, {}),
+        "controls": controls,
+        "values": current_values(controls),
+    }
+
+
+def merge_persist(device: str, applied: dict[str, int]) -> dict[str, int]:
+    prev = load_saved_controls().get(device, {})
+    prev.update(applied)
+    save_device_controls(device, prev)
+    return prev
 
 
 @mcp.tool()
@@ -209,32 +269,128 @@ def list_cameras() -> list[dict[str, str]]:
 
 
 @mcp.tool()
+def get_camera_controls(device: str = DEFAULT_DEVICE) -> dict[str, Any]:
+    """List current V4L2 controls, ranges, and driver defaults.
+
+    Includes brightness, contrast, gain, auto_exposure, exposure_time_absolute
+    (alias: exposure), white_balance_automatic, white_balance_temperature
+    (alias: white_balance), plus the other User/Camera controls this Logitech
+    exposes. Inactive flags mean the auto counterpart is on.
+    """
+    device = parse_device(device)
+    with camera_lock():
+        prepare_device(device)
+        return snapshot_controls(device)
+
+
+@mcp.tool()
+def set_camera_controls(
+    device: str = DEFAULT_DEVICE,
+    brightness: int | None = None,
+    contrast: int | None = None,
+    gain: int | None = None,
+    auto_exposure: int | None = None,
+    exposure: int | None = None,
+    exposure_time_absolute: int | None = None,
+    white_balance_automatic: int | None = None,
+    white_balance: int | None = None,
+    white_balance_temperature: int | None = None,
+    saturation: int | None = None,
+    sharpness: int | None = None,
+    backlight_compensation: int | None = None,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """Set one or more real camera controls via v4l2-ctl. Values persist.
+
+    Prefer these over software eq. Setting exposure (or exposure_time_absolute)
+    switches auto_exposure to Manual Mode (1) first. Setting white_balance
+    (temperature) turns white_balance_automatic off. auto_exposure: 1=Manual,
+    3=Aperture Priority. persist=true (default) writes ~/.local/state/webcam-mcp/
+    so the next capture and service restart re-apply the same values.
+    """
+    device = parse_device(device)
+    requested = {
+        "brightness": brightness,
+        "contrast": contrast,
+        "gain": gain,
+        "auto_exposure": auto_exposure,
+        "exposure": exposure,
+        "exposure_time_absolute": exposure_time_absolute,
+        "white_balance_automatic": white_balance_automatic,
+        "white_balance": white_balance,
+        "white_balance_temperature": white_balance_temperature,
+        "saturation": saturation,
+        "sharpness": sharpness,
+        "backlight_compensation": backlight_compensation,
+    }
+    with camera_lock():
+        prepare_device(device)
+        known = {c["name"]: c for c in list_device_controls(device)}
+        updates = resolve_updates(requested, known)
+        applied = apply_control_updates(device, updates)
+        saved = merge_persist(device, applied) if persist else load_saved_controls().get(device, {})
+        values = current_values(list_device_controls(device))
+    return {
+        "device": device,
+        "applied": applied,
+        "values": values,
+        "saved": saved,
+        "persisted": persist,
+    }
+
+
+@mcp.tool()
+def reset_camera_controls(device: str = DEFAULT_DEVICE, persist: bool = True) -> dict[str, Any]:
+    """Restore driver defaults for every control, then forget saved settings.
+
+    On this Logitech that is typically brightness=128, contrast=32, gain=0,
+    auto_exposure=3 (Aperture Priority), white_balance_automatic=1.
+    """
+    device = parse_device(device)
+    with camera_lock():
+        known = list_device_controls(device)
+        defaults = driver_defaults(known)
+        applied = apply_control_updates(device, defaults)
+        if persist:
+            save_device_controls(device, None)
+        values = current_values(list_device_controls(device))
+    return {
+        "device": device,
+        "applied": applied,
+        "values": values,
+        "persisted": persist,
+        "saved_cleared": persist,
+    }
+
+
+@mcp.tool()
 def capture_still(
     device: str = DEFAULT_DEVICE,
     resolution: str | None = None,
     warmup_frames: int = 8,
-    enhance: bool = True,
+    enhance: bool = False,
+    enhance_vf: str | None = None,
 ) -> list:
     """Capture one JPEG still.
 
-    Returns the image for the model to look at, plus saved paths under
-    ~/fpga/captures/. enhance=true (default) returns the brightened frame
-    (eq=brightness=0.25:contrast=1.6:gamma=1.8); enhance=false returns the
-    raw frame. Both the -raw.jpg and -enhanced.jpg files are always written.
-    Releases the camera as soon as the raw grab finishes.
-    warmup_frames discards the first N frames (auto-exposure); 0 matches
-    tools/webcam_still.sh.
+    Returns the image for the model to look at, plus the saved path under
+    ~/fpga/captures/. enhance=false (default) returns the raw camera frame.
+    Pass enhance=true for optional software eq (mild; not the old washed-out
+    brightness=0.25 boost). Releases the camera as soon as the raw grab
+    finishes. warmup_frames discards the first N frames (auto-exposure);
+    0 matches tools/webcam_still.sh. Camera v4l2 settings persist across shots.
     """
     device = parse_device(device)
     width, height = parse_size(resolution)
     if warmup_frames < 0 or warmup_frames > 60:
         raise ValueError("warmup_frames must be 0..60")
-    raw, enhanced = capture_raw_and_enhanced(device, width, height, warmup_frames)
-    shown = enhanced if enhance else raw
-    return [
-        f"Saved raw to {raw}\nSaved enhanced to {enhanced}",
-        Image(path=shown),
-    ]
+    raw = capture_raw(device, width, height, warmup_frames)
+    enhanced = maybe_enhance(raw, enhance, enhance_vf)
+    shown = enhanced if enhanced is not None else raw
+    lines = [f"Saved raw to {raw}"]
+    if enhanced is not None:
+        lines.append(f"Saved enhanced to {enhanced}")
+    return ["\n".join(lines), Image(path=shown)]
 
 
 @mcp.tool()
@@ -244,12 +400,13 @@ def capture_burst(
     device: str = DEFAULT_DEVICE,
     resolution: str | None = None,
     warmup_frames: int = 8,
-    enhance: bool = True,
+    enhance: bool = False,
+    enhance_vf: str | None = None,
 ) -> list[dict[str, str]]:
     """Capture N stills, sleeping interval_s between shots. Paths only.
 
-    Each shot writes both -raw.jpg and -enhanced.jpg. The `path` field is
-    the enhanced file by default, or the raw file when enhance=false.
+    Each shot writes -raw.jpg. -enhanced.jpg is written only when enhance=true.
+    The `path` field is the file returned to the model (raw unless enhance).
     The lock is held only while grabbing the raw frame.
     """
     device = parse_device(device)
@@ -262,14 +419,125 @@ def capture_burst(
         raise ValueError("warmup_frames must be 0..60")
     shots: list[dict[str, str]] = []
     for i in range(n):
-        raw, enhanced = capture_raw_and_enhanced(
-            device, width, height, warmup_frames, suffix=f"{i:02d}"
-        )
-        shown = enhanced if enhance else raw
-        shots.append({"path": str(shown), "raw": str(raw), "enhanced": str(enhanced)})
+        raw = capture_raw(device, width, height, warmup_frames, suffix=f"{i:02d}")
+        enhanced = maybe_enhance(raw, enhance, enhance_vf)
+        shown = enhanced if enhanced is not None else raw
+        shot = {"path": str(shown), "raw": str(raw)}
+        if enhanced is not None:
+            shot["enhanced"] = str(enhanced)
+        shots.append(shot)
         if i + 1 < n and interval_s:
             time.sleep(interval_s)
     return shots
+
+
+@mcp.tool()
+def auto_adjust(
+    device: str = DEFAULT_DEVICE,
+    resolution: str | None = None,
+    warmup_frames: int = 8,
+    max_iters: int = AUTO_ADJUST_MAX_ITERS,
+    target_mean: float = TARGET_MEAN,
+) -> list:
+    """Capture, measure mean luminance / clipping, and nudge v4l2 controls.
+
+    Nudges gain, then brightness. Switches auto_exposure to Manual only if
+    exposure_time_absolute itself must move. Stops when mean luma is near
+    target_mean (default 115) without highlight clipping. Persists the
+    exposure knobs. Returns a summary plus the last JPEG.
+    """
+    device = parse_device(device)
+    width, height = parse_size(resolution)
+    if warmup_frames < 0 or warmup_frames > 60:
+        raise ValueError("warmup_frames must be 0..60")
+    if max_iters < 1 or max_iters > 20:
+        raise ValueError("max_iters must be 1..20")
+    if target_mean < 40 or target_mean > 200:
+        raise ValueError("target_mean must be 40..200")
+
+    history: list[dict[str, Any]] = []
+    raw: Path | None = None
+    applied_any: dict[str, int] = {}
+    with camera_lock():
+        prepare_device(device)
+        for i in range(max_iters):
+            raw, _ = still_paths(device, suffix=f"auto{i:02d}")
+            grab_still(device, raw, width, height, warmup_frames)
+            metrics = measure_jpeg(raw, width, height)
+            known = {c["name"]: c for c in list_device_controls(device)}
+            values = current_values(list(known.values()))
+            nudge = suggest_nudge(known, metrics, target_mean=target_mean)
+            step = {
+                "iter": i,
+                "path": str(raw),
+                "metrics": metrics,
+                "nudge": nudge,
+                "values": {
+                    name: values[name]
+                    for name in (
+                        "brightness",
+                        "contrast",
+                        "gain",
+                        "auto_exposure",
+                        "exposure_time_absolute",
+                    )
+                    if name in values
+                },
+            }
+            history.append(step)
+            if nudge is None:
+                break
+            if not nudge:
+                break
+            if "exposure_time_absolute" in nudge:
+                freeze = freeze_auto_exposure(known)
+                freeze.update(nudge)
+                nudge = freeze
+            apply_control_updates(device, nudge)
+            applied_any.update(nudge)
+        last_values = current_values(list_device_controls(device))
+        knobs = {
+            name: last_values[name]
+            for name in (
+                "brightness",
+                "contrast",
+                "gain",
+                "auto_exposure",
+                "exposure_time_absolute",
+            )
+            if name in last_values
+        }
+        if applied_any:
+            persist_keys = set(applied_any) | {
+                "gain",
+                "brightness",
+                "auto_exposure",
+                "exposure_time_absolute",
+            }
+            merge_persist(device, {k: last_values[k] for k in persist_keys if k in last_values})
+
+    assert raw is not None
+    last = history[-1]
+    ok = well_exposed(last["metrics"], target_mean=target_mean)
+    status = "well exposed" if ok else "stopped before reaching the exposure band"
+    text = (
+        f"auto_adjust {status} after {len(history)} capture(s). "
+        f"mean_luma={last['metrics']['mean_luma']} "
+        f"clip_hi={last['metrics']['clip_hi_frac']} "
+        f"values={knobs} path={raw}"
+    )
+    return [text, Image(path=raw)]
+
+
+def _warmup_saved_controls() -> None:
+    device = os.environ.get("WEBCAM_MCP_DEVICE", DEFAULT_DEVICE)
+    if not DEVICE_RE.match(device) or not Path(device).exists():
+        return
+    try:
+        with camera_lock():
+            prepare_device(device)
+    except Exception:
+        return
 
 
 def main() -> None:
@@ -280,6 +548,7 @@ def main() -> None:
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("webcam-mcp binds 127.0.0.1 only (refusing --host %s)" % args.host)
     host = "127.0.0.1" if args.host == "localhost" else args.host
+    _warmup_saved_controls()
     mcp.run(transport="streamable-http", host=host, port=args.port)
 
 
