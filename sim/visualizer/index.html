@@ -24,6 +24,8 @@
       <button id="btn-back" title="Previous instruction (A / ←)">◀ Step</button>
       <button id="btn-step" title="Next instruction (S / →)">Step ▶</button>
       <button id="btn-run" class="primary" title="Run/Pause (Space)">Run</button>
+      <button id="btn-init" class="hidden" title="Jump to AMMT BEGIN at 0x1028 (I)">Jump to BEGIN</button>
+      <button id="btn-light" class="hidden" title="Jump to STW light := 0 at 0x1038 (L)">Jump to light:=0</button>
       <button id="btn-fail" class="danger hidden" title="Jump to the BL (F). Target is Toggle; R15 is not written.">Jump to BL (R15)</button>
       <label class="speed">
         Speed
@@ -40,8 +42,12 @@
     </div>
   </header>
 
+  <div id="init-banner" class="init-banner hidden" role="status">
+    <strong>AMMT BEGIN ran.</strong>
+    <span id="init-text">BEGIN body at 0x1028 executes; STW at 0x1038 writes 0 to light.</span>
+  </div>
   <div id="fail-banner" class="fail-banner hidden" role="status">
-    <strong>Blink3 failure.</strong>
+    <strong>Blink3 remaining issue (not this PR).</strong>
     <span id="fail-text">BL at 0x108C lands on Toggle at 0x1000. R15 stays 0xB0 — CPU never saved PC+4 (0x1090).</span>
   </div>
 
@@ -115,7 +121,7 @@
   </main>
 
   <footer>
-    Space run/pause · S / → next instruction · A / ← previous · R reset · F jump to BL failure · 2 Blink2 · 3 Blink3
+    Space run/pause · S / → next instruction · A / ← previous · R reset · I AMMT BEGIN · L light:=0 · F jump to BL (R15 still dropped) · 2 Blink2 · 3 Blink3
     · [ slower · ] faster
     · Project Oberon RISC5 (not RISC-V) · nothing is exposed beyond this machine unless you pass --bind
   </footer>

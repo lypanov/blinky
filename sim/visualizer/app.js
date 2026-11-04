@@ -72,6 +72,8 @@ function tagFor(mark) {
   if (mark === "wrong-land") return '<span class="tag tag-wrong">LANDS HERE</span>';
   if (mark === "expected-target") return '<span class="tag tag-ok">TOGGLE</span>';
   if (mark === "return-addr") return '<span class="tag tag-wrong">SHOULD RETURN HERE</span>';
+  if (mark === "module-init") return '<span class="tag tag-ok">AMMT BEGIN</span>';
+  if (mark === "init-store") return '<span class="tag tag-ok">light := 0</span>';
   return "";
 }
 
@@ -184,6 +186,7 @@ function renderDmem(dmem) {
     cell.className = "cell";
     const name = rec ? rec.name : fallback;
     const val = rec ? hex32(rec.value) : "—";
+    if (addr === 0x50 && rec && rec.value === 0) cell.classList.add("zeroed");
     cell.innerHTML = `<span>${hex32(addr)}</span><span>${escapeHtml(name)}</span><span class="val">${val}</span>`;
     root.appendChild(cell);
   });
@@ -198,6 +201,14 @@ function failBannerHtml(f) {
     : `jumped to <code>${hex32(f.actual_target)}</code>, not Toggle at <code>${hex32(f.expected_target)}</code>.`;
   return `BL at <code>${hex32(f.bl_pc)}</code> ${where}
     R15 ${r15ok ? "was written" : "stayed " + hex32(f.r15_after) + " — CPU never saved PC+4 (" + hex32(f.r15_expected) + ")"}.`;
+}
+
+function initBannerText(init) {
+  if (!init) return "";
+  const light = init.light_after === 0
+    ? "dmem[0x50] light is 0"
+    : `dmem[0x50] light is ${init.light_after}`;
+  return `BEGIN body at ${hex32(init.begin_pc)} executes; STW at ${hex32(init.store_pc)} writes 0. ${light}.`;
 }
 
 function applyCycle() {
@@ -233,6 +244,9 @@ function applyCycle() {
   // still does not write LNK. Target may already be Toggle (loader fixed).
   $("reg-15").classList.toggle("stale", !!(f && !f.r15_written && atFail));
   $("fail-banner").classList.toggle("here", atFail);
+  const init = t.init;
+  const atInit = !!(init && (i === init.begin_step_index || i === init.store_step_index));
+  $("init-banner").classList.toggle("here", atInit);
   $("brand-dot").classList.toggle("fail", state.image === "blink3");
 
   const edges = t.led_toggles || (t.summary && t.summary.toggle_cycles) || [];
@@ -321,8 +335,12 @@ function selectImage(name) {
   $("subtitle").textContent = t.subtitle || "";
   $("mod-file").textContent = t.mod_file || "";
   $("btn-fail").classList.toggle("hidden", !t.failure);
+  $("btn-init").classList.toggle("hidden", !t.init);
+  $("btn-light").classList.toggle("hidden", !t.init);
   $("fail-banner").classList.toggle("hidden", !t.failure);
+  $("init-banner").classList.toggle("hidden", !t.init);
   if (t.failure) $("fail-text").innerHTML = failBannerHtml(t.failure);
+  if (t.init) $("init-text").textContent = initBannerText(t.init);
   renderSource(t.mod_source || []);
   renderAsm(p);
   applyCycle();
@@ -336,12 +354,30 @@ function jumpToFailure() {
   applyCycle();
 }
 
+function jumpToInit() {
+  const t = currentTrace();
+  if (!t || !t.init) return;
+  stop();
+  state.i = t.init.begin_step_index;
+  applyCycle();
+}
+
+function jumpToLight() {
+  const t = currentTrace();
+  if (!t || !t.init) return;
+  stop();
+  state.i = t.init.store_step_index;
+  applyCycle();
+}
+
 function bind() {
   $("btn-run").onclick = () => (state.running ? stop() : play());
   $("btn-step").onclick = () => { stop(); tick(1); };
   $("btn-back").onclick = () => { stop(); tick(-1); };
   $("btn-reset").onclick = () => { stop(); state.i = 0; state.lastRegs = {}; applyCycle(); };
   $("btn-fail").onclick = jumpToFailure;
+  $("btn-init").onclick = jumpToInit;
+  $("btn-light").onclick = jumpToLight;
   $("btn-blink2").onclick = () => selectImage("blink2");
   $("btn-blink3").onclick = () => selectImage("blink3");
   $("speed").oninput = () => {
@@ -356,6 +392,8 @@ function bind() {
     else if (ev.key === "a" || ev.key === "A" || ev.key === "ArrowLeft") { stop(); tick(-1); }
     else if (ev.key === "r" || ev.key === "R") { $("btn-reset").click(); }
     else if (ev.key === "f" || ev.key === "F") { jumpToFailure(); }
+    else if (ev.key === "i" || ev.key === "I") { jumpToInit(); }
+    else if (ev.key === "l" || ev.key === "L") { jumpToLight(); }
     else if (ev.key === "2") selectImage("blink2");
     else if (ev.key === "3") selectImage("blink3");
     else if (ev.key === "[") {
@@ -387,6 +425,10 @@ async function main() {
     selectImage(want);
     if (params.get("fail") != null || params.get("step") === "fail") {
       jumpToFailure();
+    } else if (params.get("light") != null) {
+      jumpToLight();
+    } else if (params.get("init") != null) {
+      jumpToInit();
     } else if (params.get("i") != null) {
       state.i = Number(params.get("i")) || 0;
       applyCycle();
