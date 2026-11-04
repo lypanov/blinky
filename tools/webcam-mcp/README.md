@@ -16,12 +16,27 @@ Does not touch the FPGA, serial ports, or `openFPGALoader`.
 |---|---|
 | `list_cameras` | V4L2 `/dev/videoN` nodes and kernel names (no device open) |
 | `capture_still` | One JPEG: MCP image content + path under `~/fpga/captures/` |
-| `capture_burst` | N stills at an interval; returns paths only |
+| `capture_burst` | N stills from **one** open camera; returns paths only |
+| `capture_video` | Continuous clip from **one** open camera; returns `.mkv` path |
 | `get_camera_controls` | Current v4l2 values and ranges (brightness, contrast, gain, exposure, auto-exposure, white balance, …) |
 | `set_camera_controls` | Set one or more real camera controls via `v4l2-ctl` |
 | `reset_camera_controls` | Restore driver defaults and clear saved settings |
 | `auto_adjust` | Capture, measure mean luma / clipping, nudge gain/brightness/exposure |
-| `measure_blink` | Record a clip; edge/threshold **and** FFT blink rate, graphs, JSON |
+| `measure_blink` | Record via `capture_video` (or analyze a clip it returned); edge **and** FFT, graphs, JSON |
+
+Three capture tools stay separate:
+
+- `capture_still` — one JPEG, then the device is released (same as `webcam_still.sh`).
+- `capture_burst` — opens the camera **once** and pulls N JPEGs at `interval_s`
+  (warmup discarded at the start). It used to call `capture_still` per shot,
+  which reopened V4L2 and cost 2–4 s/frame.
+- `capture_video` — one ffmpeg v4l2 session for `duration` seconds (`-c:v copy`
+  to `~/fpga/captures/<stamp>-video0.mkv`). Optional `lock_exposure=true` freezes
+  AE like `measure_blink.sh`.
+
+`measure_blink` is built on that recorder (same `record_continuous_clip` as
+`capture_video`, camera held open). Pass `video=` to analyze a clip
+`capture_video` already returned instead of recording again.
 
 `capture_still` / `capture_burst` arguments: `device` (default `/dev/video0`),
 optional `resolution` (`640x480`), optional `warmup_frames` (default 8,
@@ -57,8 +72,9 @@ AE to Manual and moves **exposure** until mean Rec.601 luma is near 115 without
 highlight clipping. Dark-room backgrounds are expected. It persists the
 exposure knobs.
 
-`measure_blink(duration=25, warmup=8, roi=auto)` is the MCP port of
-`tools/measure_blink.sh` (the script is **kept**). It writes the same
+`measure_blink(duration=25, warmup=8, roi=auto)` records with `capture_video`
+(`lock_exposure=true`, clip length = warmup + duration + 2 s) then runs the
+same analyzer as `tools/measure_blink.sh` (the script is **kept**). It writes the same
 `result.json` + `brightness.png` + `roi.png` under `~/fpga/blink-measure/<stamp>-mcp/`
 and returns both detectors:
 
@@ -157,7 +173,15 @@ Logitech QuickCam Pro for Notebooks `046d:0991` at `/dev/video0`. Tang Nano 4K a
 
 ## Blink-rate proof on Bee (2026-11-04, Blink3 N=262144)
 
-Tang Nano 4K loaded from the Pi (predicted **3.433 Hz**). Primer 20K is the upper board; 4K LEDs are the lower pair. FPGA / serial / `openFPGALoader` were not touched. Same scene, `duration=20` `warmup=8`. After deploy, `webcam-mcp.service` was restarted; `list_cameras`, `capture_still`, and `measure_blink` all responded.
+Tang Nano 4K loaded from the Pi (predicted **3.433 Hz**). Primer 20K is the upper board; 4K LEDs are the lower pair. FPGA / serial / `openFPGALoader` were not touched. Same scene, `duration=20` `warmup=8`. After deploy, `webcam-mcp.service` was restarted; `list_cameras`, `capture_still`, and `measure_blink` all responded. After the `capture_video` / burst-reopen change the service was restarted again; all three capture tools plus `measure_blink` responded:
+
+| Call | wall |
+|---|---|
+| `capture_still` (`warmup_frames=2`) | 3.65 s (one reopen, expected) |
+| `capture_burst(n=12, interval_s=0.2)` | **5.75 s** (was 2–4 s *per frame*) |
+| `capture_video(duration=3, lock_exposure=true)` | 4.09 s, 1.3 MB `.mkv` |
+| `measure_blink(video=<that clip>)` | 0.83 s analyze, 3.387 Hz on a 2.4 s window |
+| `measure_blink(duration=8, warmup=2, roi=nano4k)` | 14.56 s wall / 12.9 s record via `capture_video`, edge **3.426 Hz** (−0.22% vs 3.433) |
 
 | Source | trusted | edge Hz | FFT Hz | vs 3.433 Hz |
 |---|---|---|---|---|
