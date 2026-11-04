@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import json
 import os
 import re
 import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime
@@ -38,13 +40,21 @@ from controls import (
     well_exposed,
 )
 
+_TOOLS_DIR = Path(__file__).resolve().parent.parent
+if str(_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_DIR))
+from blink_trust import parse_roi_arg  # noqa: E402
+
 HOST_DEFAULT = "127.0.0.1"
 PORT_DEFAULT = 8766
 CAPTURE_DIR = Path(os.environ.get("WEBCAM_MCP_CAPTURE_DIR", Path.home() / "fpga" / "captures"))
 DEFAULT_DEVICE = os.environ.get("WEBCAM_MCP_DEVICE", "/dev/video0")
 DEFAULT_SIZE = "640x480"
-LOCK_TIMEOUT_S = 30.0
+LOCK_TIMEOUT_S = 90.0
 FFMPEG_TIMEOUT_S = 25.0
+ANALYZE_PYTHON = os.environ.get("WEBCAM_MCP_ANALYZE_PYTHON", "/usr/bin/python3")
+ANALYZE_SCRIPT = Path(__file__).resolve().parent.parent / "analyze_blink.py"
+BLINK_DIR = Path(os.environ.get("WEBCAM_MCP_BLINK_DIR", Path.home() / "fpga" / "blink-measure"))
 AUTO_ADJUST_MAX_ITERS = 8
 # Optional per-call software eq, off by default. The previous capture_still
 # default (brightness=0.25/contrast=1.6/gamma=1.8) washed out the Logitech.
@@ -64,7 +74,13 @@ mcp = MCPServer(
         "then set_camera_controls (brightness/contrast/gain/auto_exposure/"
         "exposure/white_balance) or auto_adjust. reset_camera_controls restores "
         "driver defaults. Settings persist across captures and service restarts. "
-        "Does not touch the FPGA or serial ports. Files go under ~/fpga/captures/."
+        "measure_blink records a clip and reports BOTH the edge/threshold rate "
+        "and the FFT rate (trust FFT when edges undercount, historically ~6.9 Hz), "
+        "plus brightness.png and roi.png. roi may be auto, top, bottom, nano4k "
+        "(bottom on Bee), primer20k (top), or x,y,w,h. Named halves prepare for "
+        "two boards in one frame; this tool still meters one LED. "
+        "Does not touch the FPGA or serial ports. Stills go under "
+        "~/fpga/captures/; blink runs under ~/fpga/blink-measure/."
     ),
 )
 
@@ -527,6 +543,217 @@ def auto_adjust(
         f"values={knobs} path={raw}"
     )
     return [text, Image(path=raw)]
+
+
+def _v4l2_silent(device: str, args: list[str]) -> str:
+    try:
+        proc = subprocess.run(
+            ["v4l2-ctl", "-d", device, *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=8.0,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    return (proc.stdout or "") + (proc.stderr or "")
+
+
+def lock_exposure_for_measure(device: str, orig: dict[str, int]) -> None:
+    """Match tools/measure_blink.sh: Manual AE, freeze shutter/gain, no dynamic fps."""
+    ex = orig.get("exposure_time_absolute") or 166
+    if orig.get("auto_exposure") != 1 and (ex < 10 or ex > 500):
+        ex = 166
+    updates = {
+        "auto_exposure": 1,
+        "exposure_time_absolute": int(ex),
+        "exposure_dynamic_framerate": 0,
+        "white_balance_automatic": 0,
+    }
+    if "gain" in orig:
+        updates["gain"] = orig["gain"]
+    try:
+        apply_control_updates(device, updates)
+    except RuntimeError:
+        pass
+
+
+def restore_controls(device: str, orig: dict[str, int]) -> None:
+    if not orig:
+        return
+    try:
+        apply_control_updates(device, orig)
+    except RuntimeError:
+        pass
+
+
+def record_blink_clip(
+    device: str,
+    outdir: Path,
+    width: int,
+    height: int,
+    fps: int,
+    warmup_s: float,
+    duration_s: float,
+) -> Path:
+    """ffmpeg v4l2 capture used by measure_blink.sh, then the device is released."""
+    outdir.mkdir(parents=True, exist_ok=True)
+    log = outdir / "capture.log"
+    video = outdir / "clip.mkv"
+    total = warmup_s + duration_s + 2.0
+    orig = current_values(list_device_controls(device))
+    _v4l2_silent(
+        device,
+        [f"--set-fmt-video=width={width},height={height},pixelformat=MJPG"],
+    )
+    _v4l2_silent(device, [f"--set-parm={fps}"])
+    lock_exposure_for_measure(device, orig)
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-y",
+        "-f", "v4l2",
+        "-thread_queue_size", "512",
+        "-video_size", f"{width}x{height}",
+        "-framerate", str(fps),
+        "-input_format", "mjpeg",
+        "-use_wallclock_as_timestamps", "1",
+        "-i", device,
+        "-t", f"{total:.1f}",
+        "-c:v", "copy",
+        str(video),
+    ]
+    with open(log, "w", encoding="utf-8") as fh:
+        fh.write(f"device={device} {width}x{height} fps={fps} warmup={warmup_s} duration={duration_s}\n")
+        fh.flush()
+        proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT)
+        try:
+            time.sleep(2.0)
+            lock_exposure_for_measure(device, orig)
+            timeout = total + 20.0
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise RuntimeError(f"ffmpeg blink capture timed out after {timeout:.0f}s") from None
+        finally:
+            restore_controls(device, orig)
+    if proc.returncode != 0 or not video.is_file() or video.stat().st_size == 0:
+        detail = log.read_text(encoding="utf-8", errors="replace")[-1500:]
+        raise RuntimeError(f"ffmpeg blink capture failed (exit {proc.returncode}): {detail}")
+    return video
+
+
+def analyze_blink_clip(
+    video: Path,
+    outdir: Path,
+    warmup_s: float,
+    roi: str | None,
+) -> dict[str, Any]:
+    if not ANALYZE_SCRIPT.is_file():
+        raise RuntimeError(f"missing analyzer {ANALYZE_SCRIPT}")
+    cmd = [
+        ANALYZE_PYTHON,
+        str(ANALYZE_SCRIPT),
+        "--video", str(video),
+        "--outdir", str(outdir),
+        "--warmup", str(warmup_s),
+    ]
+    if roi:
+        cmd.extend(["--roi", roi])
+    try:
+        proc = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120.0,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"{ANALYZE_PYTHON} is not installed") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("analyze_blink.py timed out") from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip() or str(exc)
+        raise RuntimeError(f"analyze_blink.py failed: {detail}") from exc
+    json_path = outdir / "result.json"
+    if json_path.is_file():
+        return json.loads(json_path.read_text(encoding="utf-8"))
+    return json.loads(proc.stdout)
+
+
+@mcp.tool()
+def measure_blink(
+    duration: float = 25.0,
+    warmup: float = 8.0,
+    roi: str | None = None,
+    device: str = DEFAULT_DEVICE,
+    resolution: str | None = None,
+    fps: int = 30,
+) -> list:
+    """Record the FPGA LED and measure blink rate (edge/threshold AND FFT).
+
+    Same capture path as tools/measure_blink.sh (kept): ffmpeg v4l2 clip,
+    freeze AE, analyze with /usr/bin/python3. Returns both frequencies, which
+    method is trusted (FFT when the edge detector undercounts, as at ~6.9 Hz),
+    JSON path, and the brightness.png + roi.png graphs as images.
+
+    duration/warmup are seconds (defaults 25 / 8). roi is optional: auto
+    (default), full, top, bottom, nano4k (top), primer20k (bottom), or x,y,w,h.
+    top/bottom prepare for two boards in one frame; this tool still meters
+    one LED. Does not program the FPGA. tools/measure_blink.sh still exists.
+    """
+    device = parse_device(device)
+    width, height = parse_size(resolution)
+    if duration < 2 or duration > 60:
+        raise ValueError("duration must be 2..60 seconds")
+    if warmup < 0 or warmup > 30:
+        raise ValueError("warmup must be 0..30 seconds")
+    if fps < 5 or fps > 60:
+        raise ValueError("fps must be 5..60")
+    parse_roi_arg(roi)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    outdir = BLINK_DIR / f"{stamp}-mcp"
+    BLINK_DIR.mkdir(parents=True, exist_ok=True)
+    with camera_lock():
+        prepare_device(device)
+        video = record_blink_clip(device, outdir, width, height, fps, warmup, duration)
+    result = analyze_blink_clip(video, outdir, warmup, roi)
+    plot = Path(result.get("paths", {}).get("plot") or (outdir / "brightness.png"))
+    roi_png = Path(result.get("paths", {}).get("roi_frame") or (outdir / "roi.png"))
+    edge = result.get("edge_frequency_hz")
+    fft = result.get("fft_frequency_hz")
+    trusted = result.get("trusted_method")
+    freq = result.get("frequency_hz")
+    pred = (result.get("predicted_blink3") or {}).get("frequency_hz")
+    summary = {
+        "frequency_hz": freq,
+        "edge_frequency_hz": edge,
+        "fft_frequency_hz": fft,
+        "fft_snr": result.get("fft_snr"),
+        "trusted_method": trusted,
+        "trusted_reason": result.get("trusted_reason"),
+        "confidence": result.get("confidence"),
+        "predicted_blink3_hz": pred,
+        "error_pct_vs_blink3": result.get("error_pct_vs_blink3"),
+        "roi": result.get("roi"),
+        "duration_s": result.get("duration_s"),
+        "fps": result.get("fps"),
+        "warnings": result.get("warnings"),
+        "paths": result.get("paths"),
+        "video": result.get("video"),
+    }
+    text = (
+        f"measure_blink trusted={trusted} {freq} Hz "
+        f"(edge={edge} fft={fft}) predicted_blink3={pred} Hz\n"
+        + json.dumps(summary, indent=2)
+    )
+    out: list = [text]
+    if plot.is_file():
+        out.append(Image(path=plot))
+    if roi_png.is_file():
+        out.append(Image(path=roi_png))
+    return out
 
 
 def _warmup_saved_controls() -> None:

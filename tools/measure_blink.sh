@@ -7,6 +7,7 @@
 #   tools/measure_blink.sh --duration 25 --warmup 8
 #   tools/measure_blink.sh --video /path/to/clip.mkv   # analyze an existing clip
 #   tools/measure_blink.sh --roi x,y,w,h
+#   tools/measure_blink.sh --roi top          # or bottom, nano4k, primer20k, full
 #   tools/measure_blink.sh --self-test
 #
 # Writes JSON + brightness.png + roi.png under ~/fpga/blink-measure/<timestamp>/.

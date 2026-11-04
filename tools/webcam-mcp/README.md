@@ -21,6 +21,7 @@ Does not touch the FPGA, serial ports, or `openFPGALoader`.
 | `set_camera_controls` | Set one or more real camera controls via `v4l2-ctl` |
 | `reset_camera_controls` | Restore driver defaults and clear saved settings |
 | `auto_adjust` | Capture, measure mean luma / clipping, nudge gain/brightness/exposure |
+| `measure_blink` | Record a clip; edge/threshold **and** FFT blink rate, graphs, JSON |
 
 `capture_still` / `capture_burst` arguments: `device` (default `/dev/video0`),
 optional `resolution` (`640x480`), optional `warmup_frames` (default 8,
@@ -56,6 +57,23 @@ AE to Manual and moves **exposure** until mean Rec.601 luma is near 115 without
 highlight clipping. Dark-room backgrounds are expected. It persists the
 exposure knobs.
 
+`measure_blink(duration=25, warmup=8, roi=auto)` is the MCP port of
+`tools/measure_blink.sh` (the script is **kept**). It writes the same
+`result.json` + `brightness.png` + `roi.png` under `~/fpga/blink-measure/<stamp>-mcp/`
+and returns both detectors:
+
+| Field | Meaning |
+|---|---|
+| `edge_frequency_hz` | hysteresis threshold + long-baseline edge period |
+| `fft_frequency_hz` | rFFT peak (needed when edges undercount; historically **6.852 Hz** vs a low edge count at ~6.9 Hz) |
+| `trusted_method` | `edge` or `fft` |
+| `frequency_hz` | the trusted value |
+| `predicted_blink3_hz` | 3.433 Hz for Blink3 N=262144 at 27 MHz |
+
+`roi` is optional: `auto` (default), `full`, `top`, `bottom`, `nano4k` (bottom
+on Bee's desk), `primer20k` (top), or `x,y,w,h`. top/bottom split the frame
+for the future dual-board layout; this tool still meters **one** LED.
+
 `tools/measure_blink.sh` is unchanged and still records a raw clip.
 
 Camera access is serialised with an `flock` on `$XDG_RUNTIME_DIR/webcam-mcp.lock`.
@@ -84,10 +102,12 @@ Start at boot without logging in (needs sudo, one shot):
 sudo loginctl enable-linger lypanov
 ```
 
-Parser / exposure-loop tests (no camera, no mcp extra):
+Parser / exposure-loop / blink-arbitration tests (no camera, no mcp extra):
 
 ```sh
 python3 tools/webcam-mcp/test_controls.py
+python3 tools/test_blink_trust.py
+python3 tools/analyze_blink.py --self-test   # needs system numpy/matplotlib/PIL + ffmpeg
 ```
 
 Cursor on Bee: `~/.cursor/mcp.json` should contain (keep any other servers):
@@ -134,3 +154,26 @@ Logitech QuickCam Pro for Notebooks `046d:0991` at `/dev/video0`. Tang Nano 4K a
 ![Persisted manual settings after restart](proof/03-after-restart-persisted-dark.jpg)
 
 ![auto_adjust recovery](proof/04-auto-adjust.jpg)
+
+## Blink-rate proof on Bee (2026-11-04, Blink3 N=262144)
+
+Tang Nano 4K loaded from the Pi (predicted **3.433 Hz**). Primer 20K is the upper board; 4K LEDs are the lower pair. FPGA / serial / `openFPGALoader` were not touched. Same scene, `duration=20` `warmup=8`. After deploy, `webcam-mcp.service` was restarted; `list_cameras`, `capture_still`, and `measure_blink` all responded.
+
+| Source | trusted | edge Hz | FFT Hz | vs 3.433 Hz |
+|---|---|---|---|---|
+| `tools/measure_blink.sh` | edge | 3.437 | 3.449 | +0.10% |
+| MCP `measure_blink` | edge | 3.440 | 3.455 | +0.21% |
+
+Edge and FFT agree here (toggle rate ≈ 6.87 Hz). FFT-as-fallback is unit-tested with the historical undercount: edge 3.45 Hz vs FFT **6.852 Hz**.
+
+Script `brightness.png` / `roi.png`:
+
+![script brightness](proof/blink-script-brightness.png)
+
+![script ROI](proof/blink-script-roi.png)
+
+MCP `brightness.png` / `roi.png` (inline image content was also returned over `/mcp`):
+
+![MCP brightness](proof/blink-mcp-brightness.png)
+
+![MCP ROI](proof/blink-mcp-roi.png)
