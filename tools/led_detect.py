@@ -33,7 +33,12 @@ MERGE_PX = 18.0
 MIN_BLOB_AREA = 4
 MAX_BLOB_AREA = 420
 MAX_BLOB_SPAN = 56
-MIN_BLINK_HZ = 0.85
+# Headline band. 0.2 Hz lets a 0.5 Hz blink through. Drift near 0.18 Hz stays out.
+MIN_BLINK_HZ = 0.2
+# "Is this LED blinking?" stays on the old floor. A 0.5 Hz square still
+# qualifies, because its third harmonic is above 0.85 Hz. A lone 0.25 Hz
+# wander does not become a new blinker and hide the 1 Hz LED.
+CLASSIFY_MIN_HZ = 0.85
 MAX_BLINK_HZ = 8.0
 BLINKER_PAD_PX = 12
 BOARD_GAP_MARGIN_PX = 16
@@ -335,17 +340,19 @@ def sample_disk(rgb: np.ndarray, x: float, y: float, radius: int = 4) -> np.ndar
     )
 
 
-def fft_peak_hz(values: np.ndarray, fps: float) -> tuple[float | None, float]:
+def fft_peak_hz(
+    values: np.ndarray, fps: float, lo: float | None = None
+) -> tuple[float | None, float]:
     n = len(values)
     if n < 16 or fps <= 0:
         return None, 0.0
+    if lo is None:
+        lo = CLASSIFY_MIN_HZ
     x = np.asarray(values, dtype=np.float64)
     x = x - x.mean()
     spec = np.abs(np.fft.rfft(x))
     freqs = np.fft.rfftfreq(n, d=1.0 / fps)
-    # Real blinkers here are ~1 Hz (20K) and ~3.43 Hz (4K). Reflections
-    # wander near 0.6–0.8 Hz; keep them out of the blink band.
-    keep = (freqs >= MIN_BLINK_HZ) & (freqs <= min(MAX_BLINK_HZ, fps / 2.2))
+    keep = (freqs >= lo) & (freqs <= min(MAX_BLINK_HZ, fps / 2.2))
     if not np.any(keep):
         return None, 0.0
     band = spec[keep]
@@ -379,16 +386,13 @@ def classify_temporal(series: np.ndarray, fps: float) -> tuple[str, float | None
     return "unknown", None, cv, snr
 
 
-def _edge_frequency_hz(series: np.ndarray, fps: float) -> float | None:
-    """Rising-edge period of one LED trace. None when the swing is not a blink."""
-    values = np.asarray(series, dtype=np.float64)
-    if len(values) < 8 or fps <= 0:
-        return None
+def _rising_indices(values: np.ndarray) -> list[int]:
+    """Indices where the trace crosses up through the mid hysteresis band."""
     low = float(np.percentile(values, 10))
     high = float(np.percentile(values, 90))
     span = high - low
     if span < 8.0:
-        return None
+        return []
     band = max(0.12 * span, 1e-3)
     level = 0.5 * (low + high)
     state = 1 if values[0] >= level else 0
@@ -399,40 +403,93 @@ def _edge_frequency_hz(series: np.ndarray, fps: float) -> float | None:
             rising.append(i)
         elif state == 1 and sample <= level - band:
             state = 0
+    return rising
+
+
+def _edge_stats(series: np.ndarray, fps: float) -> tuple[float | None, bool]:
+    """Rising-edge rate, and whether successive gaps agree within 12%.
+
+    Two gaps are the minimum for "regular": one interval cannot disagree
+    with itself. The rate is the mean gap, which is the same number as
+    (last - first) / (count - 1).
+    """
+    values = np.asarray(series, dtype=np.float64)
+    if len(values) < 8 or fps <= 0:
+        return None, False
+    rising = _rising_indices(values)
     if len(rising) < 2:
-        return None
-    period = (rising[-1] - rising[0]) / (len(rising) - 1) / fps
-    if period <= 0:
-        return None
-    return 1.0 / period
+        return None, False
+    gaps = np.diff(np.asarray(rising, dtype=np.float64))
+    mean = float(gaps.mean())
+    if mean <= 0:
+        return None, False
+    regular = len(gaps) >= 2 and float(np.max(np.abs(gaps - mean)) / mean) <= 0.12
+    return fps / mean, regular
+
+
+def _odd_harmonic(fundamental: float | None, harmonic: float | None, tol: float = 0.12) -> bool:
+    """True when harmonic is 3x, 5x, ... of fundamental, within tol."""
+    if fundamental is None or harmonic is None or fundamental <= 0 or harmonic <= fundamental:
+        return False
+    ratio = harmonic / fundamental
+    order = int(round(ratio))
+    if order < 3 or order % 2 == 0:
+        return False
+    return abs(ratio - order) / order <= tol
+
+
+def _edge_frequency_hz(series: np.ndarray, fps: float) -> float | None:
+    """Rising-edge period of one LED trace. None when the swing is not a blink."""
+    hz, _regular = _edge_stats(series, fps)
+    return hz
 
 
 def measure_chroma_trace(series: np.ndarray, fps: float) -> dict[str, Any]:
     """Headline rate for one LED, from its own chroma samples.
 
-    The FFT is limited to the blink band (about 0.85–8 Hz). A padded-box
-    mean can lock onto slow drift near 0.18 Hz and must not replace this.
+    The blink band is 0.2–8 Hz. A regular edge period in that band is the
+    headline even when the FFT has locked onto a harmonic. A regular period
+    slower than 0.2 Hz (the ~0.18 Hz drift) is not replaced by that harmonic.
     """
     values = np.asarray(series, dtype=np.float64)
     mean = float(values.mean()) if len(values) else 0.0
     std = float(values.std()) if len(values) else 0.0
     ptp = float(np.ptp(values)) if len(values) else 0.0
     cv = std / max(abs(mean), 1e-6)
-    fft_hz, snr = fft_peak_hz(values, fps)
-    edge_hz = _edge_frequency_hz(values, fps)
+    # Wide band sees a 0.5 Hz fundamental. The old band sees 1 Hz blinks and
+    # the 1.5 Hz harmonic of a slow square. When the upper peak is an odd
+    # harmonic of the lower one, the lower one is the blink. A wide-band
+    # peak with nothing above 0.85 Hz and no regular edges is drift, not a blink.
+    edge_hz, regular = _edge_stats(values, fps)
+    fft_lo, snr_lo = fft_peak_hz(values, fps, lo=MIN_BLINK_HZ)
+    fft_hi, snr_hi = fft_peak_hz(values, fps, lo=CLASSIFY_MIN_HZ)
+    if _odd_harmonic(fft_lo, fft_hi) and snr_lo >= 4.0:
+        fft_hz, snr = fft_lo, snr_lo
+    elif fft_hi is not None:
+        fft_hz, snr = fft_hi, snr_hi
+    elif regular and edge_hz is not None and MIN_BLINK_HZ <= edge_hz <= MAX_BLINK_HZ:
+        fft_hz, snr = None, 0.0
+    else:
+        fft_hz, snr = None, 0.0
+    slow_regular = bool(regular and edge_hz is not None and edge_hz < MIN_BLINK_HZ)
     if edge_hz is not None and not (MIN_BLINK_HZ <= edge_hz <= MAX_BLINK_HZ):
         edge_hz = None
     if fft_hz is not None and not (MIN_BLINK_HZ <= fft_hz <= MAX_BLINK_HZ):
         fft_hz = None
     blink_shape = cv >= 0.15 and ptp >= 12.0
-    fft_ok = fft_hz is not None and snr >= 4.0 and blink_shape
+    fft_ok = fft_hz is not None and snr >= 4.0 and blink_shape and not slow_regular
     edge_ok = edge_hz is not None and blink_shape and (
         fft_hz is None or abs(edge_hz - fft_hz) / max(edge_hz, fft_hz) <= 0.12 or fft_ok
     )
     freq: float | None = None
     method = "untrusted"
-    reason = "no blink on this LED"
-    if edge_ok and fft_ok:
+    reason = "regular edges are below the blink band" if slow_regular else "no blink on this LED"
+    if slow_regular:
+        pass
+    elif edge_ok and regular:
+        freq, method = edge_hz, "edge"
+        reason = "blinking LED edge period is regular"
+    elif edge_ok and fft_ok:
         rel = abs(edge_hz - fft_hz) / max(edge_hz, fft_hz)
         if rel <= 0.12:
             freq, method = edge_hz, "edge"
