@@ -74,6 +74,8 @@ function tagFor(mark) {
   if (mark === "return-addr") return '<span class="tag tag-wrong">SHOULD RETURN HERE</span>';
   if (mark === "module-init") return '<span class="tag tag-ok">AMMT BEGIN</span>';
   if (mark === "init-store") return '<span class="tag tag-ok">light := 0</span>';
+  if (mark === "delay-mhi") return '<span class="tag tag-ok">MHI 262144</span>';
+  if (mark === "delay-store") return '<span class="tag tag-ok">store delay</span>';
   return "";
 }
 
@@ -187,6 +189,7 @@ function renderDmem(dmem) {
     const name = rec ? rec.name : fallback;
     const val = rec ? hex32(rec.value) : "—";
     if (addr === 0x50 && rec && rec.value === 0) cell.classList.add("zeroed");
+    if (addr === 0x74 && rec && rec.value === 262144) cell.classList.add("delay");
     cell.innerHTML = `<span>${hex32(addr)}</span><span>${escapeHtml(name)}</span><span class="val">${val}</span>`;
     root.appendChild(cell);
   });
@@ -209,6 +212,14 @@ function initBannerText(init) {
     ? "dmem[0x50] light is 0"
     : `dmem[0x50] light is ${init.light_after}`;
   return `BEGIN body at ${hex32(init.begin_pc)} executes; STW at ${hex32(init.store_pc)} writes 0. ${light}.`;
+}
+
+function delayBannerText(delay) {
+  if (!delay) return "";
+  const stored = delay.value === delay.max_iterations
+    ? `dmem[${hex32(delay.addr)}] = ${delay.max_iterations}`
+    : `dmem[${hex32(delay.addr)}] is ${delay.value}`;
+  return `MHI at ${hex32(delay.mhi_pc)} then STW at ${hex32(delay.store_pc)}. ${stored}. 800-cycle sim never reaches Toggle.`;
 }
 
 function applyCycle() {
@@ -246,7 +257,10 @@ function applyCycle() {
   const init = t.init;
   const atInit = !!(init && (i === init.begin_step_index || i === init.store_step_index));
   $("init-banner").classList.toggle("here", atInit);
-  $("brand-dot").classList.toggle("fail", state.image === "blink3" && !(f && f.r15_written));
+  const delay = t.delay;
+  const atDelay = !!(delay && (i === delay.mhi_step_index || i === delay.store_step_index));
+  $("delay-banner").classList.toggle("here", atDelay);
+  $("brand-dot").classList.toggle("fail", state.image === "blink3" && !!(f && !f.r15_written));
 
   const edges = t.led_toggles || (t.summary && t.summary.toggle_cycles) || [];
   const periods = [];
@@ -336,10 +350,12 @@ function selectImage(name) {
   $("btn-fail").classList.toggle("hidden", !t.failure);
   $("btn-init").classList.toggle("hidden", !t.init);
   $("btn-light").classList.toggle("hidden", !t.init);
+  $("btn-delay").classList.toggle("hidden", !t.delay);
   $("fail-banner").classList.toggle("hidden", !t.failure);
   $("fail-banner").classList.toggle("ok", !!(t.failure && t.failure.r15_written));
   $("btn-fail").classList.toggle("danger", !(t.failure && t.failure.r15_written));
   $("init-banner").classList.toggle("hidden", !t.init);
+  $("delay-banner").classList.toggle("hidden", !t.delay);
   if (t.failure) {
     $("fail-title").textContent = t.failure.r15_written
       ? "Blink3 BL writes R15."
@@ -347,6 +363,7 @@ function selectImage(name) {
     $("fail-text").innerHTML = failBannerHtml(t.failure);
   }
   if (t.init) $("init-text").textContent = initBannerText(t.init);
+  if (t.delay) $("delay-text").textContent = delayBannerText(t.delay);
   renderSource(t.mod_source || []);
   renderAsm(p);
   applyCycle();
@@ -378,6 +395,14 @@ function jumpToLight() {
   applyCycle();
 }
 
+function jumpToDelay() {
+  const t = currentTrace();
+  if (!t || !t.delay) return;
+  stop();
+  state.i = t.delay.store_step_index;
+  applyCycle();
+}
+
 function bind() {
   $("btn-run").onclick = () => (state.running ? stop() : play());
   $("btn-step").onclick = () => { stop(); tick(1); };
@@ -386,6 +411,7 @@ function bind() {
   $("btn-fail").onclick = jumpToFailure;
   $("btn-init").onclick = jumpToInit;
   $("btn-light").onclick = jumpToLight;
+  $("btn-delay").onclick = jumpToDelay;
   $("btn-blink2").onclick = () => selectImage("blink2");
   $("btn-blink3").onclick = () => selectImage("blink3");
   $("speed").oninput = () => {
@@ -402,6 +428,7 @@ function bind() {
     else if (ev.key === "f" || ev.key === "F") { jumpToFailure(); }
     else if (ev.key === "i" || ev.key === "I") { jumpToInit(); }
     else if (ev.key === "l" || ev.key === "L") { jumpToLight(); }
+    else if (ev.key === "d" || ev.key === "D") { jumpToDelay(); }
     else if (ev.key === "2") selectImage("blink2");
     else if (ev.key === "3") selectImage("blink3");
     else if (ev.key === "[") {
@@ -437,6 +464,8 @@ async function main() {
       jumpToLight();
     } else if (params.get("init") != null) {
       jumpToInit();
+    } else if (params.get("delay") != null) {
+      jumpToDelay();
     } else if (params.get("i") != null) {
       state.i = Number(params.get("i")) || 0;
       applyCycle();

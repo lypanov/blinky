@@ -107,7 +107,7 @@ run-blink3: $(BIN3)
 	cd $(ROOT) && $(BIN3) \
 		--program blink3 \
 		--cycles $(BLINK3_CYCLES) \
-		--toggles 6 \
+		--toggles 0 \
 		--fst $(OUT)/blink3.fst \
 		--led $(OUT)/blink3_led_toggles.csv \
 		--trace $(OUT)/blink3_trace.json

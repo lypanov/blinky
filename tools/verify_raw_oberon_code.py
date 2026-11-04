@@ -35,7 +35,7 @@ CASES = [
         "sources": ["AMemoryMappedToggle.Mod", "Blink3test.Mod"],
         "rsc": "LightToggle.rsc",
         "fixture": "Blink3test.code",
-        "origin": "e5743c8:tests/Blink3test.code (imported BL 0xf7102011)",
+        "origin": "Blink3test.Mod maxIterations := 262144 (MHI 0x60000004); imported BL 0xf7102011",
     },
     {
         "name": "Blink2 (Blink2test.Mod)",

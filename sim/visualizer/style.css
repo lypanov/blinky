@@ -147,6 +147,8 @@ ol.code li.hdr { color: var(--warn); font-weight: 700; }
 .dmem .cell .val { color: var(--ink); text-align: right; }
 .dmem .cell.zeroed { border: 1px solid var(--ok); }
 .dmem .cell.zeroed .val { color: var(--ok); }
+.dmem .cell.delay { border: 1px solid var(--ok); }
+.dmem .cell.delay .val { color: var(--ok); }
 footer { padding: 8px 16px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); }
 @media (max-width: 1100px) {
   html, body { overflow: auto; }
