@@ -8,6 +8,7 @@
 #   BLINK3_MAXITER=131072 tools/gowin_build.sh   # Blink3 Nano 4K, half delay
 #   BOARD=primer20k tools/gowin_build.sh         # Blink3 Primer 20K Dock
 #   FPGA_IMAGE=blink2 tools/gowin_build.sh       # old Blink2hw small IMEM
+#   FPGA_IMAGE=hyperram tools/gowin_build.sh     # Nano 4K HyperRAM data port + Blink3
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,8 +19,12 @@ cd "$ROOT"
 FPGA_IMAGE="${FPGA_IMAGE:-blink3}"
 BOARD="${BOARD:-nano4k}"
 BLINK3_MAXITER="${BLINK3_MAXITER:-262144}"
+if [[ "$FPGA_IMAGE" == "hyperram" && -z "${BLINK3_IMEM:-}" ]]; then
+  BLINK3_IMEM="$ROOT/sim/visualizer/imem/hyperram.words"
+fi
 BLINK3_IMEM="${BLINK3_IMEM:-$ROOT/sim/visualizer/imem/blink3.words}"
 export FPGA_IMAGE BLINK3_IMEM
+GOWIN_TCL="$ROOT/gowin/gowin_build.tcl"
 
 # Gowin GUI Tcl crashes with QT_QPA_PLATFORM=offscreen. Prefer xcb on Bee.
 if [[ -z "${QT_QPA_PLATFORM:-}" || "${QT_QPA_PLATFORM}" == "wayland;xcb" || "${QT_QPA_PLATFORM}" == "wayland" ]]; then
@@ -43,7 +48,20 @@ mhi_hex() {
   python3 -c "print(f'{(0x60000000 | (int($1) >> 16)):08x}')"
 }
 
-if [[ "$FPGA_IMAGE" == "blink3" ]]; then
+if [[ "$FPGA_IMAGE" == "hyperram" ]]; then
+  if [[ "$BOARD" != "nano4k" && "$BOARD" != "tangnano4k" ]]; then
+    echo "error: HyperRAM step 1 loads the Tang Nano 4K only (BOARD=$BOARD)" >&2
+    exit 1
+  fi
+  echo "==> HyperRAM IMEM (prologue at 0x1200, Blink3 body, maxIterations=$BLINK3_MAXITER)"
+  python3 "$ROOT/sim/build_hyperram_imem.py" \
+    --max-iter "$BLINK3_MAXITER" \
+    --pad 2048 \
+    --out "$BLINK3_IMEM"
+  EXPECT_MHI="$(mhi_hex "$BLINK3_MAXITER")"
+  GOWIN_OUT_NAME="hyperram_n${BLINK3_MAXITER}"
+  GOWIN_TCL="$ROOT/gowin/gowin_build_hyperram.tcl"
+elif [[ "$FPGA_IMAGE" == "blink3" ]]; then
   echo "==> Blink3 IMEM (trampoline at 0, linked image at 0x1000+, maxIterations=$BLINK3_MAXITER)"
   python3 "$ROOT/sim/build_blink3_imem.py" \
     --max-iter "$BLINK3_MAXITER" \
@@ -77,7 +95,7 @@ else
   exit 1
 fi
 
-if [[ "$FPGA_IMAGE" == "blink3" ]]; then
+if [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" ]]; then
   echo "==> Checking Blink3 trampoline / BL Toggle encodings"
   for word in f7000409 f7000410 f7ffffdc; do
     if grep -qi "$word" "$V"; then
@@ -87,6 +105,16 @@ if [[ "$FPGA_IMAGE" == "blink3" ]]; then
       exit 1
     fi
   done
+fi
+
+if [[ "$FPGA_IMAGE" == "hyperram" ]]; then
+  echo "==> Checking prologue entry MOV R0, 0x1200"
+  if grep -qi '40001200' "$V"; then
+    echo "    found 40001200"
+  else
+    echo "error: prologue entry 40001200 not in $V" >&2
+    exit 1
+  fi
 fi
 
 echo "==> Gowin_SP instances (expect 2)"
@@ -107,7 +135,7 @@ case "$BOARD" in
     mkdir -p "$ROOT/gowin/impl"
     # gw_sh writes impl next to the Tcl unless -d is used; run from gowin/
     cd "$ROOT/gowin"
-    gw_sh "$ROOT/gowin/gowin_build.tcl"
+    gw_sh "$GOWIN_TCL"
     FS="$ROOT/gowin/impl/pnr/${GOWIN_OUT_NAME}.fs"
     SEARCH="$ROOT/gowin/impl"
     LOAD_HINT="tools/sram_load.sh -b tangnano4k $FS"$'\n'"  openFPGALoader -b tangnano4k -m $FS"

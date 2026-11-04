@@ -7,7 +7,9 @@ import java.io.{File, PrintWriter}
 import gcd.Logger
 
 class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
-                 customMemoryImage: Option[Seq[String]] = None) extends Module {
+                 customMemoryImage: Option[Seq[String]] = None,
+                 waitForStores: Boolean = false,
+                 requireMemCheck: Boolean = false) extends Module {
   val io = IO(new Bundle {
     val r0 = Output(UInt(32.W))  // Output register R0 for testing
     val r1 = Output(UInt(32.W))  // Output register R1 for testing
@@ -17,12 +19,15 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val led = Output(Bool())     // LED output for the Tang Nano 4K
     val pc = Output(UInt(32.W))  // Program counter value for testing
     
-    // Memory interface - allows the CPU to access external memory
+    // Memory interface - allows the CPU to access external memory.
+    // memStall holds the completion of a load (and, if waitForStores, a store).
+    // Tied 0 with waitForStores=false, this is the block-RAM timing.
     val memAddr = Output(UInt(32.W))
     val memWriteData = Output(UInt(32.W))
     val memReadData = Input(UInt(32.W))
     val memWrite = Output(Bool())
     val memRead = Output(Bool())
+    val memStall = Input(Bool())
 
     // Logger boilerplate
     val messageCode = Output(UInt(4.W))
@@ -48,6 +53,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   
   val memoryAccessPending = RegInit(false.B)
   val memoryTargetReg = RegInit(0.U(4.W))
+  val memoryIsLoad = RegInit(false.B)
+  // HyperRAM prologue stores each compare-difference to 0x7C0+4*slot.
+  // The LED follows Blink3 only after all eight stores were zero.
+  val checkMask = if (requireMemCheck) Some(RegInit(0.U(8.W))) else None
   
   // Instead of always constructing memory based on instructionHexStrings,
   // use the provided customMemoryImage if available.
@@ -151,21 +160,20 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // LED state register for memory-mapped LED control
   val ledState = RegInit(false.B)
   
-  // Main execution state machine
+  // Main execution state machine.
+  // A pending load completes when memStall is low. Block RAM ties memStall
+  // to 0, so this is still the original one-cycle load. Extra stall cycles
+  // re-fetch the next instruction and do not execute it.
   when (memoryAccessPending) {
-    // We're waiting for memory read to complete
-    // Data should be available now from RAM (after 1 cycle delay)
-    regWrite := true.B
-    regWriteAddr := memoryTargetReg
-    regWriteData := io.memReadData
-    
-    // Debug output
-    printf(p"LDW: Completed load to R${memoryTargetReg}, value: ${io.memReadData}\n")
-    
-    // Clear the pending memory operation
-    memoryAccessPending := false.B
-    
-    // Don't advance PC again during memory completion
+    when (!io.memStall) {
+      when (memoryIsLoad) {
+        regWrite := true.B
+        regWriteAddr := memoryTargetReg
+        regWriteData := io.memReadData
+        printf(p"LDW: Completed load to R${memoryTargetReg}, value: ${io.memReadData}\n")
+      }
+      memoryAccessPending := false.B
+    }
   } .elsewhen (isBranch) {
     // Check for halt instruction (branch self with e7ffffff)
     when (instruction === "hE7FFFFFF".U) {
@@ -235,6 +243,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
           
           // Set up state for memory completion next cycle
           memoryAccessPending := true.B
+          memoryIsLoad := true.B
           memoryTargetReg := regA
           
           // Debug output
@@ -265,8 +274,16 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         // Debug output
         printf(p"STW: Storing R${regA}(${regs(regA)}) to address ${effectiveAddr}\n")
         
-        // For store operations, we don't need to wait for completion
-        memoryAccessPending := false.B
+        // Block RAM returns in the same cycle. HyperRAM waits out Tcmd.
+        memoryIsLoad := false.B
+        memoryAccessPending := waitForStores.B
+        // Eight zero-differences at 0x7C0, 0x7C4, ... 0x7DC arm the LED.
+        checkMask.foreach { mask =>
+          when (effectiveAddr(31, 5) === (0x7C0 >> 5).U && regs(regA) === 0.U) {
+            val slot = effectiveAddr(4, 2)
+            mask := mask | (1.U(8.W) << slot)(7, 0)
+          }
+        }
       } .otherwise {
         // STB - Store Byte not implemented yet
       }
@@ -416,7 +433,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   io.r2 := regs(2)
   io.r3 := regs(3)
   io.halted := halted
-  io.led := ledState  // Connect LED output to our memory-mapped LED state
+  io.led := checkMask.map(m => ledState && (m === 0xFF.U)).getOrElse(ledState)
   io.pc := pc  // Connect the program counter to the output
 }
 
@@ -472,8 +489,9 @@ object CPUSubset0 {
     // Default FPGA image is Blink3 (linked LightToggle + AMMT, trampoline at 0).
     // FPGA_IMAGE=blink2 restores the old Blink2hw small-IMEM path.
     val fpgaImage = sys.env.getOrElse("FPGA_IMAGE", "blink3")
+    val hyper = fpgaImage == "hyperram"
     val (programInstructions, customMemoryImage) = fpgaImage match {
-      case "blink3" =>
+      case "blink3" | "hyperram" =>
         val imemArg = sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
         val imemFile = new File(imemArg)
         val imemPath =
@@ -485,7 +503,7 @@ object CPUSubset0 {
             s"Blink3 IMEM empty at $imemPath — run sim/build_blink3_imem.py first"
           )
         }
-        println(s"FPGA image: Blink3 custom IMEM ${words.length} words from $imemPath")
+        println(s"FPGA image: ${if (hyper) "HyperRAM prologue + Blink3" else "Blink3"} custom IMEM ${words.length} words from $imemPath")
         (Seq.empty[String], Some(words))
       case _ =>
         val blink2hwCodePath = new File(projectRoot, "tests/Blink2hw.code").getAbsolutePath
@@ -502,7 +520,12 @@ object CPUSubset0 {
     
     // Generate the base CPU Verilog for testing and debugging
     val verilogCode = ChiselStage.emitSystemVerilog(
-      gen = new CPUSubset0(programInstructions, customMemoryImage = customMemoryImage),
+      gen = new CPUSubset0(
+        programInstructions,
+        customMemoryImage = customMemoryImage,
+        waitForStores = hyper,
+        requireMemCheck = hyper
+      ),
       firtoolOpts = firtoolOpts
     )
     
@@ -511,17 +534,19 @@ object CPUSubset0 {
       gen = new CPUMinimalWrapper(
         useRealGowin = true,
         programInstructions = programInstructions,
-        customMemoryImage = customMemoryImage
+        customMemoryImage = customMemoryImage,
+        memBackend = if (hyper) "hyperram" else "blockram"
       ),
       firtoolOpts = firtoolOpts
     )
     
-    // Generate a simulation-friendly version (with mock RAM)
+    // Generate a simulation-friendly version (with mock RAM / HyperRAM user model)
     val simVerilogCode = ChiselStage.emitSystemVerilog(
       gen = new CPUMinimalWrapper(
         useRealGowin = false,
         programInstructions = programInstructions,
-        customMemoryImage = customMemoryImage
+        customMemoryImage = customMemoryImage,
+        memBackend = if (hyper) "hyperram" else "blockram"
       ),
       firtoolOpts = firtoolOpts
     )
