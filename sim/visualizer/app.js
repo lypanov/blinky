@@ -25,8 +25,8 @@ const WATCH_ORDER = [
 ];
 
 const state = {
-  traces: { blink2: null, blink3: null, blink3n5: null },
-  programs: { blink2: [], blink3: [], blink3n5: [] },
+  traces: { blink2: null, blink3: null, blink3n5: null, uartgate: null },
+  programs: { blink2: [], blink3: [], blink3n5: [], uartgate: [] },
   image: "blink2",
   i: 0,
   running: false,
@@ -221,9 +221,12 @@ function delayBannerText(delay, trace) {
     : `dmem[${hex32(delay.addr)}] is ${delay.value}`;
   const op = (delay.mhi_word >>> 28) === 4 ? "MOV" : "MHI";
   const periods = (trace && trace.summary && trace.summary.periods) || [];
-  const tail = periods.length
-    ? `LED edge period ${trace.summary.mean_period.toFixed(0)} cycles (15N+18, N=${delay.max_iterations}).`
-    : "800-cycle sim never reaches Toggle.";
+  const uartPeriod = trace && trace.uart && trace.uart.cpu_period;
+  const tail = uartPeriod
+    ? `CPU LED edge period ${Number(uartPeriod).toFixed(0)} cycles (15N+18, N=${delay.max_iterations}). The pin is gated off while UART press is latched.`
+    : periods.length
+      ? `LED edge period ${trace.summary.mean_period.toFixed(0)} cycles (15N+18, N=${delay.max_iterations}).`
+      : "800-cycle sim never reaches Toggle.";
   return `${op} at ${hex32(delay.mhi_pc)} then STW at ${hex32(delay.store_pc)}. ${stored}. ${tail}`;
 }
 
@@ -238,6 +241,22 @@ function applyCycle() {
   $("cycle").textContent = String(c.cycle);
   $("pc").textContent = hex32(c.pc);
   setLed(!!c.led);
+  const uart = t.uart || null;
+  const cpuKnown = typeof c.cpu_led === "number";
+  $("cpu-led-wrap").classList.toggle("hidden", !cpuKnown);
+  $("uart-wrap").classList.toggle("hidden", !uart);
+  if (cpuKnown) {
+    $("cpu-led-state").textContent = c.cpu_led ? "ON" : "OFF";
+    $("cpu-led-state").style.color = c.cpu_led ? "#7eb6ff" : "";
+  }
+  if (uart) {
+    $("uart-pressed").textContent = c.pressed ? "pressed" : "released";
+    $("uart-pressed").style.color = c.pressed ? "#ffb020" : "";
+    if (c.pressed && $("led-caption")) {
+      $("led-caption").textContent = "FORCED OFF";
+      $("led-state").textContent = "OFF";
+    }
+  }
   $("instr-line").textContent = c.disasm
     ? `${hex32(c.pc)}  ${c.disasm}${c.src ? "   // " + c.src : (c.note ? "   // " + c.note : "")}`
     : "—";
@@ -271,7 +290,11 @@ function applyCycle() {
   const periods = [];
   for (let k = 1; k < edges.length; k++) periods.push(edges[k] - edges[k - 1]);
   const mean = periods.length ? (periods.reduce((a, b) => a + b, 0) / periods.length) : null;
-  $("period").textContent = mean == null ? "—" : `${mean.toFixed(1)} cyc`;
+  if (uart && uart.cpu_period) {
+    $("period").textContent = `${Number(uart.cpu_period).toFixed(1)} cyc`;
+  } else {
+    $("period").textContent = mean == null ? "—" : `${mean.toFixed(1)} cyc`;
+  }
 
   document.querySelectorAll("#flags span").forEach((el) => {
     const bit = c[el.dataset.flag];
@@ -344,6 +367,7 @@ function selectImage(name) {
   $("btn-blink2").classList.toggle("active", name === "blink2");
   $("btn-blink3").classList.toggle("active", name === "blink3");
   $("btn-blink3n5").classList.toggle("active", name === "blink3n5");
+  $("btn-uartgate").classList.toggle("active", name === "uartgate");
   const t = currentTrace();
   const p = currentProgram();
   if (!t) {
@@ -362,6 +386,14 @@ function selectImage(name) {
   $("btn-fail").classList.toggle("danger", !(t.failure && t.failure.r15_written));
   $("init-banner").classList.toggle("hidden", !t.init);
   $("delay-banner").classList.toggle("hidden", !t.delay);
+  $("uart-banner").classList.toggle("hidden", !t.uart);
+  if (t.uart) {
+    const u = t.uart;
+    $("uart-text").textContent =
+      `Press latched at cycle ${u.press_cycle} (pin forced off while the register was on). ` +
+      `Released at ${u.release_cycle}. CPU edges stayed ${u.cpu_period} cycles, ` +
+      `${u.cpu_edges_while_pressed} of them during the press. The pin matches the register again after release.`;
+  }
   if (t.failure) {
     $("fail-title").textContent = t.failure.r15_written
       ? "Blink3 BL writes R15."
@@ -421,6 +453,7 @@ function bind() {
   $("btn-blink2").onclick = () => selectImage("blink2");
   $("btn-blink3").onclick = () => selectImage("blink3");
   $("btn-blink3n5").onclick = () => selectImage("blink3n5");
+  $("btn-uartgate").onclick = () => selectImage("uartgate");
   $("speed").oninput = () => {
     $("speed-label").textContent = SPEEDS[Number($("speed").value)].label;
     if (state.running) schedule();
@@ -439,6 +472,7 @@ function bind() {
     else if (ev.key === "2") selectImage("blink2");
     else if (ev.key === "3") selectImage("blink3");
     else if (ev.key === "5") selectImage("blink3n5");
+    else if (ev.key === "u" || ev.key === "U") selectImage("uartgate");
     else if (ev.key === "[") {
       $("speed").value = Math.max(0, Number($("speed").value) - 1);
       $("speed").dispatchEvent(new Event("input"));
@@ -453,28 +487,43 @@ async function main() {
   bind();
   renderRegsGrid();
   try {
-    const [b2, b3, b3n5, p2, p3, p3n5] = await Promise.all([
+    const [b2, b3, b3n5, ug, p2, p3, p3n5, pu] = await Promise.all([
       loadJson("./traces/blink2.json"),
       loadJson("./traces/blink3.json"),
       loadJson("./traces/blink3_n5.json").catch(() => null),
+      loadJson("./traces/uartgate.json").catch(() => null),
       loadJson("./traces/blink2_program.json").catch(() => null),
       loadJson("./traces/blink3_program.json").catch(() => null),
       loadJson("./traces/blink3_n5_program.json").catch(() => null),
+      loadJson("./traces/uartgate_program.json").catch(() => null),
     ]);
     state.traces.blink2 = b2;
     state.traces.blink3 = b3;
     state.traces.blink3n5 = b3n5;
+    state.traces.uartgate = ug;
     state.programs.blink2 = (p2 && p2.entries) || [];
     state.programs.blink3 = (p3 && p3.entries) || [];
     state.programs.blink3n5 = (p3n5 && p3n5.entries) || [];
+    state.programs.uartgate = (pu && pu.entries) || [];
     $("btn-blink3n5").classList.toggle("hidden", !b3n5);
+    $("btn-uartgate").classList.toggle("hidden", !ug);
     const params = new URLSearchParams(location.search);
     const p = params.get("p");
-    const want = (p === "blink3n5" || (p === "blink3" && params.get("n") === "5"))
-      ? "blink3n5"
-      : (p === "blink3" ? "blink3" : "blink2");
+    const want = (p === "uartgate" || p === "uart")
+      ? "uartgate"
+      : (p === "blink3n5" || (p === "blink3" && params.get("n") === "5"))
+        ? "blink3n5"
+        : (p === "blink3" ? "blink3" : "blink2");
     selectImage(want);
-    if (params.get("fail") != null || params.get("step") === "fail") {
+    if (params.get("gate") != null && currentTrace() && currentTrace().uart) {
+      const u = currentTrace().uart;
+      const off = params.get("gate") === "off" || params.get("gate") === "pressed";
+      const idx = off ? u.forced_off_step : u.resume_step;
+      if (typeof idx === "number" && idx >= 0) {
+        state.i = idx;
+        applyCycle();
+      }
+    } else if (params.get("fail") != null || params.get("step") === "fail") {
       jumpToFailure();
     } else if (params.get("light") != null) {
       jumpToLight();

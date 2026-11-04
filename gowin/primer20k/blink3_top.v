@@ -5,21 +5,24 @@
 // Dock user LEDs are active-low (anode to 3V3 via 510R). CPU io_led is
 // active-high, so invert onto L14 (wiki Orange_LED4). C13/A13 stay
 // steadily lit so the webcam's 3-LED orange cluster (2 steady + 1
-// blinker) still matches detect_leds. UART stays off-chip: do not steal
-// BL702 M11/T13.
+// blinker) still matches detect_leds. UART is the Dock BL702 link:
+// FPGA TX on M11, FPGA RX on T13 (8N1 115200). The LED pin is the
+// wrapper output, already gated off while a press byte is latched.
 //
 // SRAM-load only. Do not flash.
 
 module blink3_top (
   input  Clock,
+  input  uart_rx,
+  output uart_tx,
   output IO_voltage,
   output [4:0] led
 );
 
   wire [15:0] unused_deadbeef;
   wire [2:0]  unused_addr;
-  wire        cpu_led;
-  wire        unused_uart_tx;
+  wire        pin_led;
+  wire        uart_tx_w;
 
   // Short power-on reset, then run. No KEY: T10 is SSPI / FPGA_RST and
   // is shared with the SOM supervisor — leave it alone.
@@ -33,15 +36,18 @@ module blink3_top (
   CPUMinimalWrapper u_cpu (
     .clock       (Clock),
     .reset       (cpu_reset),
-    .io_led      (cpu_led),
+    .io_led      (pin_led),
     .io_deadbeef (unused_deadbeef),
     .io_addr     (unused_addr),
-    .io_uart_rx  (1'b1),
-    .io_uart_tx  (unused_uart_tx)
+    .io_uart_rx  (uart_rx),
+    .io_uart_tx  (uart_tx_w)
   );
 
-  // L14: Blink3. Invert so CPU 1 = LED lit.
-  assign IO_voltage = ~cpu_led;
+  assign uart_tx = uart_tx_w;
+
+  // L14 is active-low. pin_led is already 0 while UART press is latched,
+  // so the LED stays dark without stalling the CPU.
+  assign IO_voltage = ~pin_led;
   // C13 / A13: DONE / READY as GPIO, held on (active-low).
   assign led[0] = 1'b0;
   assign led[1] = 1'b0;

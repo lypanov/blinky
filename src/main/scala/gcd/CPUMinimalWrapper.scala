@@ -19,7 +19,11 @@ class CPUMinimalWrapper(
   // Blink2 uses the small default IMEM (programInstructions). Blink3 passes
   // the linked image + address-0 BL trampoline as customMemoryImage.
   val cpu = Module(new CPUSubset0(programInstructions, customMemoryImage = customMemoryImage))
-  io.led := cpu.io.led
+  // Gate the pin after the CPU LED register. The core is not stalled.
+  val ledGate = Module(new UartLedGate)
+  ledGate.io.cpuLed := cpu.io.led
+  ledGate.io.uartRx := io.uart_rx
+  io.led := ledGate.io.led
   
   // Use the abstracted RAM controller for cycling display
   val ramController = Module(new RAMController(useRealGowin))

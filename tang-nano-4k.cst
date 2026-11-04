@@ -15,8 +15,8 @@ IO_PORT "reset" IO_TYPE=LVCMOS18 PULL_MODE=DOWN;
 IO_LOC "clock" 45;
 IO_PORT "clock" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 
-# UART — Sipeed Tang Nano 4K header IOB13A / IOB13B.
-# Gowin EMPU 4K examples use pin 19 as UART_TX; pin 18 is the adjacent RX.
+# UART — onboard USB debugger, FT2232 channel B (the 4K has no spare PMOD).
+# Pin 19 TX, pin 18 RX, 8N1 115200 into UartLedGate. Channel A stays JTAG.
 IO_LOC "io_uart_tx" 19;
 IO_PORT "io_uart_tx" IO_TYPE=LVCMOS18 PULL_MODE=NONE DRIVE=8;
 IO_LOC "io_uart_rx" 18;

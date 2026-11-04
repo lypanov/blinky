@@ -126,6 +126,8 @@ reset, `I` AMMT BEGIN, `L` light:=0, `D` delay 262144, `F` jump to BL Toggle if 
 
 Bee can run Blink3 and the NESTang Alter Ego sim side by side. Commands, the N=5 waveform, and the Alter Ego frames are in [`docs/sim-bee/README.md`](docs/sim-bee/README.md). Both commands stay in Verilator. NESTang stays in `~/fpga/nestang`.
 
+A UART press byte forces the LED pin off without stalling the CPU. Verilator proof: [`docs/uart-led-gate/README.md`](docs/uart-led-gate/README.md).
+
 ---
 
 Chisel Project Template
