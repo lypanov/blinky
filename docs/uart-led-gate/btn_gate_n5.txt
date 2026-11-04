@@ -1,0 +1,14 @@
+N=5
+formula=15*N+18
+predicted_cpu_cycles_per_edge=93
+cpu_edges=111 204 297 390 483 576 669 762 855 948 1041 1134 1227 1320 1413 1506 1599 1692 1785 1878 1971 2064 2157 2250 2343 2436 2529 2622 2715
+cpu_periods=93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93 93
+pin_edges=111 204 297 390 2001 2064 2157 2250 2343 2436 2529 2622 2715
+press_cycle=401
+release_cycle=2001
+cpu_edges_while_pressed=17
+pressed_cycles=1600
+release_cpu_led=1
+release_pin=1
+in_phase=yes
+match=yes

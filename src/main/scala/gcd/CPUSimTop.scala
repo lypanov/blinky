@@ -30,6 +30,7 @@ class CPUSimTop(
     val memWrite = Output(Bool())
     val memRead = Output(Bool())
     val uart_rx = Input(Bool())
+    val btn_n = Input(Bool())
     val cpu_led = Output(Bool())
     val pressed = Output(Bool())
   })
@@ -46,6 +47,7 @@ class CPUSimTop(
   val ledGate = Module(new UartLedGate)
   ledGate.io.cpuLed := cpu.io.led
   ledGate.io.uartRx := io.uart_rx
+  ledGate.io.btn_n := io.btn_n
   io.led := ledGate.io.led
   io.cpu_led := cpu.io.led
   io.pressed := ledGate.io.pressed

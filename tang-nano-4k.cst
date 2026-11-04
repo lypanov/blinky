@@ -2,9 +2,11 @@
 IO_LOC "io_led" 10;
 IO_PORT "io_led" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 
-# KEY_1
-# IO_LOC "io_speed_up_n" 14;
-# IO_PORT "io_speed_up_n" PULL_MODE=UP;
+# S1 / KEY1, schematic Tang_Nano_4K_3603 pin 14 (IOB4B).
+# 100 kΩ to 1.8 V, switch to GND, 100 nF to GND. Active-low.
+# S2 is pin 15 and stays the reset input below.
+IO_LOC "io_btn_n" 14;
+IO_PORT "io_btn_n" IO_TYPE=LVCMOS18 PULL_MODE=UP;
 
 # Reset: USR KEY pin 15. a68a501 used PULL_DOWN + Chisel active-high
 # (unpressed = 0 = run). blinky_top does not invert this pin.

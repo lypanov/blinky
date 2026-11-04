@@ -54,6 +54,9 @@ struct Options {
   // Press byte is 0x01, release byte is 0x00. Bit time is 27 MHz/115200.
   int uart_press_at = -1;
   int uart_release_at = -1;
+  // Active-low button. -1 = leave released. Down is inclusive, up is exclusive.
+  int btn_down_at = -1;
+  int btn_up_at = -1;
 };
 
 static void usage(const char* argv0) {
@@ -68,7 +71,9 @@ static void usage(const char* argv0) {
           "  --led PATH       LED toggle CSV output\n"
           "  --wave PATH      Per-cycle LED CSV (default sim/out/led_wave.csv)\n"
           "  --uart-press N   At cycle N, send 0x01 (press, force LED pin off)\n"
-          "  --uart-release N At cycle N, send 0x00 (release, pin follows CPU)\n",
+          "  --uart-release N At cycle N, send 0x00 (release, pin follows CPU)\n"
+          "  --btn-down N     Hold the active-low button from cycle N\n"
+          "  --btn-up N       Release the button at cycle N\n",
           argv0);
 }
 
@@ -92,6 +97,8 @@ static Options parse_args(int argc, char** argv) {
     else if (!strcmp(argv[i], "--wave")) o.wave_csv_path = need("--wave");
     else if (!strcmp(argv[i], "--uart-press")) o.uart_press_at = atoi(need("--uart-press"));
     else if (!strcmp(argv[i], "--uart-release")) o.uart_release_at = atoi(need("--uart-release"));
+    else if (!strcmp(argv[i], "--btn-down")) o.btn_down_at = atoi(need("--btn-down"));
+    else if (!strcmp(argv[i], "--btn-up")) o.btn_up_at = atoi(need("--btn-up"));
     else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
       usage(argv[0]);
       exit(0);
@@ -157,6 +164,7 @@ int main(int argc, char** argv) {
   // Idle-high UART. A stuck-low RX looks like a break to UartRx.
   UartDrive uart;
   top->io_uart_rx = 1;
+  top->io_btn_n = 1;
 
   // Active-high synchronous reset (Chisel default).
   top->reset = 1;
@@ -192,6 +200,13 @@ int main(int argc, char** argv) {
       printf("[UART] cycle=%d send 0x00 (release)\n", cycle);
       uart.start(0x00);
     }
+    const bool btn_held = opt.btn_down_at >= 0 && cycle >= opt.btn_down_at &&
+                          (opt.btn_up_at < 0 || cycle < opt.btn_up_at);
+    top->io_btn_n = btn_held ? 0 : 1;
+    if (opt.btn_down_at >= 0 && cycle == opt.btn_down_at)
+      printf("[BTN] cycle=%d down (active-low)\n", cycle);
+    if (opt.btn_up_at >= 0 && cycle == opt.btn_up_at)
+      printf("[BTN] cycle=%d up\n", cycle);
     uart.on_cycle(top);
     tick();
 

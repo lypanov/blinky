@@ -40,7 +40,8 @@ module blink3_top (
     .io_deadbeef (unused_deadbeef),
     .io_addr     (unused_addr),
     .io_uart_rx  (uart_rx),
-    .io_uart_tx  (uart_tx_w)
+    .io_uart_tx  (uart_tx_w),
+    .io_btn_n    (1'b1)
   );
 
   assign uart_tx = uart_tx_w;

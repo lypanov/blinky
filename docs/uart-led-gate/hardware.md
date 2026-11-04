@@ -65,4 +65,32 @@ The press windows were the failure: the pin was supposed to go dark for those 10
 
 Clips (not committed, ~3.5 MB each) are under `~/fpga/blink-measure/20261104-213949-check` through `20261104-214232-check`.
 
-The 4K is still running this SRAM image. The last byte on the wire was `0x00`. The LED was blinking at 3.316 Hz at the end of that measurement.
+That image was replaced by the button bitstream below. The last byte on the wire for this UART attempt was `0x00`. The LED was blinking at 3.316 Hz at the end of that measurement.
+
+## Button gate (S1)
+
+The UART attempt above is why the gate now also takes a button. S1 / KEY1 is package pin **14** (`IOB4B`). Schematic 3603 shows R31 = 100 kΩ to `DCDC3_1V8`, the switch to GND, and C52 = 100 nF to GND, so the button is active-low on the 1.8 V bank. S2 / KEY2 stays pin 15 and is still the reset input (`PULL_MODE=DOWN`). The pin report for this image:
+
+```
+io_btn_n    14/3   IOB4[B]   LVCMOS18   UP    1.8
+reset       15/3   IOB5[A]   LVCMOS18   DOWN  1.8
+io_led      10/0   IOT7[A]   LVCMOS33         3.3
+```
+
+The Chisel gate is `pressed = uartLatch || !btnSync`, then `led = cpuLed && !pressed`. The UART receiver is still in the design (a button or a press byte). On the Primer 20K top the button input is tied to `1'b1`. That board was not synthesized again and was not loaded.
+
+SRAM only, same 4K probe, no `-f`:
+
+```sh
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m gowin/impl/pnr/blink3_n262144.fs
+```
+
+IDCODE still `0x100981b`. Log: `write to ram`, `Load SRAM 100%`, `CRC check: Success`. Before the load, both interfaces of bus 3 device 81 were detached in userspace (a `libusb` reset of that device then succeeded). After the load they were attached again. Bus 3 device 78 (the 20K, `3-3.3`) was not opened. Its interface 0 stayed on `ftdi_sio`. Its interface 1 was already unbound before this load and was left that way.
+
+## Camera after the button load
+
+`check_all(duration=10)` at `http://127.0.0.1:8766/mcp` took 13.25 s and returned both boards as "present but not blinking" (`nano4k` and `primer20k` frequency null). The clip is `~/fpga/blink-measure/20261104-223623-check/clip.mkv`. The annotated frame is the monitor light bar. A scan of that frame for red LED pixels (R > 80 and well above G and B) found one pixel. The previous clip that actually saw the boards, `20261104-214232-check`, measured the 4K at 3.316 Hz with the user LED around pixel (344, 243).
+
+The MCP was not modified. A direct grab of `/dev/video2` (Logitech `046d:0991`, the camera `check_all` uses) is the same monitor view. `/dev/video0` is the UGREEN HDMI stick and returned a black frame. The button has not been held for a measurement. The 4K was left running the button SRAM image.
+
+![Webcam after the button load: the frame is the monitor, not the boards](hardware/05-camera-aim-annotated.jpg)

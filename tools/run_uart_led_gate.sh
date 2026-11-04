@@ -82,4 +82,34 @@ python3 "$ROOT/sim/check_uart_gate.py" \
 	--visualizer "$ROOT/sim/visualizer/traces/uartgate.json"
 
 echo "[uart-gate] $DOCS/uart_gate_n${N}.png"
+
+# Active-low button held across many 93-cycle CPU edges. UART stays idle.
+BTN_DOWN="${BTN_DOWN:-400}"
+BTN_UP="${BTN_UP:-2000}"
+BTN_CYCLES="${BTN_CYCLES:-2800}"
+echo "[uart-gate] button hold ${BTN_DOWN}..${BTN_UP}"
+"$MDIR/cpu_sim" \
+	--program blink3 \
+	--cycles "$BTN_CYCLES" \
+	--toggles 0 \
+	--reset 4 \
+	--fst "$OUT/btn_gate_n${N}.fst" \
+	--led "$OUT/btn_gate_n${N}_toggles.csv" \
+	--wave "$OUT/btn_gate_n${N}_wave.csv" \
+	--trace "$OUT/btn_gate_n${N}_trace.json" \
+	--btn-down "$BTN_DOWN" \
+	--btn-up "$BTN_UP"
+
+python3 "$ROOT/sim/plot_uart_gate.py" \
+	--csv "$OUT/btn_gate_n${N}_wave.csv" \
+	--png "$DOCS/btn_gate_n${N}.png" \
+	--title "Blink3 LED pin vs CPU register   N=${N}   button held low" \
+	--note "Shaded band is S1 held (active-low, 2-flop sync). Pin is forced 0; CPU edges stay ${PREDICT} cycles. Release makes the pin follow the register again."
+
+python3 "$ROOT/sim/check_uart_gate.py" \
+	--wave "$OUT/btn_gate_n${N}_wave.csv" \
+	--n "$N" \
+	--out "$DOCS/btn_gate_n${N}.txt"
+
+echo "[uart-gate] $DOCS/btn_gate_n${N}.png"
 echo "[uart-gate] visualizer http://127.0.0.1:\${PORT:-8765}/?p=uartgate&gate=off"

@@ -14,6 +14,7 @@ class CPUMinimalWrapper(
     val addr = Output(UInt(3.W))     // Address counter
     val uart_rx = Input(Bool())      // UART receive pin
     val uart_tx = Output(Bool())     // UART transmit pin
+    val btn_n = Input(Bool())        // active-low gate button (1 = released)
   })
   
   // Blink2 uses the small default IMEM (programInstructions). Blink3 passes
@@ -23,6 +24,7 @@ class CPUMinimalWrapper(
   val ledGate = Module(new UartLedGate)
   ledGate.io.cpuLed := cpu.io.led
   ledGate.io.uartRx := io.uart_rx
+  ledGate.io.btn_n := io.btn_n
   io.led := ledGate.io.led
   
   // Use the abstracted RAM controller for cycling display

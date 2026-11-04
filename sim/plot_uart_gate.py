@@ -62,7 +62,7 @@ def main() -> int:
     series = (
         (axes[0], pin, "LED pin", "#3dff9a"),
         (axes[1], cpu, "CPU LED register", "#7eb6ff"),
-        (axes[2], pressed, "UART pressed", "#ffb020"),
+        (axes[2], pressed, "gate pressed", "#ffb020"),
     )
     for ax, ys, name, color in series:
         ax.set_facecolor("#10192b")
