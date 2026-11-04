@@ -196,6 +196,40 @@ was loaded against.
 
 ![Annotated frame: Nano 4K LED 0 blinking, Primer 20K steady](leds-annotated.jpg)
 
+## Fitted read latency (after the measurement)
+
+The numbers above are the pre-load model and were not edited to match the
+board. `FIRST_VALID` defaults to 12: the first `rd_data_valid` is 13 user
+clocks after `cmd_en`, inside the 15-clock command gap, and the bridge is
+limited by that gap. That is the 0.520 Hz prediction.
+
+`HYPER_FIRST_VALID=13` delays the read burst by one user clock. Each load
+then stalls one cycle past the gap. A store does not, because a write is
+released on the gap alone. This value was chosen after the clip showed a
+2.000 s period. It is a fit, not a prediction made before the load.
+
+Re-sim with that setting, same N=5 image otherwise:
+
+| N | cycles/edge, FIRST_VALID=12 | cycles/edge, FIRST_VALID=13 |
+|---|---:|---:|
+| 5 | 633 | 657 |
+| 6 | 732 (pre-load run) | 760 |
+| 8 | 930 (pre-load run) | 966 |
+
+The fitted slope is 103 cycles per extra iteration: `103*N + 142`.
+The N=5 run with `FIRST_VALID=12` was repeated and is still 633, so the
+old setting is unchanged. At N=5 the success branch was cycle 3556 with
+R10 = 0, and the hold loop was not visited.
+
+For this bitstream, N=262144, at the same 27 MHz CPU clock:
+
+- cycles per edge = `103*262144 + 142` = **27,000,974**
+- full blink = **0.499982 Hz**
+- full period = **2.000072 s**
+
+That is the 2.000 s period the rising edges already showed. The model was
+not used to change the bitstream.
+
 ## Left as they were
 
 The visualizer on port 8765 was not restarted and does not know this image.

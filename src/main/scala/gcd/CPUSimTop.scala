@@ -15,7 +15,8 @@ import java.io.File
 class CPUSimTop(
     programInstructions: Seq[String],
     customMemoryImage: Option[Seq[String]] = None,
-    memBackend: String = "blockram"
+    memBackend: String = "blockram",
+    hyperFirstValid: Int = 12
 ) extends Module {
   val hyper = memBackend == "hyperram"
   val io = IO(new Bundle {
@@ -40,7 +41,7 @@ class CPUSimTop(
   ))
   if (hyper) {
     val bridge = Module(new HyperRamBridge)
-    val model = Module(new HyperRamUserModel)
+    val model = Module(new HyperRamUserModel(hyperFirstValid))
     bridge.io.cpuAddr := cpu.io.memAddr
     bridge.io.cpuWriteData := cpu.io.memWriteData
     bridge.io.cpuWrite := cpu.io.memWrite
@@ -133,8 +134,15 @@ object CPUSimTop {
         ).getAbsolutePath
         val words = loadInstructionsFromFile(imemPath)
         println(s"CPUSimTop: HyperRAM IMEM ${words.length} words from $imemPath")
+        val firstValid = sys.env.get("HYPER_FIRST_VALID").map(_.toInt).getOrElse(12)
+        println(s"CPUSimTop: HyperRAM FIRST_VALID=$firstValid (12 pre-load, 13 fitted)")
         (
-          () => new CPUSimTop(Seq.empty, customMemoryImage = Some(words), memBackend = "hyperram"),
+          () => new CPUSimTop(
+            Seq.empty,
+            customMemoryImage = Some(words),
+            memBackend = "hyperram",
+            hyperFirstValid = firstValid
+          ),
           s"$targetDir/CPUSimTopHyper.v",
           "hyperram"
         )

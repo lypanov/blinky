@@ -361,6 +361,8 @@ sim/obj_dir_hyper_n5/
 sim/obj_dir_hyper_n6/
 sim/obj_dir_hyper_n8/
 sim/obj_dir_hyper_corrupt/
+sim/obj_dir_hyper_fit/
+sim/obj_dir_hyper_fit12/
 sim/visualizer/trace.json
 sim/visualizer/program.json
 sim/visualizer/imem/
