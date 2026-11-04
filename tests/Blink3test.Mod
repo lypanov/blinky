@@ -7,7 +7,7 @@ VAR counter: INTEGER;
 
 BEGIN
     counter := 0;
-    maxIterations := 5;
+    maxIterations := 262144;
 
     WHILE TRUE DO
         INC(counter);

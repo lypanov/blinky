@@ -45,8 +45,10 @@ jobs:
         run: python3 tools/test_bl_fixup.py
       - name: Check AMMT BEGIN trampoline zeros light
         run: python3 sim/test_ammt_init.py
-      - name: Check BL writes R15 and Blink3 toggles
+      - name: Check Blink3 IMEM still has relocated BL
         run: python3 sim/test_bl_r15.py
+      - name: Check Blink3 delay loop is 262144
+        run: python3 sim/test_blink3_delay.py
       - name: Get Cached Verilator
         id: get-cached-verilator
         uses: actions/cache@v4

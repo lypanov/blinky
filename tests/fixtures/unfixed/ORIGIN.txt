@@ -6,8 +6,8 @@ AMemoryMappedToggle.code
   source today: tests/AMemoryMappedToggle.Mod (unchanged)
 
 Blink3test.code
-  git show e5743c8:tests/Blink3test.code
-  source today: tests/Blink3test.Mod (MODULE LightToggle; unchanged)
+  rebuilt with tests/Blink3test.Mod maxIterations := 262144
+  (ORP emits MHI R0, 4 / 0x60000004 in place of MOV R0, 5)
   includes the imported-call placeholder BL 0xf7102011
 
 Blink2test.code

@@ -20,6 +20,11 @@ from imem_layout import (  # noqa: E402
     BLINK3_BL_PC,
     BLINK3_ENTRY,
     BLINK3_LIGHT_ADDR,
+    BLINK3_MAXITER,
+    BLINK3_MAXITER_ADDR,
+    BLINK3_MAXITER_PC,
+    BLINK3_MAXITER_STORE_PC,
+    BLINK3_MHI_WORD,
     BLINK3_RETURN,
     BLINK3_TOGGLE,
     BLINK3_WRONG_LAND,
@@ -167,7 +172,7 @@ LT_SOURCE = {
     2: (9, "counter := 0"),
     3: (9, "SB := MT[2]"),
     4: (9, "store counter"),
-    5: (10, "maxIterations := 5"),
+    5: (10, "maxIterations := 262144  ; MHI R0, 4"),
     6: (10, "store maxIterations"),
     7: (12, "WHILE TRUE DO"),
     8: (13, "INC(counter)  ; reload SB"),
@@ -267,6 +272,10 @@ def build_blink3(imem_path: str) -> tuple[list[dict], dict]:
             mark = "call-bl"
         elif addr == BLINK3_RETURN:
             mark = "return-addr"
+        elif addr == BLINK3_MAXITER_PC:
+            mark = "delay-mhi"
+        elif addr == BLINK3_MAXITER_STORE_PC:
+            mark = "delay-store"
         entries.append(entry(
             addr, word,
             file="tests/Blink3test.Mod" if line else None,
@@ -355,6 +364,34 @@ def find_blink3_init(steps: list[dict]) -> dict | None:
     }
 
 
+def find_blink3_delay(steps: list[dict]) -> dict | None:
+    mhi_i = None
+    store_i = None
+    value = None
+    for i, c in enumerate(steps):
+        pc = int(c.get("pc") or 0)
+        if pc == BLINK3_MAXITER_PC and mhi_i is None:
+            mhi_i = i
+        if pc == BLINK3_MAXITER_STORE_PC and store_i is None:
+            store_i = i
+        dmem = c.get("dmem") or {}
+        rec = dmem.get(str(BLINK3_MAXITER_ADDR)) or dmem.get(BLINK3_MAXITER_ADDR)
+        if rec is not None and rec.get("value") == BLINK3_MAXITER:
+            value = rec["value"]
+    if mhi_i is None:
+        return None
+    return {
+        "max_iterations": BLINK3_MAXITER,
+        "mhi_word": BLINK3_MHI_WORD,
+        "mhi_pc": BLINK3_MAXITER_PC,
+        "store_pc": BLINK3_MAXITER_STORE_PC,
+        "addr": BLINK3_MAXITER_ADDR,
+        "value": value,
+        "mhi_step_index": mhi_i,
+        "store_step_index": store_i if store_i is not None else mhi_i,
+    }
+
+
 def find_blink3_failure(steps: list[dict]) -> dict | None:
     bl_i = None
     for i, c in enumerate(steps):
@@ -439,6 +476,10 @@ def annotate(trace: dict, program: list[dict], meta: dict) -> dict:
             cyc["mark"] = "module-init"
         elif pc == BLINK3_AMMT_BODY + 0x10:
             cyc["mark"] = "init-store"
+        elif pc == BLINK3_MAXITER_PC:
+            cyc["mark"] = "delay-mhi"
+        elif pc == BLINK3_MAXITER_STORE_PC:
+            cyc["mark"] = "delay-store"
     return trace
 
 
@@ -494,6 +535,7 @@ def main() -> int:
     if args.image == "blink3":
         trace["failure"] = find_blink3_failure(trace["cycles"])
         trace["init"] = find_blink3_init(trace["cycles"])
+        trace["delay"] = find_blink3_delay(trace["cycles"])
         trace["ammt_mod_offset"] = meta.get("ammt_mod_offset")
         trace["lt_mod_offset"] = meta.get("lt_mod_offset")
 
@@ -520,6 +562,7 @@ def main() -> int:
     print("[annotate] LED edges at cycles:", summary["toggle_cycles"])
     if args.image == "blink3":
         print("[annotate] init:", json.dumps(trace.get("init"), indent=2))
+        print("[annotate] delay:", json.dumps(trace.get("delay"), indent=2))
         print("[annotate] failure:", json.dumps(trace.get("failure"), indent=2))
     return 0
 

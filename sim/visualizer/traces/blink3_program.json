@@ -392,13 +392,13 @@
     },
     {
       "addr": 4188,
-      "hex": "40000005",
-      "disasm": "MOV R0, 0x5",
+      "hex": "60000004",
+      "disasm": "MHI R0, 0x4",
       "file": "tests/Blink3test.Mod",
       "line": 10,
-      "src": "maxIterations := 5;",
-      "note": "maxIterations := 5",
-      "mark": null
+      "src": "maxIterations := 262144;",
+      "note": "maxIterations := 262144  ; MHI R0, 4",
+      "mark": "delay-mhi"
     },
     {
       "addr": 4192,
@@ -406,9 +406,9 @@
       "disasm": "STW R0, [R13, 0x4]",
       "file": "tests/Blink3test.Mod",
       "line": 10,
-      "src": "maxIterations := 5;",
+      "src": "maxIterations := 262144;",
       "note": "store maxIterations",
-      "mark": null
+      "mark": "delay-store"
     },
     {
       "addr": 4196,
@@ -619,7 +619,7 @@
     "",
     "BEGIN",
     "    counter := 0;",
-    "    maxIterations := 5;",
+    "    maxIterations := 262144;",
     "",
     "    WHILE TRUE DO",
     "        INC(counter);",
@@ -667,7 +667,7 @@
         "",
         "BEGIN",
         "    counter := 0;",
-        "    maxIterations := 5;",
+        "    maxIterations := 262144;",
         "",
         "    WHILE TRUE DO",
         "        INC(counter);",

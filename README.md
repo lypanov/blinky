@@ -91,7 +91,7 @@ exposed to the internet:
 ssh -N -L 8765:127.0.0.1:8765 bee
 open http://127.0.0.1:8765/                 # Blink2
 open http://127.0.0.1:8765/?p=blink3        # Blink3
-open http://127.0.0.1:8765/?p=blink3&fail   # BL Toggle at 0x108C (R15 = 0x1090)
+open http://127.0.0.1:8765/?p=blink3&delay  # maxIterations := 262144 (MHI / dmem[0x74])
 open http://127.0.0.1:8765/?p=blink3&init   # AMMT BEGIN at 0x1028
 open http://127.0.0.1:8765/?p=blink3&light  # STW light := 0 at 0x1038
 ```
@@ -100,7 +100,7 @@ Same Wi-Fi as Bee, still not the internet: `tools/run_visualizer.sh --bind 0.0.0
 then `http://<bee-lan-ip>:8765/`.
 
 Keyboard: Space run/pause, `S` / `→` next instruction, `A` / `←` previous, `R`
-reset, `I` AMMT BEGIN, `L` light:=0, `F` jump to BL Toggle,
+reset, `I` AMMT BEGIN, `L` light:=0, `D` delay 262144, `F` jump to BL Toggle if present,
 `2` / `3` switch program, `[` / `]` speed.
 
 ---
