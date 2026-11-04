@@ -29,12 +29,12 @@ SETUP = [
 # Blink3 linked image (Python loader matching Modules.Mod). LightToggle entry = 0x1048.
 BLINK3_ENTRY = 0x1048
 BLINK3_AMMT_BODY = 0x1028  # AMemoryMappedToggle BEGIN (entries[0] = 40)
-BLINK3_INIT_CONT = 0x08    # trampoline continuation after AMMT BEGIN returns
+BLINK3_INIT_CONT = 0x04    # trampoline continuation after AMMT BEGIN returns (BL at 0 plants this)
 BLINK3_LIGHT_ADDR = 0x50
 BLINK3_BL_PC = 0x108C
 BLINK3_WRONG_LAND = 0x1050
 BLINK3_TOGGLE = 0x1000
-BLINK3_RETURN = 0x1090  # PC+4 of the BL; CPU never writes this to R15
+BLINK3_RETURN = 0x1090  # PC+4 of LightToggle's BL Toggle
 BLINK3_IMEM_WORDS = 0x1100 // 4  # 0x0000 .. 0x10FC
 
 
@@ -77,20 +77,18 @@ def mov_imm(rd: int, n: int) -> int:
 
 
 def blink3_startup_trampoline() -> list[tuple[int, int, str]]:
-    """Call AMMT BEGIN then LightToggle without using BL (CPU does not write R15).
+    """Stand-in for Modules.Load calling each module body.
 
-    Setup already BT R0s to address 0 with R15 = halt. We plant a return
-    address, B to AMMT's body, then restore halt and B to LightToggle.
+    BL plants R15 = PC+4 (same as Load's `body` statement). BEGIN returns
+    with BT R15 into the next word, which BL's LightToggle.
     """
     return [
-        (0x00, mov_imm(15, BLINK3_INIT_CONT),
-         "MOV R15, 0x08 ; AMMT BEGIN returns here (not BL)"),
-        (0x04, branch_offset_word(0x04, BLINK3_AMMT_BODY, link=False),
-         "B AMMT BEGIN at 0x1028 (light := 0)"),
-        (0x08, mov_imm(15, HALT_START),
-         "MOV R15, 0xB0 ; halt for LightToggle"),
-        (0x0C, branch_offset_word(0x0C, BLINK3_ENTRY, link=False),
-         "B LightToggle BEGIN at 0x1048"),
+        (0x00, branch_offset_word(0x00, BLINK3_AMMT_BODY, link=True),
+         "BL AMMT BEGIN at 0x1028 ; R15 := 0x04 (light := 0)"),
+        (0x04, branch_offset_word(0x04, BLINK3_ENTRY, link=True),
+         "BL LightToggle BEGIN at 0x1048 ; R15 := 0x08"),
+        (0x08, HALT_WORD,
+         "halt if LightToggle BEGIN returns"),
     ]
 
 

@@ -63,17 +63,18 @@ python3 tools/verify_raw_oberon_code.py   # raw code vs historical unfixed dumps
 tools/process_mod_files.sh         # compile tests/*.Mod; writes tests/raw/ *before* fixup
 ```
 
-The clone lands in `tools/project-norebo/` (gitignored). After the monorepo layout (PR #7) keep the pin and scripts in `tools/` and point them at `core/tests/`. `.rsc` object files are gitignored; the bit-for-bit check uses tiny hex dumps in `tests/fixtures/unfixed/`, not binary `.rsc` files. This does not fix the Python linker or CPU `BL`/`R15`.
+The clone lands in `tools/project-norebo/` (gitignored). After the monorepo layout (PR #7) keep the pin and scripts in `tools/` and point them at `core/tests/`. `.rsc` object files are gitignored; the bit-for-bit check uses tiny hex dumps in `tests/fixtures/unfixed/`, not binary `.rsc` files.
 
 ## Visualizer (Phase 2)
 
 Local web page (Python 3 stdlib HTTP server). Blink2 and Blink3 buttons load
 **real Verilator traces**. The Python loader relocates Blink3's `BL` at
-`0x108C` to Toggle (`0x1000`); the CPU still does not write R15. A sim-only
-startup trampoline at address 0 calls `AMemoryMappedToggle` BEGIN (`0x1028`)
-so `light` at `0x50` is 0, then branches to LightToggle. That is not blinking:
-Toggle still returns to halt. Stepping is one **instruction** (PC change),
-not one clock. `I` jumps to BEGIN, `L` to `light := 0`, `F` to the `BL`.
+`0x108C` to Toggle (`0x1000`). `BL` writes `R15 = PC + 4`, so Toggle returns
+into LightToggle's loop. A sim-only trampoline at address 0 uses `BL` (not
+planted `MOV R15`) to call `AMemoryMappedToggle` BEGIN (`0x1028`) then
+LightToggle — a static stand-in for `Modules.Load`'s `body` calls. Stepping
+is one **instruction** (PC change), not one clock. `I` jumps to BEGIN, `L`
+to `light := 0`, `F` to the `BL`.
 
 On Bee (this Linux PC):
 
@@ -89,7 +90,8 @@ exposed to the internet:
 ```sh
 ssh -N -L 8765:127.0.0.1:8765 bee
 open http://127.0.0.1:8765/                 # Blink2
-open http://127.0.0.1:8765/?p=blink3        # Blink3 (R15 still dropped)
+open http://127.0.0.1:8765/?p=blink3        # Blink3
+open http://127.0.0.1:8765/?p=blink3&fail   # BL Toggle at 0x108C (R15 = 0x1090)
 open http://127.0.0.1:8765/?p=blink3&init   # AMMT BEGIN at 0x1028
 open http://127.0.0.1:8765/?p=blink3&light  # STW light := 0 at 0x1038
 ```
@@ -98,7 +100,7 @@ Same Wi-Fi as Bee, still not the internet: `tools/run_visualizer.sh --bind 0.0.0
 then `http://<bee-lan-ip>:8765/`.
 
 Keyboard: Space run/pause, `S` / `→` next instruction, `A` / `←` previous, `R`
-reset, `I` AMMT BEGIN, `L` light:=0, `F` jump to the BL (R15 still dropped),
+reset, `I` AMMT BEGIN, `L` light:=0, `F` jump to BL Toggle,
 `2` / `3` switch program, `[` / `]` speed.
 
 ---

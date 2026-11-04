@@ -404,6 +404,39 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     }
   }
 
+  it should "write R15 = PC+4 on BL and return via BT R15" in {
+    // User code at 0 (setup at 0x80 BT R0s here). BL must plant LNK so BT R15
+    // returns to the instruction after the call, not to the preloaded halt.
+    val testId = "bl_r15_test"
+    checkTestFilter(testId)
+    val traceFile = initializeTest(testId)
+
+    val blTestInstructions = Seq(
+      "F7000002", // BL always, off=2  ; call 0x0C, R15 := 0x04
+      "400000AA", // MOV R0, 0xAA      ; return address — skipped if R15 not written
+      "E7FFFFFF", // halt
+      "410000BB", // MOV R1, 0xBB      ; subroutine
+      "C700000F"  // BT R15
+    )
+
+    printInstructionsToTrace("BL writes R15 (PC+4) Test Instructions", blTestInstructions)
+
+    test(new CPUTestbenchWrapper(blTestInstructions)) { dut =>
+      dut.clock.setTimeout(100)
+      val cyclesRun = runTillHalt(dut, 40)
+      println(s"BL R15 test ran for $cyclesRun cycles")
+
+      val r0Value = dut.io.r0.peek().litValue.toInt
+      val r1Value = dut.io.r1.peek().litValue.toInt
+      val pcValue = dut.io.pc.peek().litValue.toInt
+      println(s"After BL/BT: R0=0x${r0Value.toHexString.toUpperCase()} R1=0x${r1Value.toHexString.toUpperCase()} PC=0x${pcValue.toHexString.toUpperCase()}")
+
+      assert(r1Value == 0xBB, s"subroutine should have run (R1=0xBB), got $r1Value")
+      assert(r0Value == 0xAA, s"BL must write R15=PC+4 so BT R15 returns to MOV R0,0xAA; R0=$r0Value")
+      assert(pcValue == 0x08, s"should halt at 0x08 after return, PC=0x${pcValue.toHexString}")
+    }
+  }
+
   it should "correctly execute LDW (Load Word) instruction" in {
     // Test program for LDW instruction
     // The memory pattern is 0x0000BEE0 to 0x0000BEE7 at addresses 0-7
@@ -596,8 +629,8 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
     }
   }
   
-  // Blink3/system-image is unfinished on main (BL does not save R15, IMEM too
-  // small, linker still rough). The test times out waiting for LED writes.
+  // Full final_system.code image in this wrapper is still ignored: IMEM
+  // layout and the sim trampoline live in sim/, not this mill test.
   it should "correctly execute system image from final_system.code with trampoline" ignore {
     val testId = "final_system_code_test"
     checkTestFilter(testId)

@@ -39,7 +39,9 @@ def main() -> int:
     with socketserver.TCPServer((args.bind, args.port), handler) as httpd:
         url = f"http://{args.bind}:{args.port}/"
         print(f"RISC5 visualizer at {url}", flush=True)
-        print(f"Blink3 failure: {url}?p=blink3", flush=True)
+        print(f"Blink3: {url}?p=blink3", flush=True)
+        print(f"  BL:   {url}?p=blink3&fail", flush=True)
+        print(f"  INIT: {url}?p=blink3&init", flush=True)
         if args.bind in ("127.0.0.1", "localhost"):
             print("From the Mac:  ssh -N -L %d:127.0.0.1:%d bee" % (args.port, args.port), flush=True)
         print("Ctrl-C to stop.", flush=True)
