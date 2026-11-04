@@ -1,0 +1,135 @@
+// Tang Primer 20K Dock (GW2A-LV18PG256C8/I7, gw2a18c-011) constraints
+// for hoglet67/BeebFpga bbc_micro_tang20k.
+//
+// Based on src/gowin/tang_primer20k/src/bbc_micro_tang20k.cst at 49c63cc.
+// Dock checks against docs/primer20k/board-notes.md and the NESTang v0.4
+// Dock CST that already produced HDMI on this board:
+//
+//   Clock H11, HDMI pairs, SD SPI and PS/2 balls match the Dock.
+//   Changes vs upstream:
+//     * btn2_n (T3) and btn3_n (D7) are bank 4, 1.5 V. Upstream said
+//       LVCMOS33. NESTang uses LVCMOS15 on D7. Internal pull-up so a
+//       floating key cannot look pressed.
+//     * btn1_n (T10, S1, active-low reset) pull-up. Held low keeps reset.
+//     * ws2812_din was unconstrained. Place it on the onboard LED, T9,
+//       instead of letting Gowin auto-place an output.
+//     * Keyboard comment: balls T11/P11 are Dock PMOD J12 (this repo's
+//       PMOD2), not "PMOD1". clk=T11, data=P11, as upstream.
+//
+// SPI flash balls stay constrained so they are not auto-placed, but the
+// Bee build sets IncludeBootStrap=false. Those pins are held inactive
+// (CS high). Do not program the flash. SRAM load is JTAG only.
+
+// System Clock (27 MHz)
+IO_LOC  "sys_clk" H11;
+IO_PORT "sys_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// Button 1 — S1, active-low reset. SSPI ball, so the build sets
+// use_sspi_as_gpio. Pull-up: open button is not reset.
+IO_LOC  "btn1_n" T10;
+IO_PORT "btn1_n" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// Button 2 — S2, bank 4, 1.5 V. HDMI/DVI toggle. Not LVCMOS33.
+IO_LOC  "btn2_n" T3;
+IO_PORT "btn2_n" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+
+// Keyboard — Dock PMOD J12 (PMOD2). PS/2 clk T11, data P11.
+IO_LOC  "ps2_clk" T11;
+IO_PORT "ps2_clk" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "ps2_data" P11;
+IO_PORT "ps2_data" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// Mouse — same header, T12 / R11.
+IO_LOC  "ps2_mouse_clk" T12;
+IO_PORT "ps2_mouse_clk" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC  "ps2_mouse_data" R11;
+IO_PORT "ps2_mouse_data" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// 1-bit VGA on PMOD J14 (mic header). Not the Dock HDMI port.
+IO_LOC "vga_vs" T6;
+IO_PORT "vga_vs" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "vga_hs" P6;
+IO_PORT "vga_hs" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "vga_r" T7;
+IO_PORT "vga_r" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "vga_g" R8;
+IO_PORT "vga_g" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC "vga_b" T8;
+IO_PORT "vga_b" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// Button 3 — S4, bank 4, 1.5 V.
+IO_LOC "btn3_n" D7;
+IO_PORT "btn3_n" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+
+// HDMI / DVI-TX on Dock J3. ELVDS_OBUF pairs, same balls as
+// Sipeed dk_video.cst and NESTang v0.4 nestang_dock.cst.
+//   clock  G16/H15
+//   data0  H14/H16
+//   data1  J15/K16
+//   data2  K14/K15
+IO_LOC "tmds_d_p[0]" H14,H16;
+IO_PORT "tmds_d_p[0]" PULL_MODE=NONE;
+IO_LOC "tmds_d_p[1]" J15,K16;
+IO_PORT "tmds_d_p[1]" PULL_MODE=NONE;
+IO_LOC "tmds_d_p[2]" K14,K15;
+IO_PORT "tmds_d_p[2]" PULL_MODE=NONE;
+IO_LOC "tmds_clk_p" G16,H15;
+IO_PORT "tmds_clk_p" PULL_MODE=NONE;
+
+// I2S / amp enable. Upstream balls (IOT side, not bank 4).
+IO_LOC  "i2s_lrclk" P16;
+IO_PORT "i2s_lrclk" IO_TYPE=LVCMOS33;
+IO_LOC  "i2s_bclk" N15;
+IO_PORT "i2s_bclk" IO_TYPE=LVCMOS33;
+IO_LOC  "i2s_din" P15;
+IO_PORT "i2s_din" IO_TYPE=LVCMOS33;
+IO_LOC  "pa_en" R16;
+IO_PORT "pa_en" IO_TYPE=LVCMOS33;
+
+// microSD in SPI mode. Matches the Dock balls in board-notes.md:
+//   clk N10, cmd/mosi R14, dat0/miso M8, dat3/cs N11.
+// DAT1 (M7) and DAT2 (M10) stay undriven.
+IO_LOC  "tf_cs" N11;
+IO_PORT "tf_cs" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC  "tf_mosi" R14;
+IO_PORT "tf_mosi" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC  "tf_sclk" N10;
+IO_PORT "tf_sclk" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+IO_LOC  "tf_miso" M8;
+IO_PORT "tf_miso" IO_TYPE=LVCMOS33 PULL_MODE=NONE;
+
+// BL702 USB-UART. Do not use this for a second console while loading.
+IO_LOC  "uart_tx" M11;
+IO_PORT "uart_tx" IO_TYPE=LVCMOS33;
+IO_LOC  "uart_rx" T13;
+IO_PORT "uart_rx" IO_TYPE=LVCMOS33;
+
+// User LEDs, active-low. led[0]=C13 is DONE, led[1]=A13 is READY.
+IO_LOC  "led[5]" L16;
+IO_PORT "led[5]" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC  "led[4]" L14;
+IO_PORT "led[4]" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC  "led[3]" N14;
+IO_PORT "led[3]" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC  "led[2]" N16;
+IO_PORT "led[2]" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC  "led[1]" A13;
+IO_PORT "led[1]" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC  "led[0]" C13;
+IO_PORT "led[0]" PULL_MODE=UP IO_TYPE=LVCMOS33;
+
+// Onboard WS2812 data. Upstream left this port unconstrained.
+IO_LOC  "ws2812_din" T9;
+IO_PORT "ws2812_din" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+// Config flash pins, held idle by IncludeBootStrap=false.
+// The build sets use_mspi_as_gpio so these are user IO, not a flash writer.
+// Never pass openFPGALoader -f.
+IO_LOC  "flash_cs" M9;
+IO_PORT "flash_cs" IO_TYPE=LVCMOS33;
+IO_LOC  "flash_ck" L10;
+IO_PORT "flash_ck" IO_TYPE=LVCMOS33;
+IO_LOC  "flash_si" R10;
+IO_PORT "flash_si" IO_TYPE=LVCMOS33;
+IO_LOC  "flash_so" P10;
+IO_PORT "flash_so" IO_TYPE=LVCMOS33 PULL_MODE=UP;

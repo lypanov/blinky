@@ -1,0 +1,3 @@
+[submodule "retro/beebfpga"]
+	path = retro/beebfpga
+	url = https://github.com/hoglet67/BeebFpga.git
