@@ -8,6 +8,7 @@ import unittest
 from blink_trust import (
     PREDICTED_BLINK3_HZ,
     choose_trusted,
+    named_board,
     parse_roi_arg,
     search_window,
 )
@@ -36,6 +37,12 @@ class RoiTests(unittest.TestCase):
     def test_bad_roi(self) -> None:
         with self.assertRaises(ValueError):
             parse_roi_arg("left")
+
+    def test_named_board(self) -> None:
+        self.assertEqual(named_board("nano4k"), "nano4k")
+        self.assertEqual(named_board("primer-20k"), "primer20k")
+        self.assertIsNone(named_board("top"))
+        self.assertIsNone(named_board(None))
 
 
 class TrustTests(unittest.TestCase):

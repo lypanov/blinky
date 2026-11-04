@@ -31,6 +31,26 @@ REGION_ALIASES = {
     "20k": "top",
 }
 
+# Board names for LED-geometry targeting. analyze_blink.py still maps these
+# to top/bottom as a fallback when detect_leds has not run.
+BOARD_NAMES = {
+    "nano4k": "nano4k",
+    "tang-nano-4k": "nano4k",
+    "tangnano4k": "nano4k",
+    "4k": "nano4k",
+    "primer20k": "primer20k",
+    "primer-20k": "primer20k",
+    "20k": "primer20k",
+}
+
+
+def named_board(spec: str | None) -> str | None:
+    """Return nano4k / primer20k when roi is a board name, else None."""
+    if spec is None:
+        return None
+    key = spec.strip().lower().replace(" ", "")
+    return BOARD_NAMES.get(key)
+
 
 def predicted_blink3() -> dict[str, float | int | str]:
     return {

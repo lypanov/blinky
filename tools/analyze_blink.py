@@ -509,13 +509,13 @@ def analyze(
         brightness.append(float(np.mean(np.maximum(patch[:, :, 0] - patch[:, :, 1], 0.0))))
     brightness = np.asarray(brightness, dtype=np.float64)
 
-    # Prefer fps implied by the kept samples if probe duration is trustworthy.
-    probed_n = meta.get("n_frames")
+    # Prefer fps implied by decoded frames / duration. Container avg_frame_rate
+    # is the requested 30 fps even when this Logitech only delivered ~6.
+    probed_n = n if n else meta.get("n_frames")
     probed_d = meta.get("duration")
-    if probed_n and probed_d and probed_d > 0:
-        fps_from_file = (probed_n - 1) / probed_d if probed_n > 1 else fps
-        # Only replace if close — container copy can have odd nb_frames.
-        if 0.5 * fps < fps_from_file < 1.5 * fps:
+    if probed_n and probed_d and probed_d > 0 and probed_n > 1:
+        fps_from_file = (probed_n - 1) / probed_d
+        if fps_from_file >= 4.0:
             fps = fps_from_file
 
     meas = measure_series(brightness, fps)
