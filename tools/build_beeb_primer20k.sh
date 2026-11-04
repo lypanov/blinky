@@ -225,12 +225,17 @@ if old_gen not in text:
     raise SystemExit("could not insert IncludeVGA into the core generic map")
 text = text.replace(old_gen, new_gen, 1)
 old_div = "            RESETN => clkdiv_reset_n,\n            HCLKIN => clock_135,"
-new_div = "            RESETN => '1', -- no hsync_ref; free-run like the updated tang20k top\n            HCLKIN => clock_135,"
+new_div = "            RESETN => pll2_lock, -- release /5 only after the 135 MHz PLL locks\n            HCLKIN => clock_135,"
 if old_div not in text:
     raise SystemExit("could not retie clkdiv5 RESETN")
 text = text.replace(old_div, new_div, 1)
+old_oser = "                FCLK  => clock_135,\n                RESET => '0',"
+new_oser = "                FCLK  => clock_135,\n                RESET => not pll2_lock,"
+if text.count(old_oser) != 4:
+    raise SystemExit(f"expected 4 OSER10 resets, found {text.count(old_oser)}")
+text = text.replace(old_oser, new_oser)
 old_tie = "    vid_debug      <= '0';\n"
-new_tie = "    vid_debug      <= '0';\n    hsync_ref      <= '0'; -- port removed from the core; divider no longer waits on it\n"
+new_tie = "    vid_debug      <= '0';\n    hsync_ref      <= '0'; -- port removed from the core; CLKDIV waits on pll2_lock\n"
 if old_tie not in text:
     raise SystemExit("could not tie hsync_ref")
 text = text.replace(old_tie, new_tie, 1)

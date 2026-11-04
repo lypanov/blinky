@@ -24,8 +24,11 @@ with nothing driving the input, came back as a pure black 1024x576 PNG
 1360x768, 1280x1024, 1280x960, 1280x720, 1024x768, 800x600, 720x576,
 720x480. Most sizes do 60/50/30/20/10 fps. 2560x1440 tops out at 30.
 
-BeebFpga HDMI on this Dock is 720x480 (858x525 at a 27 MHz pixel clock).
-720x480 is the mode to open for that bitstream.
+BeebFpga HDMI on this Dock is the scandoubler 50 Hz mode: a 27 MHz
+pixel clock and a 720x576 active window. Open 720x576, and also try
+1280x720. On 4 Nov 2026 the card locked a 1280x720 NESTang picture on
+this cable and returned a flat field for the Beeb stream. The grabs
+are in `docs/primer20k/beeb.md`.
 
 ## Commands
 

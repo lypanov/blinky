@@ -36,9 +36,10 @@ VGA output is enabled (`IncludeVGA`).
 `hdmi_audio_*`, `vid_mode` or `hsync_ref`. The Primer 20K top in the
 submodule was not updated. The build writes a patched copy under
 `retro/beeb/build/` (gitignored) and uses that as the top. The patch
-follows the Tang Nano 20K top: map `vga_*` onto the existing VGA pins,
-and let the pixel-clock `CLKDIV` free-run (`RESETN` tied to 1) instead
-of waiting for `hsync_ref`.
+maps `vga_*` onto the existing VGA pins. `hsync_ref` is tied low,
+because that port is gone and the old process that released the
+pixel-clock divider on hsync never runs. `CLKDIV` for `clock_27`, and
+the four `OSER10` serializers, stay in reset until `pll2_lock`.
 
 ## ROMs, without writing flash
 
@@ -108,8 +109,8 @@ Gowin 1.9.12.04, device GW2A-LV18PG256C8/I7 (`gw2a18c-011`). Reports:
 
 | Resource | Used | Device | |
 |---|---:|---:|---:|
-| Logic | 10584 | 20736 | 52% |
-| of which LUT | 9542 | | |
+| Logic | 10441 | 20736 | 51% |
+| of which LUT | 9399 | | |
 | ALU | 976 | | |
 | Register | 4719 | 16173 | 30% |
 | BSRAM | 46 | 46 | 100% |
@@ -124,10 +125,10 @@ without deleting something else.
 | Clock | Constraint | Fmax | Setup violations | Hold violations |
 |---|---:|---:|---:|---:|
 | `sys_clk` | 27.000 MHz (37.037 ns) | (no fabric paths) | 0 | 0 |
-| `clock_27` | 27.000 MHz | 119.046 MHz | 0 | 0 |
-| `clock_48` | 48.000 MHz | 65.094 MHz | 0 | 0 |
-| `clock_96` | 96.000 MHz | 309.387 MHz | 0 | 0 |
-| `i2s_clk` | 6.144 MHz | 313.295 MHz | 0 | 0 |
+| `clock_27` | 27.000 MHz | 105.244 MHz | 0 | 0 |
+| `clock_48` | 48.000 MHz | 62.995 MHz | 0 | 0 |
+| `clock_96` | 96.000 MHz | 280.230 MHz | 0 | 0 |
+| `i2s_clk` | 6.144 MHz | 311.770 MHz | 0 | 0 |
 | `clock_135` | PLL 135 MHz, not in the SDC | (OSER10, no fabric Fmax) | | |
 
 Setup-violated endpoints: 0. Hold-violated endpoints: 11, all in
@@ -144,14 +145,38 @@ bitstream is still generated. HDMI does not depend on the I2S DAC.
 
 ## HDMI
 
-The core's HDMI timing is 720x480 active, 858x525 total, pixel clock
-`clock_27` (27 MHz), serial clock `clock_135`. Capture that mode on
-the UGREEN card: [`docs/capture-card.md`](../capture-card.md).
+Pixel clock `clock_27` is 27 MHz. Serial clock `clock_135` is 135 MHz.
+The 720x480 counters in `hdmi.vhd` are commented out. The stream is the
+scandoubler: 32 µs lines, a line buffer 864 deep, sampled at 27 MHz.
+HDMI audio is enabled at power-up, and that path's active window is
+720 by 576 lines with a vertical offset of 39. That is the upstream
+50 Hz mode.
 
-Reset is about 2^24 cycles of the 48 MHz clock (a third of a second)
-after configuration, and for as long as S1 is held. Wait about a
-second before grabbing the boot screen (`BBC Computer 32K` then
-`BASIC`).
+Reset lasts about 2^24 cycles of the 48 MHz clock (a third of a second)
+after configuration, and for as long as S1 is held.
+
+### Capture on 4 Nov 2026
+
+The bitstream was SRAM-loaded on bus 3 device 78 (`-m`, RAM only).
+After the reset interval the UGREEN 15389 (`/dev/video0`) was grabbed
+at 720x480, 720x576 and 1280x720, in MJPG and YUYV, at 50 fps and at
+60 fps. Commands are in [`docs/capture-card.md`](../capture-card.md).
+Every frame was a flat field. The 720x576 YUYV frame is RGB (0, 0, 0).
+The `BBC Computer 32K` / `BASIC` banner was not in the picture.
+
+![BBC HDMI grab, 720x576 YUYV, flat black](beeb/capture-720x576.png)
+
+The same card and the same cable did lock a 1280x720 source. A SRAM
+load of the local NESTang Dock bitstream (GW2A-18C, 1280x720, not part
+of this repo) showed colour bars at 1280x720. Opening that source as
+720x480 showed the card's "No Signal" overlay. 720p locks on this
+card. This Beeb stream did not.
+
+![NESTang 720p on the same capture card](beeb/nestang-720p.png)
+
+PMOD J12 had no PS/2 keyboard, so no key was sent. After the grabs the
+20K was SRAM-loaded back to Blink3 (`blink3_n262144.fs`, N=262144, bus
+3 device 78).
 
 ## Games on SD (not in git)
 
