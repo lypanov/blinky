@@ -8,6 +8,7 @@ import unittest
 from blink_trust import (
     PREDICTED_BLINK3_HZ,
     choose_trusted,
+    named_board,
     parse_roi_arg,
     search_window,
 )
@@ -37,6 +38,12 @@ class RoiTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_roi_arg("left")
 
+    def test_named_board(self) -> None:
+        self.assertEqual(named_board("nano4k"), "nano4k")
+        self.assertEqual(named_board("primer-20k"), "primer20k")
+        self.assertIsNone(named_board("top"))
+        self.assertIsNone(named_board(None))
+
 
 class TrustTests(unittest.TestCase):
     def test_agreeing_detectors_trust_edge(self) -> None:
@@ -49,8 +56,19 @@ class TrustTests(unittest.TestCase):
         )
         self.assertEqual(method, "edge")
 
-    def test_undercount_at_6_9_hz_trusts_fft(self) -> None:
-        # Historical case: true ~6.85 Hz, edge detector reported ~half.
+    def test_disagreement_is_untrusted(self) -> None:
+        # Steady 20K LED whose FFT leaked the Nano 4K 3.43 Hz blink.
+        method, reason = choose_trusted(
+            edge_hz=3.941,
+            fft_hz=3.430,
+            fft_snr=22.5,
+            edge_count=40,
+            duration_s=8.0,
+        )
+        self.assertEqual(method, "untrusted")
+        self.assertIn("disagree", reason)
+
+    def test_undercount_disagreement_is_untrusted(self) -> None:
         method, reason = choose_trusted(
             edge_hz=3.45,
             fft_hz=6.852,
@@ -58,8 +76,8 @@ class TrustTests(unittest.TestCase):
             edge_count=40,
             duration_s=25.0,
         )
-        self.assertEqual(method, "fft")
-        self.assertIn("undercount", reason)
+        self.assertEqual(method, "untrusted")
+        self.assertIn("disagree", reason)
 
     def test_no_edges_uses_fft(self) -> None:
         method, _ = choose_trusted(

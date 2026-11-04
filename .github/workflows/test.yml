@@ -53,6 +53,8 @@ jobs:
         run: python3 tools/webcam-mcp/test_controls.py
       - name: Check blink detector arbitration and named ROIs
         run: python3 tools/test_blink_trust.py
+      - name: Check LED colour / geometry / blink classification
+        run: python3 tools/test_led_detect.py
       - name: Check blink analyzer self-test (edge + FFT on a synthetic 2 Hz clip)
         run: python3 tools/analyze_blink.py --self-test
       - name: Get Cached Verilator

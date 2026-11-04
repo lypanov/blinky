@@ -32,20 +32,17 @@ from controls import (
     apply_saved_controls,
     current_values,
     driver_defaults,
-    freeze_auto_exposure,
     list_device_controls,
     load_saved_controls,
-    measure_jpeg,
     resolve_updates,
     save_device_controls,
-    suggest_nudge,
-    well_exposed,
+    state_path,
 )
 
 _TOOLS_DIR = Path(__file__).resolve().parent.parent
 if str(_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(_TOOLS_DIR))
-from blink_trust import parse_roi_arg  # noqa: E402
+from blink_trust import named_board, parse_roi_arg  # noqa: E402
 
 HOST_DEFAULT = "127.0.0.1"
 PORT_DEFAULT = 8766
@@ -56,8 +53,38 @@ LOCK_TIMEOUT_S = 120.0
 FFMPEG_TIMEOUT_S = 25.0
 ANALYZE_PYTHON = os.environ.get("WEBCAM_MCP_ANALYZE_PYTHON", "/usr/bin/python3")
 ANALYZE_SCRIPT = Path(__file__).resolve().parent.parent / "analyze_blink.py"
+LED_DETECT_SCRIPT = Path(__file__).resolve().parent.parent / "led_detect.py"
 BLINK_DIR = Path(os.environ.get("WEBCAM_MCP_BLINK_DIR", Path.home() / "fpga" / "blink-measure"))
-AUTO_ADJUST_MAX_ITERS = 8
+AUTO_ADJUST_MAX_ITERS = 10
+# LED-priority profile: dark background, unclipped coloured cores, manual WB.
+# Mean luma is not the target (that washed the Logitech and bloomed the LEDs).
+#
+# Bee's QuickCam Pro (046d:0991) delivers fps ≈ exposure_time_absolute/10
+# until it caps at 30. Short shutter (50–110) looks great on a still but
+# records ~6 fps, which aliases Blink3's 3.43 Hz to ~2.56 Hz. Keep exposure
+# >= 250 so MJPEG copy actually runs at 25–30 fps.
+LED_PROFILE = {
+    "auto_exposure": 1,
+    "white_balance_automatic": 0,
+    "white_balance_temperature": 4000,
+    "brightness": 128,
+    "contrast": 40,
+    "saturation": 64,
+    "backlight_compensation": 0,
+    "exposure_dynamic_framerate": 0,
+}
+LED_GAIN_EXP = [
+    (48, 300),
+    (64, 300),
+    (80, 300),
+    (40, 300),
+    (96, 300),
+    (32, 300),
+    (112, 300),
+]
+# gain 16 is only tried when cores are already too bright (see auto_adjust).
+LED_GAIN_LOW = (16, 300)
+AUTO_ADJUST_HYSTERESIS = 12.0
 # Optional per-call software eq, off by default. The previous capture_still
 # default (brightness=0.25/contrast=1.6/gamma=1.8) washed out the Logitech.
 ENHANCE_VF = "eq=brightness=0.25:contrast=1.6:gamma=1.8"
@@ -74,18 +101,15 @@ mcp = MCPServer(
         "default; pass enhance=true only for an optional mild software eq. "
         "If a frame looks washed out or too dark, call get_camera_controls, "
         "then set_camera_controls (brightness/contrast/gain/auto_exposure/"
-        "exposure/white_balance) or auto_adjust. reset_camera_controls restores "
-        "driver defaults. Settings persist across captures and service restarts. "
-        "Three capture tools: capture_still (one JPEG), capture_burst (N JPEGs "
-        "from one open camera), capture_video (one continuous clip, camera held "
-        "open). measure_blink records via capture_video (or analyzes a clip path "
-        "that tool returned) and reports BOTH the edge/threshold rate and the FFT "
-        "rate (trust FFT when edges undercount, historically ~6.9 Hz), plus "
-        "brightness.png and roi.png. roi may be auto, top, bottom, nano4k "
-        "(bottom on Bee), primer20k (top), or x,y,w,h. Named halves prepare for "
-        "two boards in one frame; this tool still meters one LED. "
-        "Does not touch the FPGA or serial ports. Stills/clips go under "
-        "~/fpga/captures/; blink runs under ~/fpga/blink-measure/."
+        "exposure/white_balance) or auto_adjust. auto_adjust exposes for LED "
+        "blobs (colour, compactness, no bloom) — not mean luma — and sets "
+        "manual white balance/saturation so orange vs red is visible. "
+        "detect_leds records a short clip, classifies each LED as blinking or "
+        "steady, and assigns boards from geometry+colour (nano4k = two LEDs, "
+        "primer20k = three, orange vs red). measure_blink(roi=nano4k|primer20k) "
+        "uses those detected positions. roi may also be auto, top, bottom, or "
+        "x,y,w,h. Does not touch the FPGA or serial ports. Stills/clips go "
+        "under ~/fpga/captures/; blink runs under ~/fpga/blink-measure/."
     ),
 )
 
@@ -196,7 +220,9 @@ def grab_still(device: str, out: Path, width: int, height: int, warmup_frames: i
         "-nostdin",
         "-y",
         "-f", "v4l2",
+        "-input_format", "mjpeg",
         "-video_size", f"{width}x{height}",
+        "-framerate", "30",
         "-i", device,
         "-frames:v", str(frames),
         "-update", "1",
@@ -548,6 +574,92 @@ def capture_video(
         )
 
 
+def led_cache_path() -> Path:
+    return state_path().parent / "leds.json"
+
+
+def load_led_cache() -> dict[str, Any] | None:
+    path = led_cache_path()
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def save_led_cache(data: dict[str, Any]) -> Path:
+    path = led_cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def run_led_detect_jpeg(path: Path) -> dict[str, Any]:
+    if not LED_DETECT_SCRIPT.is_file():
+        raise RuntimeError(f"missing {LED_DETECT_SCRIPT}")
+    proc = subprocess.run(
+        [ANALYZE_PYTHON, str(LED_DETECT_SCRIPT), "--jpeg", str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+    )
+    return json.loads(proc.stdout)
+
+
+def resolve_detected_roi(board: str, detection: dict[str, Any]) -> str | None:
+    info = (detection.get("boards") or {}).get(board)
+    if not info:
+        return None
+    roi = info.get("measure_roi")
+    if not roi:
+        return None
+    return f"{int(roi['x'])},{int(roi['y'])},{int(roi['w'])},{int(roi['h'])}"
+
+
+def run_led_detect_video(video: Path, annotated: Path, json_path: Path) -> dict[str, Any]:
+    if not LED_DETECT_SCRIPT.is_file():
+        raise RuntimeError(f"missing {LED_DETECT_SCRIPT}")
+    annotated.parent.mkdir(parents=True, exist_ok=True)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        ANALYZE_PYTHON,
+        str(LED_DETECT_SCRIPT),
+        "--video", str(video),
+        "--annotate", str(annotated),
+        "--json", str(json_path),
+        "--max-frames", "240",
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, check=True, capture_output=True, text=True, timeout=90.0
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip() or str(exc)
+        raise RuntimeError(f"led_detect.py failed: {detail}") from exc
+    if json_path.is_file():
+        return json.loads(json_path.read_text(encoding="utf-8"))
+    return json.loads(proc.stdout)
+
+
+def _knob_snapshot(values: dict[str, int]) -> dict[str, int]:
+    keys = (
+        "brightness",
+        "contrast",
+        "saturation",
+        "gain",
+        "auto_exposure",
+        "exposure_time_absolute",
+        "white_balance_automatic",
+        "white_balance_temperature",
+        "backlight_compensation",
+        "exposure_dynamic_framerate",
+    )
+    return {name: values[name] for name in keys if name in values}
+
+
 @mcp.tool()
 def auto_adjust(
     device: str = DEFAULT_DEVICE,
@@ -556,94 +668,244 @@ def auto_adjust(
     max_iters: int = AUTO_ADJUST_MAX_ITERS,
     target_mean: float = TARGET_MEAN,
 ) -> list:
-    """Capture, measure mean luminance / clipping, and nudge v4l2 controls.
+    """Expose so FPGA LEDs are distinct, unclipped, and coloured.
 
-    Nudges gain, then brightness. Switches auto_exposure to Manual only if
-    exposure_time_absolute itself must move. Stops when mean luma is near
-    target_mean (default 115) without highlight clipping. Persists the
-    exposure knobs. Returns a summary plus the last JPEG.
+    Does **not** target mean luma (that washed Bee's Logitech and bloomed
+    the LEDs). Applies a manual AE/AWB LED profile, then searches gain and
+    shutter for compact red/orange blobs with orange-vs-red hue remaining.
+    target_mean is ignored (kept so old callers do not break). Persists the
+    knobs. Returns before and after JPEGs.
     """
+    del target_mean
     device = parse_device(device)
     width, height = parse_size(resolution)
     if warmup_frames < 0 or warmup_frames > 60:
         raise ValueError("warmup_frames must be 0..60")
     if max_iters < 1 or max_iters > 20:
         raise ValueError("max_iters must be 1..20")
-    if target_mean < 40 or target_mean > 200:
-        raise ValueError("target_mean must be 40..200")
 
     history: list[dict[str, Any]] = []
-    raw: Path | None = None
-    applied_any: dict[str, int] = {}
+    before: Path | None = None
+    best_path: Path | None = None
+    best_score = -1e9
+    best_ctrls: dict[str, int] = {}
     with camera_lock():
         prepare_device(device)
-        for i in range(max_iters):
-            raw, _ = still_paths(device, suffix=f"auto{i:02d}")
-            grab_still(device, raw, width, height, warmup_frames)
-            metrics = measure_jpeg(raw, width, height)
-            known = {c["name"]: c for c in list_device_controls(device)}
-            values = current_values(list(known.values()))
-            nudge = suggest_nudge(known, metrics, target_mean=target_mean)
+        before, _ = still_paths(device, suffix="auto-before")
+        grab_still(device, before, width, height, warmup_frames)
+        before_metrics = run_led_detect_jpeg(before)
+        history.append(
+            {
+                "iter": "before",
+                "path": str(before),
+                "metrics": {k: v for k, v in before_metrics.items() if k != "blobs"},
+                "values": _knob_snapshot(current_values(list_device_controls(device))),
+            }
+        )
+
+        apply_control_updates(device, dict(LED_PROFILE))
+        saved = load_saved_controls().get(device, {})
+        candidates: list[dict[str, int]] = []
+        seen_gain_exp: set[tuple[int, int]] = set()
+
+        def add_cand(gain: int, exp: int, extra: dict[str, int] | None = None) -> None:
+            key = (int(gain), int(exp))
+            if extra is None and key in seen_gain_exp:
+                return
+            if extra is None:
+                seen_gain_exp.add(key)
+            cand = dict(LED_PROFILE)
+            cand["gain"] = int(gain)
+            cand["exposure_time_absolute"] = int(exp)
+            if extra:
+                cand.update(extra)
+            candidates.append(cand)
+
+        # Score the persisted knobs first so close ties keep a stable setting.
+        if isinstance(saved.get("gain"), int) and isinstance(
+            saved.get("exposure_time_absolute"), int
+        ):
+            extra = {}
+            if isinstance(saved.get("saturation"), int):
+                extra["saturation"] = saved["saturation"]
+            if isinstance(saved.get("white_balance_temperature"), int):
+                extra["white_balance_temperature"] = saved["white_balance_temperature"]
+            add_cand(saved["gain"], saved["exposure_time_absolute"], extra or None)
+        for gain, exp in LED_GAIN_EXP:
+            add_cand(gain, exp)
+        extra_wb_sat = [
+            {"white_balance_temperature": 3200},
+            {"white_balance_temperature": 3800, "saturation": 80},
+            {"saturation": 80},
+            {"saturation": 48, "white_balance_temperature": 3800},
+        ]
+
+        def capture_scored(label: str, warmup: int) -> dict[str, Any]:
+            nonlocal best_score, best_path, best_ctrls
+            raw, _ = still_paths(device, suffix=label)
+            grab_still(device, raw, width, height, warmup)
+            metrics = run_led_detect_jpeg(raw)
+            values = _knob_snapshot(current_values(list_device_controls(device)))
             step = {
-                "iter": i,
+                "iter": label,
                 "path": str(raw),
-                "metrics": metrics,
-                "nudge": nudge,
-                "values": {
-                    name: values[name]
-                    for name in (
-                        "brightness",
-                        "contrast",
-                        "gain",
-                        "auto_exposure",
-                        "exposure_time_absolute",
-                    )
-                    if name in values
-                },
+                "score": metrics.get("score"),
+                "metrics": {k: v for k, v in metrics.items() if k != "blobs"},
+                "values": values,
+                "n_blobs": metrics.get("n_blobs"),
+                "has_orange": metrics.get("has_orange"),
+                "has_red": metrics.get("has_red"),
             }
             history.append(step)
-            if nudge is None:
-                break
-            if not nudge:
-                break
-            if "exposure_time_absolute" in nudge:
-                freeze = freeze_auto_exposure(known)
-                freeze.update(nudge)
-                nudge = freeze
-            apply_control_updates(device, nudge)
-            applied_any.update(nudge)
-        last_values = current_values(list_device_controls(device))
-        knobs = {
-            name: last_values[name]
-            for name in (
-                "brightness",
-                "contrast",
-                "gain",
-                "auto_exposure",
-                "exposure_time_absolute",
-            )
-            if name in last_values
-        }
-        if applied_any:
-            persist_keys = set(applied_any) | {
-                "gain",
-                "brightness",
-                "auto_exposure",
-                "exposure_time_absolute",
-            }
-            merge_persist(device, {k: last_values[k] for k in persist_keys if k in last_values})
+            score = float(metrics.get("score") or -1e9)
+            if score > best_score:
+                best_score = score
+                best_path = raw
+                best_ctrls = dict(values)
+            return step
 
-    assert raw is not None
-    last = history[-1]
-    ok = well_exposed(last["metrics"], target_mean=target_mean)
-    status = "well exposed" if ok else "stopped before reaching the exposure band"
+        n_main = min(len(candidates), max(1, max_iters - 1))
+        for i, cand in enumerate(candidates[:n_main]):
+            apply_control_updates(device, cand)
+            capture_scored(f"auto{i:02d}", 6 if i else warmup_frames)
+
+        # Only hunt WB/sat when orange vs red is missing. Otherwise the
+        # extras tie on score and flip 3200/4000 every call.
+        remaining = max_iters - (len(history) - 1)
+        both_colours = bool(best_ctrls) and any(
+            s.get("has_red") and s.get("has_orange") for s in history if s.get("path") == str(best_path)
+        )
+        if remaining > 0 and best_ctrls and not both_colours:
+            variants = extra_wb_sat[:remaining]
+            for j, extra in enumerate(variants):
+                cand = dict(LED_PROFILE)
+                cand["gain"] = best_ctrls.get("gain", 48)
+                cand["exposure_time_absolute"] = best_ctrls.get(
+                    "exposure_time_absolute", 300
+                )
+                cand.update(extra)
+                apply_control_updates(device, cand)
+                capture_scored(f"autowb{j:02d}", 6)
+        elif remaining > 0 and best_ctrls:
+            best_metrics = next(
+                (s.get("metrics") or {} for s in reversed(history) if s.get("path") == str(best_path)),
+                {},
+            )
+            med_peak = float(best_metrics.get("med_peak") or 0)
+            if med_peak >= 220:
+                add_low = dict(LED_PROFILE)
+                add_low["gain"] = LED_GAIN_LOW[0]
+                add_low["exposure_time_absolute"] = LED_GAIN_LOW[1]
+                apply_control_updates(device, add_low)
+                capture_scored("auto-low", 6)
+
+        # Hysteresis: keep the persisted gain/exp if it is within a few
+        # score points of the winner so falling light does not chatter.
+        saved_gain = saved.get("gain")
+        saved_exp = saved.get("exposure_time_absolute")
+        if isinstance(saved_gain, int) and isinstance(saved_exp, int) and history:
+            saved_steps = [
+                s
+                for s in history
+                if (s.get("values") or {}).get("gain") == saved_gain
+                and abs(int((s.get("values") or {}).get("exposure_time_absolute") or 0) - saved_exp) <= 15
+            ]
+            if saved_steps:
+                saved_best = max(saved_steps, key=lambda s: float(s.get("score") or -1e9))
+                saved_score = float(saved_best.get("score") or -1e9)
+                if best_score - saved_score <= AUTO_ADJUST_HYSTERESIS:
+                    best_score = saved_score
+                    best_path = Path(saved_best["path"]) if saved_best.get("path") else best_path
+                    best_ctrls = dict(saved_best.get("values") or best_ctrls)
+
+        if best_ctrls:
+            apply_control_updates(device, best_ctrls)
+            last_values = current_values(list_device_controls(device))
+            persist_keys = set(LED_PROFILE) | {"gain", "exposure_time_absolute"}
+            merge_persist(device, {k: last_values[k] for k in persist_keys if k in last_values})
+        else:
+            last_values = current_values(list_device_controls(device))
+
+    assert before is not None
+    after = best_path or before
+    after_step = next((s for s in reversed(history) if s.get("path") == str(after)), history[-1])
+    knobs = after_step.get("values") or _knob_snapshot(last_values)
+    summary = {
+        "score": after_step.get("score"),
+        "n_blobs": after_step.get("n_blobs"),
+        "has_red": after_step.get("has_red"),
+        "has_orange": after_step.get("has_orange"),
+        "metrics": after_step.get("metrics"),
+        "values": knobs,
+        "before": str(before),
+        "after": str(after),
+        "history": [
+            {k: v for k, v in step.items() if k != "metrics"} | {"metrics_score": (step.get("metrics") or {}).get("score")}
+            for step in history
+        ],
+    }
     text = (
-        f"auto_adjust {status} after {len(history)} capture(s). "
-        f"mean_luma={last['metrics']['mean_luma']} "
-        f"clip_hi={last['metrics']['clip_hi_frac']} "
-        f"values={knobs} path={raw}"
+        f"auto_adjust LED-priority score={summary['score']} "
+        f"n_blobs={summary['n_blobs']} red={summary['has_red']} "
+        f"orange={summary['has_orange']} values={knobs}\n"
+        f"before={before}\nafter={after}\n"
+        + json.dumps({k: v for k, v in summary.items() if k != "history"}, indent=2)
     )
-    return [text, Image(path=raw)]
+    return [text, Image(path=before), Image(path=after)]
+
+
+@mcp.tool()
+def detect_leds(
+    duration: float = 4.0,
+    device: str = DEFAULT_DEVICE,
+    resolution: str | None = None,
+    fps: int = 30,
+    video: str | None = None,
+) -> list:
+    """Find LED blobs, classify blinking vs steady, assign nano4k / primer20k.
+
+    Records a short clip (or analyzes a capture_video path). Uses LED
+    geometry and colour (orange vs red) — not USB cords. Returns JSON
+    (coordinates, colour, state, board) plus an annotated debug image.
+    measure_blink(roi=nano4k|primer20k) uses the detected measure ROI.
+    """
+    device = parse_device(device)
+    width, height = parse_size(resolution)
+    if duration < 1 or duration > 20:
+        raise ValueError("duration must be 1..20 seconds")
+    if fps < 5 or fps > 60:
+        raise ValueError("fps must be 5..60")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    outdir = BLINK_DIR / f"{stamp}-leds"
+    outdir.mkdir(parents=True, exist_ok=True)
+    rec: dict[str, Any] | None = None
+    if video:
+        clip = parse_video_path(video)
+    else:
+        dest = outdir / "clip.mkv"
+        with camera_lock():
+            prepare_device(device)
+            rec = record_continuous_clip(
+                device, dest, width, height, fps, duration, lock_exposure=True
+            )
+        clip = Path(rec["path"])
+    annotated = outdir / "annotated.jpg"
+    json_path = outdir / "leds.json"
+    result = run_led_detect_video(clip, annotated, json_path)
+    result["capture"] = rec
+    result["annotated"] = str(annotated)
+    result["json"] = str(json_path)
+    save_led_cache(result)
+    n = len(result.get("leds") or [])
+    boards = list((result.get("boards") or {}).keys())
+    text = (
+        f"detect_leds n={n} boards={boards} reason={result.get('assign_reason')}\n"
+        + json.dumps({k: v for k, v in result.items() if k != "capture"}, indent=2)
+    )
+    out: list = [text]
+    if annotated.is_file():
+        out.append(Image(path=annotated))
+    return out
 
 
 def _v4l2_silent(device: str, args: list[str]) -> str:
@@ -686,6 +948,32 @@ def restore_controls(device: str, orig: dict[str, int]) -> None:
         apply_control_updates(device, orig)
     except RuntimeError:
         pass
+
+
+def count_clip_frames(path: Path) -> int | None:
+    try:
+        out = subprocess.check_output(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-count_frames",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=nb_read_frames",
+                "-of", "csv=p=0",
+                str(path),
+            ],
+            text=True,
+            timeout=30.0,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    token = (out or "").strip().split(",")[0].strip()
+    if not token or token in {"N/A", "0"}:
+        return None
+    try:
+        return int(token)
+    except ValueError:
+        return None
 
 
 def record_continuous_clip(
@@ -750,6 +1038,10 @@ def record_continuous_clip(
     if proc.returncode != 0 or not dest.is_file() or dest.stat().st_size == 0:
         detail = log.read_text(encoding="utf-8", errors="replace")[-1500:]
         raise RuntimeError(f"ffmpeg video capture failed (exit {proc.returncode}): {detail}")
+    n_frames = count_clip_frames(dest)
+    delivered_fps = None
+    if n_frames and duration_s > 0:
+        delivered_fps = round(n_frames / duration_s, 3)
     return {
         "path": str(dest),
         "log": str(log),
@@ -757,6 +1049,8 @@ def record_continuous_clip(
         "duration_s": duration_s,
         "wall_s": round(wall_s, 3),
         "fps": fps,
+        "delivered_fps": delivered_fps,
+        "n_frames": n_frames,
         "width": width,
         "height": height,
         "lock_exposure": lock_exposure,
@@ -779,6 +1073,7 @@ def analyze_blink_clip(
     outdir: Path,
     warmup_s: float,
     roi: str | None,
+    fps: float | None = None,
 ) -> dict[str, Any]:
     if not ANALYZE_SCRIPT.is_file():
         raise RuntimeError(f"missing analyzer {ANALYZE_SCRIPT}")
@@ -791,6 +1086,8 @@ def analyze_blink_clip(
     ]
     if roi:
         cmd.extend(["--roi", roi])
+    if fps and fps >= 4:
+        cmd.extend(["--fps", f"{fps:.4f}"])
     try:
         proc = subprocess.run(
             cmd,
@@ -827,11 +1124,15 @@ def measure_blink(
     Records with the same continuous ffmpeg v4l2 session as capture_video
     (camera held open, AE frozen like tools/measure_blink.sh — not a burst of
     stills). Or pass video= to a clip path capture_video already returned.
-    Returns both frequencies, which method is trusted (FFT when the edge
-    detector undercounts, as at ~6.9 Hz), JSON path, and brightness.png +
-    roi.png. duration/warmup are seconds (defaults 25 / 8). roi: auto, full,
-    top, bottom, nano4k (bottom on Bee), primer20k (top), or x,y,w,h. Does not
-    program the FPGA. tools/measure_blink.sh still exists.
+    Returns both frequencies, which method is trusted (edge when it agrees
+    with FFT; untrusted when they disagree — FFT leakage from the other
+    board is not silently adopted). JSON path, and brightness.png + roi.png.
+    duration/warmup are seconds (defaults 25 / 8). roi: auto, full, top,
+    bottom, nano4k, primer20k, or x,y,w,h. nano4k/primer20k run LED
+    detection on the clip and meter that board's blinking LED only (never a
+    steady LED; ROI is clipped away from the other board). Falls back to
+    top/bottom halves only if the board itself is missing. Does not program
+    the FPGA. tools/measure_blink.sh still exists.
     """
     device = parse_device(device)
     width, height = parse_size(resolution)
@@ -842,9 +1143,10 @@ def measure_blink(
     if fps < 5 or fps > 60:
         raise ValueError("fps must be 5..60")
     parse_roi_arg(roi)
+    board = named_board(roi)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     outdir = BLINK_DIR / f"{stamp}-mcp"
-    BLINK_DIR.mkdir(parents=True, exist_ok=True)
+    outdir.mkdir(parents=True, exist_ok=True)
     rec: dict[str, Any] | None = None
     if video:
         clip = parse_video_path(video)
@@ -862,7 +1164,32 @@ def measure_blink(
                 lock_exposure=True,
             )
         clip = Path(rec["path"])
-    result = analyze_blink_clip(clip, outdir, warmup, roi)
+    detection: dict[str, Any] | None = None
+    analyze_roi = roi
+    annotated: Path | None = None
+    result: dict[str, Any] | None = None
+    if board:
+        annotated = outdir / "leds-annotated.jpg"
+        det_json = outdir / "leds.json"
+        detection = run_led_detect_video(clip, annotated, det_json)
+        save_led_cache(detection)
+        xywh = resolve_detected_roi(board, detection)
+        if xywh:
+            analyze_roi = xywh
+        elif (detection.get("boards") or {}).get(board):
+            result = {
+                "frequency_hz": None,
+                "edge_frequency_hz": None,
+                "fft_frequency_hz": None,
+                "trusted_method": "untrusted",
+                "trusted_reason": f"no blinking LED found on {board}",
+                "confidence": 0.0,
+                "warnings": [f"no blinking LED found on {board}; not metering a steady LED"],
+                "paths": {},
+            }
+    delivered = None if rec is None else rec.get("delivered_fps")
+    if result is None:
+        result = analyze_blink_clip(clip, outdir, warmup, analyze_roi, fps=delivered)
     plot = Path(result.get("paths", {}).get("plot") or (outdir / "brightness.png"))
     roi_png = Path(result.get("paths", {}).get("roi_frame") or (outdir / "roi.png"))
     edge = result.get("edge_frequency_hz")
@@ -881,6 +1208,15 @@ def measure_blink(
         "predicted_blink3_hz": pred,
         "error_pct_vs_blink3": result.get("error_pct_vs_blink3"),
         "roi": result.get("roi"),
+        "roi_requested": roi,
+        "board": board,
+        "detected_roi": analyze_roi if board else None,
+        "leds": None if detection is None else {
+            "assign_reason": detection.get("assign_reason"),
+            "boards": detection.get("boards"),
+            "leds": detection.get("leds"),
+            "annotated": str(annotated) if annotated else None,
+        },
         "duration_s": result.get("duration_s"),
         "fps": result.get("fps"),
         "warnings": result.get("warnings"),
@@ -890,10 +1226,13 @@ def measure_blink(
     }
     text = (
         f"measure_blink trusted={trusted} {freq} Hz "
-        f"(edge={edge} fft={fft}) predicted_blink3={pred} Hz\n"
+        f"(edge={edge} fft={fft}) predicted_blink3={pred} Hz "
+        f"board={board} roi={analyze_roi}\n"
         + json.dumps(summary, indent=2)
     )
     out: list = [text]
+    if annotated is not None and annotated.is_file():
+        out.append(Image(path=annotated))
     if plot.is_file():
         out.append(Image(path=plot))
     if roi_png.is_file():

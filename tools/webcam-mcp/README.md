@@ -21,7 +21,8 @@ Does not touch the FPGA, serial ports, or `openFPGALoader`.
 | `get_camera_controls` | Current v4l2 values and ranges (brightness, contrast, gain, exposure, auto-exposure, white balance, …) |
 | `set_camera_controls` | Set one or more real camera controls via `v4l2-ctl` |
 | `reset_camera_controls` | Restore driver defaults and clear saved settings |
-| `auto_adjust` | Capture, measure mean luma / clipping, nudge gain/brightness/exposure |
+| `auto_adjust` | LED-priority exposure: compact unclipped red/orange blobs, manual WB (not mean luma) |
+| `detect_leds` | Clip → LED coordinates, colour, blinking vs steady, board assignment + annotated JPEG |
 | `measure_blink` | Record via `capture_video` (or analyze a clip it returned); edge **and** FFT, graphs, JSON |
 
 Three capture tools stay separate:
@@ -67,10 +68,29 @@ On this machine the camera is a **Logitech QuickCam Pro for Notebooks**
 `set_camera_controls(exposure=200)` switches `auto_exposure` to Manual first.
 `reset_camera_controls` restores the driver defaults above.
 
-`auto_adjust` nudges **gain**, then **brightness**, then (if needed) switches
-AE to Manual and moves **exposure** until mean Rec.601 luma is near 115 without
-highlight clipping. Dark-room backgrounds are expected. It persists the
-exposure knobs.
+`auto_adjust` no longer chases mean luma (that washed the dark desk and bloomed
+the LEDs). It switches AE and AWB to manual, raises saturation, drops
+brightness off the previous 220 wash, then searches **gain** / **exposure**
+(and a couple of white-balance / saturation variants) to maximise compact
+red/orange LED blobs without clipped white cores. Orange vs red has to remain
+in the JPEG. On Bee's QuickCam Pro the delivered MJPEG rate is
+`fps ≈ exposure_time_absolute / 10` until it caps at 30, so the search stays
+at shutter ≥ 250 (25–30 fps). A pretty still at exposure 60 is ~6 fps and
+aliases Blink3's 3.43 Hz to ~2.56 Hz. Returns the before and after stills.
+Persists the knobs.
+
+`detect_leds(duration=4)` records a short clip (or pass `video=`), finds LED
+blobs (numpy, no OpenCV), classifies each as **blinking** or **steady** over
+time, and assigns boards from the **LED pattern** (not USB cords):
+
+- five LEDs, three steady and two blinking
+- the cluster of **three** (orange user LEDs) is **primer20k**
+- the cluster of **two** (red) is **nano4k**
+- relative layout (20K above 4K) is only a tie-break
+- colour (hue / G÷R) is a feature: Primer 20K orange vs Nano 4K red
+
+Results (coordinates, RGB, hue, state, board) plus an annotated debug image
+are returned and cached in `~/.local/state/webcam-mcp/leds.json`.
 
 `measure_blink(duration=25, warmup=8, roi=auto)` records with `capture_video`
 (`lock_exposure=true`, clip length = warmup + duration + 2 s) then runs the
@@ -82,13 +102,16 @@ and returns both detectors:
 |---|---|
 | `edge_frequency_hz` | hysteresis threshold + long-baseline edge period |
 | `fft_frequency_hz` | rFFT peak (needed when edges undercount; historically **6.852 Hz** vs a low edge count at ~6.9 Hz) |
-| `trusted_method` | `edge` or `fft` |
-| `frequency_hz` | the trusted value |
+| `trusted_method` | `edge`, `fft`, or `untrusted` (edge and FFT disagree — do not adopt FFT leakage from the other board) |
+| `frequency_hz` | the trusted value, or `null` when untrusted |
 | `predicted_blink3_hz` | 3.433 Hz for Blink3 N=262144 at 27 MHz |
 
-`roi` is optional: `auto` (default), `full`, `top`, `bottom`, `nano4k` (bottom
-on Bee's desk), `primer20k` (top), or `x,y,w,h`. top/bottom split the frame
-for the future dual-board layout; this tool still meters **one** LED.
+`roi` is optional: `auto` (default), `full`, `top`, `bottom`, `nano4k`,
+`primer20k`, or `x,y,w,h`. `nano4k` / `primer20k` run `detect_leds` on the
+same clip and meter that board's **blinking** LED only (never a steady LED;
+ROI is clipped away from the other board). Missing blinker or edge/FFT
+disagreement is `untrusted`. `top` / `bottom` still split the frame in half
+as a fallback. The tool still meters **one** LED.
 
 `tools/measure_blink.sh` is unchanged and still records a raw clip.
 
@@ -123,6 +146,7 @@ Parser / exposure-loop / blink-arbitration tests (no camera, no mcp extra):
 ```sh
 python3 tools/webcam-mcp/test_controls.py
 python3 tools/test_blink_trust.py
+python3 tools/test_led_detect.py
 python3 tools/analyze_blink.py --self-test   # needs system numpy/matplotlib/PIL + ffmpeg
 ```
 
@@ -201,3 +225,79 @@ MCP `brightness.png` / `roi.png` (inline image content was also returned over `/
 ![MCP brightness](proof/blink-mcp-brightness.png)
 
 ![MCP ROI](proof/blink-mcp-roi.png)
+
+## LED alignment and colour on Bee (2026-11-04)
+
+Same scene, still no FPGA / serial / `openFPGALoader`. Board identity is the
+**LED pattern** (five LEDs, three steady and two blinking, orange vs red) plus
+relative geometry (20K above 4K). USB cords are not used.
+
+`auto_adjust` landed on gain 48, exposure 310, saturation 80, WB 3800
+(score 280, 6 compact blobs, both colours). Delivered capture rate is **30.08 fps**
+(361 frames in 12 s). Peak RGB from the after still:
+
+| LED | RGB | hue | class |
+|---|---|---|---|
+| Nano 4K | 245, 0, 0 | 0 | red |
+| Nano 4K | 255, 22, 25 | 359 | red |
+| Primer 20K USB | 250, 2, 0 | 0 | red |
+| Primer 20K user | 165, 66, 0 | 24 | **orange** |
+| Primer 20K user | 246, 72, 105 | 349 | orange (G÷R) |
+
+`detect_leds` assigned `upper=primer20k` / `lower=nano4k` from that geometry.
+`measure_blink(roi=nano4k)` used the detected 4K bbox `278,274,46,47`:
+
+| | Hz | vs 3.433 Hz |
+|---|---|---|
+| edge (trusted) | **3.417** | −0.47% |
+| FFT | 3.383 | −1.5% |
+
+![auto_adjust before](proof/05-auto-before.jpg)
+
+![auto_adjust after, LEDs distinct, manual WB](proof/06-auto-after.jpg)
+
+![detect_leds annotated: boards from LED geometry](proof/07-leds-annotated.jpg)
+
+![LED colour crops: orange vs red](proof/08-led-color-crops.jpg)
+
+![nano4k blink at 30 fps](proof/blink-brightness.png)
+
+![detected nano4k ROI](proof/blink-roi.png)
+
+## Reliability, falling room light (2026-11-04 18:28–18:31 CET)
+
+Five cycles of `auto_adjust` + `detect_leds` + `measure_blink(nano4k)` +
+`measure_blink(primer20k, video=same clip)`. Both boards in view, no FPGA /
+serial / `openFPGALoader`. Predicted Blink3 on the Nano 4K is **3.433 Hz**.
+The Primer 20K blinker is ~1.0 Hz.
+
+Fixes after the 17:37–18:00 run (that one trusted FFT 3.430 Hz on a *steady*
+20K orange at `(274,137)` with conf 0.30, same as good 1.0 Hz readings):
+
+- never meter a steady LED; no blinker → `untrusted`
+- edge vs FFT relative disagreement > 12% → `untrusted` (no silent FFT leakage)
+- confidence uses regularity / edges / agreement / SNR (good ~0.98–1.0, untrusted ≤ 0.15)
+- blinker ROI is padded around the variance peak and clipped at the board gap
+- blobs: merge split cores, local-maxima of temporal (R−G) std, NMS so silk at
+  ~(274,140), (315,134), (299,280), (304,263) is not a sixth LED
+- `auto_adjust` hysteresis on the persisted gain/exp, no WB hunt when both
+  colours are already visible, gain 16 only if cores are already too bright
+
+| cycle | gain / exp / WB | luma | n 20K+4K | 20K Hz (conf) | 4K Hz (conf, vs 3.433) | fps |
+|---|---|---|---|---|---|---|
+| 1 | 48 / 305 / 4000 | 2.13 | 3+2 | 0.994 (0.996) | 3.418 (0.983, −0.44%) | 30.08 |
+| 2 | 112 / 305 / 4000 | 4.84 | 3+2 | 0.995 (0.996) | 3.420 (0.983, −0.38%) | 30.08 |
+| 3 | 112 / 310 / 4000 | 5.73 | 3+2 | 0.998 (1.000) | 3.420 (0.983, −0.39%) | 30.08 |
+| 4 | 112 / 305 / 4000 | 5.39 | 3+2 | 0.998 (1.000) | 3.429 (0.982, −0.13%) | 30.08 |
+| 5 | 112 / 310 / 4000 | 5.65 | 3+2 | 0.995 (0.996) | 3.420 (0.983, −0.40%) | 30.08 |
+
+5/5 both boards trusted on the blinking LED (20K ~`(370,95)`, 4K ~`(243,267)`).
+Assignment stayed `upper=primer20k` / `lower=nano4k`. `auto_adjust` left gain 16
+and raised gain 48→112 as the stills needed brighter cores, then held 112 / WB
+4000 / sat 64 (no 3200/4000 flip). JSON: `proof/reliability-5cycle.json`.
+
+![detect_leds 3+2 after the reliability pass](proof/09-reliability-annotated.jpg)
+
+![nano4k ~3.42 Hz](proof/09-reliability-nano4k-brightness.png)
+
+![primer20k ~0.995 Hz](proof/09-reliability-primer20k-brightness.png)

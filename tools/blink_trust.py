@@ -31,6 +31,26 @@ REGION_ALIASES = {
     "20k": "top",
 }
 
+# Board names for LED-geometry targeting. analyze_blink.py still maps these
+# to top/bottom as a fallback when detect_leds has not run.
+BOARD_NAMES = {
+    "nano4k": "nano4k",
+    "tang-nano-4k": "nano4k",
+    "tangnano4k": "nano4k",
+    "4k": "nano4k",
+    "primer20k": "primer20k",
+    "primer-20k": "primer20k",
+    "20k": "primer20k",
+}
+
+
+def named_board(spec: str | None) -> str | None:
+    """Return nano4k / primer20k when roi is a board name, else None."""
+    if spec is None:
+        return None
+    key = spec.strip().lower().replace(" ", "")
+    return BOARD_NAMES.get(key)
+
 
 def predicted_blink3() -> dict[str, float | int | str]:
     return {
@@ -93,20 +113,26 @@ def choose_trusted(
     edge_count: int,
     duration_s: float,
 ) -> tuple[str, str]:
-    """Pick edge/threshold vs FFT. FFT wins when edges undercount (the ~6.9 Hz case)."""
+    """Pick edge/threshold vs FFT, or untrusted when they disagree.
+
+    A steady LED next to another board can show a strong FFT peak at the
+    neighbour's rate while edges wander. Do not silently trust FFT then.
+    """
+    del edge_count, duration_s
     if edge_hz is None and not fft_hz:
-        return "none", "neither detector found a blink"
+        return "untrusted", "neither detector found a blink"
     if edge_hz is None:
         return "fft", "edge detector found no period; using FFT peak"
     if not fft_hz:
         return "edge", "FFT had no peak; using edge/threshold period"
 
     rel = abs(edge_hz - fft_hz) / max(edge_hz, fft_hz)
-    expected_edges = duration_s * fft_hz * 2.0  # rising + falling
-    undercount = duration_s > 0 and edge_count < 0.7 * expected_edges
-    if fft_snr >= 4.0 and (undercount or rel > 0.12):
-        why = "edge detector undercounted" if undercount else "edge and FFT disagree"
-        return "fft", f"{why}; trusting FFT peak (snr={fft_snr:.1f})"
+    if rel > 0.12:
+        return (
+            "untrusted",
+            f"edge {edge_hz:.3f} Hz and FFT {fft_hz:.3f} Hz disagree "
+            f"(rel={100.0 * rel:.1f}%)",
+        )
     if fft_snr < 4.0:
         return "edge", "FFT SNR is weak; using edge/threshold period"
     return "edge", "edge/threshold period agrees with FFT"
