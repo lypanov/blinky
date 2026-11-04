@@ -164,6 +164,30 @@ def patch_blink3_maxiter(words: list[int], n: int) -> list[int]:
     return out
 
 
+def patch_blink3_sim_n(words: list[int], n: int) -> list[int]:
+    """Set LightToggle's maxIterations for a Verilator run.
+
+    Multiples of 65536 stay an MHI, the same encoding the FPGA image uses.
+    A smaller N replaces that one F1 instruction with MOV R0, n. Both retire
+    in a single cycle and sit outside the skip loop, so an LED edge is still
+    15N+18 cycles.
+    """
+    if n <= 0:
+        raise ValueError(f"maxIterations must be positive, got {n}")
+    if n % 65536 == 0:
+        return patch_blink3_maxiter(words, n)
+    if n > 0xFFFF:
+        raise ValueError(
+            f"maxIterations {n} must fit a 16-bit MOV or be a multiple of 65536 (MHI)"
+        )
+    out = list(words)
+    idx = BLINK3_MAXITER_PC // 4
+    if idx >= len(out):
+        raise ValueError(f"IMEM too short for delay op at 0x{BLINK3_MAXITER_PC:X}")
+    out[idx] = mov_imm(0, n)
+    return out
+
+
 def pad_imem(words: list[int], length: int = BLINK3_FPGA_IMEM_WORDS) -> list[int]:
     if length < len(words):
         raise ValueError(f"cannot pad {len(words)} words down to {length}")

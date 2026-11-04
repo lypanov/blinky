@@ -1,0 +1,9 @@
+N=5
+formula=15*N+18
+predicted_cycles_per_edge=93
+edges=111 204 297 390 483 576
+periods=93 93 93 93 93
+clock_hz=27000000
+predicted_edge_hz=290322.580645
+predicted_blink_hz=145161.290323
+match=yes

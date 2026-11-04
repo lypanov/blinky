@@ -376,13 +376,19 @@ def find_blink3_delay(steps: list[dict]) -> dict | None:
             store_i = i
         dmem = c.get("dmem") or {}
         rec = dmem.get(str(BLINK3_MAXITER_ADDR)) or dmem.get(BLINK3_MAXITER_ADDR)
-        if rec is not None and rec.get("value") == BLINK3_MAXITER:
+        if rec is not None and rec.get("value") is not None:
             value = rec["value"]
     if mhi_i is None:
         return None
+    raw = steps[mhi_i].get("hex")
+    try:
+        word = int(str(raw), 16) if raw else BLINK3_MHI_WORD
+    except ValueError:
+        word = BLINK3_MHI_WORD
+    stored = value if value is not None else BLINK3_MAXITER
     return {
-        "max_iterations": BLINK3_MAXITER,
-        "mhi_word": BLINK3_MHI_WORD,
+        "max_iterations": stored,
+        "mhi_word": word,
         "mhi_pc": BLINK3_MAXITER_PC,
         "store_pc": BLINK3_MAXITER_STORE_PC,
         "addr": BLINK3_MAXITER_ADDR,

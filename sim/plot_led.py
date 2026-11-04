@@ -56,6 +56,10 @@ def main() -> int:
     ap.add_argument("--csv", required=True)
     ap.add_argument("--toggles", required=True)
     ap.add_argument("--png", required=True)
+    ap.add_argument("--title", default="")
+    ap.add_argument("--note", default="")
+    ap.add_argument("--predict", type=int, default=0,
+                    help="Predicted cycles between LED edges (15N+18). 0 = omit.")
     args = ap.parse_args()
 
     cycles, led, pc = load_wave(args.csv)
@@ -82,13 +86,15 @@ def main() -> int:
     x, y = digital_steps(cycles, led)
     axes[0].plot(x, y, color="#39ff88", linewidth=1.8, solid_capstyle="butt")
     axes[0].fill_between(x, y, 0, color="#39ff88", alpha=0.12, step=None)
-    axes[0].set_ylim(-0.15, 1.25)
+    axes[0].set_ylim(-0.15, 1.35)
     axes[0].set_yticks([0, 1])
     axes[0].set_yticklabels(["OFF (0)", "ON (1)"])
     axes[0].set_ylabel("io_led")
-    title = "Blink2 LED (Verilator, sim delay maxIterations=5)"
+    title = args.title or "Blink2 LED (Verilator, sim delay maxIterations=5)"
     if mean is not None:
         title += f"  —  mean period {mean:.1f} cycles"
+    if args.predict and periods:
+        title += f"  —  predicted {args.predict}"
     axes[0].set_title(title)
 
     for cyc, _val in edges:
@@ -107,9 +113,17 @@ def main() -> int:
     axes[1].add_patch(setup_band)
     axes[1].text(cycles[0] + 2, 0xA4, "setup/halt 0x80–0xB0", color="#ffaa88", fontsize=8)
 
-    note = "Treadle blink2_code_test: 81-cycle average. Hardware Blink2hw delay is 524288 (not used here)."
+    note = args.note or (
+        "Treadle blink2_code_test: 81-cycle average. Hardware Blink2hw delay is 524288 (not used here)."
+    )
     if periods:
         note = f"Periods between LED edges: {periods}    " + note
+    if args.predict and periods:
+        mismatches = [p for p in periods if p != args.predict]
+        if mismatches:
+            note += f"    MISMATCH vs {args.predict}: {mismatches}"
+        else:
+            note += f"    every edge matches 15N+18 = {args.predict} cycles"
     fig.text(0.01, 0.01, note, color="#9aabc4", fontsize=8)
 
     fig.tight_layout(rect=(0, 0.04, 1, 1))

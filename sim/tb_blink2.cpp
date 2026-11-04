@@ -61,7 +61,8 @@ static void usage(const char* argv0) {
           "  --program NAME   Label stored in the JSON (blink2 / blink3)\n"
           "  --fst PATH       FST waveform output\n"
           "  --trace PATH     JSON cycle trace output\n"
-          "  --led PATH       LED toggle CSV output\n",
+          "  --led PATH       LED toggle CSV output\n"
+          "  --wave PATH      Per-cycle LED CSV (default sim/out/led_wave.csv)\n",
           argv0);
 }
 
@@ -82,6 +83,7 @@ static Options parse_args(int argc, char** argv) {
     else if (!strcmp(argv[i], "--fst")) o.fst_path = need("--fst");
     else if (!strcmp(argv[i], "--trace")) o.trace_path = need("--trace");
     else if (!strcmp(argv[i], "--led")) o.led_path = need("--led");
+    else if (!strcmp(argv[i], "--wave")) o.wave_csv_path = need("--wave");
     else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
       usage(argv[0]);
       exit(0);
