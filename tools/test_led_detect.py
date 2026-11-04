@@ -7,16 +7,26 @@ import unittest
 
 import numpy as np
 
+import json
+from pathlib import Path
+
 from led_detect import (
     BOARD_NANO4K,
     BOARD_PRIMER20K,
     analyze_frames,
+    analyze_video_once,
     assign_boards,
     board_measure_roi,
+    board_measurement,
     classify_led_color,
     detect_blobs,
+    measure_chroma_trace,
     score_led_exposure,
 )
+
+FIXTURE = Path(__file__).resolve().parent / "testdata" / "20261104-210057-led0.json"
+CLIP_210057 = Path("/home/lypanov/fpga/blink-measure/20261104-210057-mcp/clip.mkv")
+CLIP_210052 = Path("/home/lypanov/fpga/blink-measure/20261104-210052-leds/clip.mkv")
 
 
 def disk(frame: np.ndarray, x: int, y: int, rgb: tuple[int, int, int], radius: int = 4) -> None:
@@ -256,6 +266,102 @@ class BlinkClassificationTests(unittest.TestCase):
         self.assertGreaterEqual(n_steady, 2)
         self.assertEqual(result["boards"][BOARD_PRIMER20K]["n_leds"], 3)
         self.assertEqual(result["boards"][BOARD_NANO4K]["n_leds"], 2)
+
+
+def _lowband_fft_hz(values: np.ndarray, fps: float, lo: float = 0.15) -> float:
+    """Same floor analyze_blink uses on a padded-box mean (the 0.185 Hz bug)."""
+    x = np.asarray(values, dtype=np.float64)
+    x = x - x.mean()
+    spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+    freqs = np.fft.rfftfreq(len(x), d=1.0 / fps)
+    keep = (freqs >= lo) & (freqs <= 0.45 * fps)
+    k = int(np.argmax(spec[keep]))
+    return float(freqs[keep][k])
+
+
+class HeadlineTests(unittest.TestCase):
+    def test_one_hertz_led_beats_slow_box_drift(self) -> None:
+        h, w = 120, 160
+        fps = 30.0
+        frames = []
+        for i in range(180):
+            frame = np.zeros((h, w, 3), dtype=np.uint8)
+            drift = int(50 + 28 * np.sin(2 * np.pi * 0.185 * i / fps))
+            frame[30:80, 20:80] = (drift, drift // 3, drift // 3)
+            if (i / fps) % 1.0 < 0.5:
+                disk(frame, 40, 50, (230, 12, 8), 3)
+            frames.append(frame)
+        result = analyze_frames(frames, fps)
+        blinkers = [led for led in result["leds"] if led["state"] == "blinking"]
+        self.assertTrue(blinkers)
+        hz = blinkers[0]["frequency_hz"]
+        self.assertGreater(hz, 0.8)
+        self.assertLess(hz, 1.25)
+        box = []
+        for frame in frames:
+            patch = frame[30:80, 20:80].astype(np.float64)
+            box.append(float((0.299 * patch[:, :, 0] + 0.587 * patch[:, :, 1] + 0.114 * patch[:, :, 2]).mean()))
+        box_hz = _lowband_fft_hz(np.array(box), fps)
+        self.assertLess(box_hz, 0.4)
+        self.assertGreater(abs(hz - box_hz), 0.5)
+        self.assertEqual(blinkers[0]["source"], "blinking-led")
+
+    def test_steady_board_is_not_an_error(self) -> None:
+        def led(i, x, y, color):
+            return {
+                "id": i, "x": float(x), "y": float(y), "x0": x - 4, "y0": y - 4,
+                "w": 8, "h": 8, "area": 20, "color": color, "state": "steady",
+                "sat": 0.8, "hue": 20.0 if color == "orange" else 2.0,
+                "frequency_hz": None,
+            }
+        leds = [
+            led(0, 200, 80, "orange"),
+            led(1, 230, 90, "orange"),
+            led(2, 180, 100, "red"),
+        ]
+        result = {"boards": assign_boards(leds)["boards"]}
+        meas = board_measurement(result, "primer20k")
+        self.assertEqual(meas["status"], "board present but not blinking")
+        self.assertIsNone(meas["frequency_hz"])
+        self.assertIn("nano4k", board_measurement(result, "nano4k")["status"])
+
+    def test_red_core_under_pink_halo_stays_red(self) -> None:
+        frame = np.zeros((40, 40, 3), dtype=np.uint8)
+        disk(frame, 20, 20, (180, 60, 70), 6)
+        disk(frame, 20, 20, (240, 8, 6), 2)
+        from led_detect import peak_rgb
+        r, g, b = peak_rgb(frame, 20, 20, radius=4)
+        self.assertEqual(classify_led_color(r, g, b), "red")
+
+    def test_clip_210057_headline_is_about_1hz_not_roi_fft(self) -> None:
+        # Captured 2026-11-04 21:00. Per-LED frequency_hz was 1.125 while
+        # measure_blink's 37x37 ROI FFT (after the 8 s warmup) was 0.185 Hz.
+        # Alex watched the 4K blink at about 1 Hz. The headline is the LED.
+        data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        fps = float(data["fps"])
+        chroma = np.array(data["chroma"], dtype=np.float64)
+        roi = np.array(data["roi_luma"], dtype=np.float64)
+        headline = measure_chroma_trace(chroma[:240], fps)
+        self.assertEqual(headline["state"], "blinking")
+        self.assertAlmostEqual(headline["frequency_hz"], 1.125, delta=0.05)
+        self.assertGreater(headline["frequency_hz"], 0.8)
+        self.assertLess(headline["frequency_hz"], 1.4)
+        box_hz = _lowband_fft_hz(roi[240:], fps)
+        self.assertAlmostEqual(box_hz, 0.185, delta=0.03)
+        self.assertGreater(abs(headline["frequency_hz"] - box_hz), 0.5)
+        self.assertEqual(headline["source"], "blinking-led")
+
+    def test_saved_clip_detector_matches_fixture(self) -> None:
+        if not CLIP_210057.is_file():
+            self.skipTest("21:00 clip is not on this machine")
+        result, _still = analyze_video_once(CLIP_210057, max_frames=240)
+        meas = board_measurement(result, "nano4k")
+        self.assertEqual(meas["status"], "blinking")
+        self.assertAlmostEqual(meas["frequency_hz"], 1.125, delta=0.05)
+        self.assertEqual(meas["source"], "blinking-led")
+        if CLIP_210052.is_file():
+            empty, _ = analyze_video_once(CLIP_210052, max_frames=120)
+            self.assertEqual(empty["leds"], [])
 
 
 if __name__ == "__main__":

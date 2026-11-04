@@ -1,0 +1,336 @@
+{
+  "tool": "check_all",
+  "duration_s": 10,
+  "camera": "046d:0991",
+  "device": "/dev/video2",
+  "controls": {
+    "gain": 48,
+    "exposure_time_absolute": 305,
+    "white_balance_temperature": 4000,
+    "saturation": 64,
+    "auto_exposure": 1
+  },
+  "programmed": false,
+  "note": "Both boards were already blinking. Neither SRAM image was reloaded. Headline is the classified blinking LED.",
+  "runs": [
+    {
+      "stamp": "20261104-212402",
+      "client_wall_s": 13.09,
+      "timings_s": {
+        "record_s": 12.027,
+        "analyze_s": 1.052,
+        "total_s": 13.078
+      },
+      "n_leds": 5,
+      "n_blinking": 2,
+      "n_steady": 3,
+      "assign_reason": "upper=primer20k n=3 orange=2 lower=nano4k n=2 orange=0 cy=86/248",
+      "fps": 29.053600536964233,
+      "device": "/dev/video2",
+      "boards": {
+        "primer20k": {
+          "frequency_hz": 6.652,
+          "edge_frequency_hz": 6.652,
+          "fft_frequency_hz": 6.594,
+          "trusted_method": "edge",
+          "status": "blinking",
+          "confidence": 1.0,
+          "source": "blinking-led",
+          "n_leds": 3,
+          "colors": [
+            "orange",
+            "red"
+          ]
+        },
+        "nano4k": {
+          "frequency_hz": 0.965,
+          "edge_frequency_hz": 0.965,
+          "fft_frequency_hz": 0.956,
+          "trusted_method": "edge",
+          "status": "blinking",
+          "confidence": 1.0,
+          "source": "blinking-led",
+          "n_leds": 2,
+          "colors": [
+            "red"
+          ]
+        }
+      },
+      "leds": [
+        {
+          "id": 0,
+          "board": "nano4k",
+          "color": "red",
+          "state": "blinking",
+          "frequency_hz": 0.965,
+          "x": 350.0,
+          "y": 242.0,
+          "r": 248.0,
+          "g": 0.0,
+          "b": 11.0
+        },
+        {
+          "id": 1,
+          "board": "primer20k",
+          "color": "red",
+          "state": "blinking",
+          "frequency_hz": 6.652,
+          "x": 452.0,
+          "y": 47.0,
+          "r": 238.0,
+          "g": 27.0,
+          "b": 56.0
+        },
+        {
+          "id": 2,
+          "board": "nano4k",
+          "color": "red",
+          "state": "steady",
+          "frequency_hz": null,
+          "x": 400.0,
+          "y": 253.0,
+          "r": 195.0,
+          "g": 0.0,
+          "b": 0.0
+        },
+        {
+          "id": 3,
+          "board": "primer20k",
+          "color": "orange",
+          "state": "steady",
+          "frequency_hz": null,
+          "x": 361.4,
+          "y": 109.0,
+          "r": 115.0,
+          "g": 44.0,
+          "b": 0.0
+        },
+        {
+          "id": 4,
+          "board": "primer20k",
+          "color": "orange",
+          "state": "steady",
+          "frequency_hz": null,
+          "x": 400.0,
+          "y": 103.0,
+          "r": 160.0,
+          "g": 71.0,
+          "b": 85.0
+        }
+      ]
+    },
+    {
+      "stamp": "20261104-212415",
+      "client_wall_s": 12.74,
+      "timings_s": {
+        "record_s": 11.729,
+        "analyze_s": 1.011,
+        "total_s": 12.74
+      },
+      "n_leds": 5,
+      "n_blinking": 2,
+      "n_steady": 3,
+      "assign_reason": "upper=primer20k n=3 orange=2 lower=nano4k n=2 orange=1 cy=78/232",
+      "fps": 29.059173300086314,
+      "device": "/dev/video2",
+      "boards": {
+        "primer20k": {
+          "frequency_hz": 6.653,
+          "edge_frequency_hz": 6.653,
+          "fft_frequency_hz": 6.691,
+          "trusted_method": "edge",
+          "status": "blinking",
+          "confidence": 1.0,
+          "source": "blinking-led",
+          "n_leds": 3,
+          "colors": [
+            "orange",
+            "red"
+          ]
+        },
+        "nano4k": {
+          "frequency_hz": 0.969,
+          "edge_frequency_hz": 0.969,
+          "fft_frequency_hz": 0.956,
+          "trusted_method": "edge",
+          "status": "blinking",
+          "confidence": 1.0,
+          "source": "blinking-led",
+          "n_leds": 2,
+          "colors": [
+            "orange",
+            "red"
+          ]
+        }
+      },
+      "leds": [
+        {
+          "id": 0,
+          "board": "nano4k",
+          "color": "red",
+          "state": "blinking",
+          "frequency_hz": 0.969,
+          "x": 350.0,
+          "y": 242.0,
+          "r": 234.0,
+          "g": 0.0,
+          "b": 0.0
+        },
+        {
+          "id": 1,
+          "board": "primer20k",
+          "color": "red",
+          "state": "blinking",
+          "frequency_hz": 6.653,
+          "x": 455.0,
+          "y": 48.0,
+          "r": 243.0,
+          "g": 0.0,
+          "b": 17.0
+        },
+        {
+          "id": 2,
+          "board": "nano4k",
+          "color": "orange",
+          "state": "steady",
+          "frequency_hz": null,
+          "x": 409.0,
+          "y": 223.0,
+          "r": 128.0,
+          "g": 39.0,
+          "b": 0.0
+        },
+        {
+          "id": 3,
+          "board": "primer20k",
+          "color": "orange",
+          "state": "steady",
+          "frequency_hz": null,
+          "x": 440.6,
+          "y": 78.3,
+          "r": 104.0,
+          "g": 32.0,
+          "b": 42.0
+        },
+        {
+          "id": 5,
+          "board": "primer20k",
+          "color": "orange",
+          "state": "steady",
+          "frequency_hz": null,
+          "x": 373.0,
+          "y": 107.0,
+          "r": 123.0,
+          "g": 61.0,
+          "b": 0.0
+        }
+      ]
+    },
+    {
+      "stamp": "20261104-212428",
+      "client_wall_s": 12.61,
+      "timings_s": {
+        "record_s": 11.674,
+        "analyze_s": 0.933,
+        "total_s": 12.607
+      },
+      "n_leds": 5,
+      "n_blinking": 2,
+      "n_steady": 3,
+      "assign_reason": "upper=primer20k n=3 orange=2 lower=nano4k n=2 orange=0 cy=79/248",
+      "fps": 29.053600536964233,
+      "device": "/dev/video2",
+      "boards": {
+        "primer20k": {
+          "frequency_hz": 6.638,
+          "edge_frequency_hz": 6.638,
+          "fft_frequency_hz": 6.594,
+          "trusted_method": "edge",
+          "status": "blinking",
+          "confidence": 1.0,
+          "source": "blinking-led",
+          "n_leds": 3,
+          "colors": [
+            "orange",
+            "red"
+          ]
+        },
+        "nano4k": {
+          "frequency_hz": 0.965,
+          "edge_frequency_hz": 0.965,
+          "fft_frequency_hz": 0.956,
+          "trusted_method": "edge",
+          "status": "blinking",
+          "confidence": 1.0,
+          "source": "blinking-led",
+          "n_leds": 2,
+          "colors": [
+            "red"
+          ]
+        }
+      },
+      "leds": [
+        {
+          "id": 0,
+          "board": "nano4k",
+          "color": "red",
+          "state": "blinking",
+          "frequency_hz": 0.965,
+          "x": 350.0,
+          "y": 242.0,
+          "r": 248.0,
+          "g": 0.0,
+          "b": 10.0
+        },
+        {
+          "id": 1,
+          "board": "primer20k",
+          "color": "red",
+          "state": "blinking",
+          "frequency_hz": 6.638,
+          "x": 455.0,
+          "y": 48.0,
+          "r": 230.0,
+          "g": 0.0,
+          "b": 2.0
+        },
+        {
+          "id": 2,
+          "board": "nano4k",
+          "color": "red",
+          "state": "steady",
+          "frequency_hz": null,
+          "x": 398.6,
+          "y": 253.5,
+          "r": 182.0,
+          "g": 0.0,
+          "b": 0.0
+        },
+        {
+          "id": 4,
+          "board": "primer20k",
+          "color": "orange",
+          "state": "steady",
+          "frequency_hz": null,
+          "x": 440.6,
+          "y": 78.3,
+          "r": 113.0,
+          "g": 42.0,
+          "b": 48.0
+        },
+        {
+          "id": 5,
+          "board": "primer20k",
+          "color": "orange",
+          "state": "steady",
+          "frequency_hz": null,
+          "x": 353.0,
+          "y": 112.0,
+          "r": 120.0,
+          "g": 67.0,
+          "b": 0.0
+        }
+      ]
+    }
+  ]
+}
