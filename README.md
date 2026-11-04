@@ -2,16 +2,27 @@
 
 Chisel 6.6 / Mill 0.12.5 CPU. **Not RISC-V.** ISA: [`docs/risc_5_arch.txt`](docs/risc_5_arch.txt). Memory map: [`docs/memory_map.txt`](docs/memory_map.txt).
 
-Commit `a68a501` is the last known-good-on-hardware snapshot: Oberon `Blink2hw` plus UART. `main` through PR #14 is Blink3 in sim (loader, AMMT BEGIN trampoline, `BL` writes R15, `maxIterations := 262144`). This branch SRAM-loads that Blink3 image on the **Tang Nano 4K** (never flash; do not touch the Primer 20K). LED MMIO snoops stores to `0x10` or `0x50`.
+Commit `a68a501` is the last known-good-on-hardware snapshot: Oberon `Blink2hw` plus UART. `main` through PR #16 is Blink3 on the **Tang Nano 4K**. This branch SRAM-loads the same Blink3 image on the **Tang Primer 20K Dock** (never flash; do not touch the Nano 4K — it stays on the Pi). LED MMIO snoops stores to `0x10` or `0x50`.
 
 ## Tang Primer 20K Dock
 
-SRAM-only bring-up on the Primer 20K Dock (never FPGA flash): pinout, wiki blinky
-(1.000 Hz then 2.003 Hz), and NESTang v0.4 UART ROM load.
+SRAM-only. Detected on Bee as **Dock** (`usb-SIPEED_JTAG_Debugger_FactoryAIOT_Pro`, `openFPGALoader --detect` → GW2A-18C). Not Lite — do not use Lite-bottom constraints (they clash with Dock UART on T13).
+
+Blink3 (same linked image as the 4K) on user LED **L14**, 27 MHz **H11**:
+
+```sh
+BOARD=primer20k tools/gowin_build.sh                          # N=262144
+tools/sram_load.sh -b tangprimer20k gowin/primer20k/impl/pnr/blink3_n262144.fs
+BOARD=primer20k BLINK3_MAXITER=131072 tools/gowin_build.sh    # then load blink3_n131072.fs
+```
+
+`.fs` bitstreams are gitignored (~1.7 MB). Predicted blink rate is `15N+18` cycles at 27 MHz: **3.433 Hz** at N=262144, **6.866 Hz** at N=131072. Measurements: [`docs/blink-measure/blink3-primer20k/`](docs/blink-measure/blink3-primer20k/).
+
+Also: pinout, wiki 1 Hz / 2 Hz blinky, NESTang v0.4 UART ROM load.
 
 - Pins, HDMI pairs, BL702 UART, SRAM rule: [`docs/primer20k/board-notes.md`](docs/primer20k/board-notes.md)
 - NESTang build, UART loader, nestest / Alter Ego stills: [`docs/primer20k/nestang.md`](docs/primer20k/nestang.md)
-- Blink measurements: [`docs/blink-measure/primer20k/`](docs/blink-measure/primer20k/)
+- Wiki blinky measurements: [`docs/blink-measure/primer20k/`](docs/blink-measure/primer20k/)
 
 Load bitstreams with `tools/sram_load.sh` (`openFPGALoader -b tangprimer20k -m`).
 Do not pass `-f`.
@@ -60,7 +71,7 @@ BLINK3_MAXITER=131072 tools/gowin_build.sh    # N=131072, then load blink3_n1310
 tools/measure_blink.sh
 ```
 
-`FPGA_IMAGE=blink2 tools/gowin_build.sh` still emits the old Blink2hw small IMEM. Do not pass `-f` / flash. Do not load the Primer 20K. Sim says an LED edge is `15N+18` cycles at 27 MHz (upper bound if SPRAM wait-states apply). Measurements: [`docs/blink-measure/blink3/`](docs/blink-measure/blink3/).
+`FPGA_IMAGE=blink2 tools/gowin_build.sh` still emits the old Blink2hw small IMEM. `BOARD=primer20k` builds the same CPU for the Dock (GW2A-18C). Do not pass `-f` / flash. Do not load the Nano 4K from Bee (it is on the Pi). Sim says an LED edge is `15N+18` cycles at 27 MHz (upper bound if SPRAM wait-states apply). 4K measurements: [`docs/blink-measure/blink3/`](docs/blink-measure/blink3/).
 
 ## Oberon compiler (Norebo)
 
