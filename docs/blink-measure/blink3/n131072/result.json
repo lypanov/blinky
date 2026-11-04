@@ -1,0 +1,50 @@
+{
+  "frequency_hz": 5.522388059701492,
+  "period_s": 0.1810810810810811,
+  "period_median_s": 0.13333333333333333,
+  "period_std_s": 0.10899225543210218,
+  "toggle_rate_hz": 11.044776119402984,
+  "implied_cycles_per_edge": 2444594.594594595,
+  "implied_cycles_per_iteration": 4.6626941577808285,
+  "duty_cycle": 0.6209876543209877,
+  "edge_count": 298,
+  "rising_edge_count": 149,
+  "falling_edge_count": 149,
+  "confidence": 0.6608,
+  "threshold": 139.55330607633414,
+  "fft_frequency_hz": 6.851851851851851,
+  "aliasing_warning": null,
+  "warnings": [],
+  "fps": 30.0,
+  "probed_fps": 30.0,
+  "warmup_s": 8.0,
+  "duration_s": 26.966666666666665,
+  "n_frames_analyzed": 810,
+  "n_frames_total": 1050,
+  "video": "/home/lypanov/fpga/blinky/docs/blink-measure/blink3/n131072/clip.mkv",
+  "roi": {
+    "x": 355,
+    "y": 245,
+    "w": 36,
+    "h": 36,
+    "method": "manual"
+  },
+  "paths": {
+    "json": "/home/lypanov/fpga/blinky/docs/blink-measure/blink3/n131072/result.json",
+    "plot": "/home/lypanov/fpga/blinky/docs/blink-measure/blink3/n131072/brightness.png",
+    "roi_frame": "/home/lypanov/fpga/blinky/docs/blink-measure/blink3/n131072/roi.png",
+    "csv": "/home/lypanov/fpga/blinky/docs/blink-measure/blink3/n131072/brightness.csv"
+  },
+  "expected": {
+    "clock_hz": 27000000,
+    "max_iterations": 524288,
+    "sim_cycles_per_edge": 78.0,
+    "sim_max_iterations": 5,
+    "cycles_per_edge": 8178892.800000001,
+    "toggle_rate_hz": 3.301180326021634,
+    "frequency_hz": 1.650590163010817,
+    "period_s": 0.6058439111111112,
+    "note": "Scales Verilator's 78-cycle edge period at maxIterations=5 linearly to 524288. Sim memory is 1-cycle; Gowin SPRAM wait-states make the hardware loop slower, so this is an upper bound on blink Hz."
+  },
+  "error_pct_vs_expected": 234.57051807628525
+}

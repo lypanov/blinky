@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Generate CPUMinimalWrapper.v from Blink2hw.code and run Gowin syn+PNR.
-# Does not program the FPGA. Bitstream is SRAM-loadable .fs (not flash).
+# Generate CPUMinimalWrapper.v from the Blink3 linked image (or Blink2hw)
+# and run Gowin syn+PNR. Does not program the FPGA. Bitstream is SRAM-loadable
+# .fs (not flash).
+#
+# Usage:
+#   tools/gowin_build.sh                         # Blink3, maxIterations=262144
+#   BLINK3_MAXITER=131072 tools/gowin_build.sh   # Blink3, half delay
+#   FPGA_IMAGE=blink2 tools/gowin_build.sh       # old Blink2hw small IMEM
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,8 +14,13 @@ export CHISEL_CPU_PROJECT_ROOT="$ROOT"
 export PATH="${HOME}/bin:/usr/local/bin:${PATH}"
 cd "$ROOT"
 
+FPGA_IMAGE="${FPGA_IMAGE:-blink3}"
+BLINK3_MAXITER="${BLINK3_MAXITER:-262144}"
+BLINK3_IMEM="${BLINK3_IMEM:-$ROOT/sim/visualizer/imem/blink3.words}"
+export FPGA_IMAGE BLINK3_IMEM
+
 # Gowin GUI Tcl crashes with QT_QPA_PLATFORM=offscreen. Prefer xcb on Bee.
-if [[ -z "${QT_QPA_PLATFORM:-}" ]]; then
+if [[ -z "${QT_QPA_PLATFORM:-}" || "${QT_QPA_PLATFORM}" == "wayland;xcb" || "${QT_QPA_PLATFORM}" == "wayland" ]]; then
   export QT_QPA_PLATFORM=xcb
 fi
 if [[ "${QT_QPA_PLATFORM}" == "offscreen" ]]; then
@@ -26,7 +37,26 @@ if ! command -v gw_sh >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "==> Chisel: CPUMinimalWrapper from tests/Blink2hw.code"
+mhi_hex() {
+  python3 -c "print(f'{(0x60000000 | (int($1) >> 16)):08x}')"
+}
+
+if [[ "$FPGA_IMAGE" == "blink3" ]]; then
+  echo "==> Blink3 IMEM (trampoline at 0, linked image at 0x1000+, maxIterations=$BLINK3_MAXITER)"
+  python3 "$ROOT/sim/build_blink3_imem.py" \
+    --max-iter "$BLINK3_MAXITER" \
+    --pad 2048 \
+    --out "$BLINK3_IMEM"
+  EXPECT_MHI="$(mhi_hex "$BLINK3_MAXITER")"
+  GOWIN_OUT_NAME="blink3_n${BLINK3_MAXITER}"
+else
+  echo "==> Chisel: CPUMinimalWrapper from tests/Blink2hw.code"
+  EXPECT_MHI="60000004"
+  GOWIN_OUT_NAME="blink2hw_4x"
+fi
+export GOWIN_OUT_NAME
+
+echo "==> Chisel: CPUMinimalWrapper (FPGA_IMAGE=$FPGA_IMAGE)"
 mill chisel-blinky.runMain gcd.CPUSubset0
 
 V="$ROOT/generated/CPUMinimalWrapper.v"
@@ -35,18 +65,26 @@ if [[ ! -f "$V" ]]; then
   exit 1
 fi
 
-echo "==> Checking 2x delay word 0x60000004 (MHI R0,0x4 = 262144) in Verilog"
-if grep -q '60000004' "$V"; then
-  echo "    found 60000004 in $V"
-  grep -n '60000004' "$V" | head
+echo "==> Checking delay word 0x$EXPECT_MHI in Verilog"
+if grep -qi "$EXPECT_MHI" "$V"; then
+  echo "    found $EXPECT_MHI in $V"
+  grep -ni "$EXPECT_MHI" "$V" | head
 else
-  echo "error: 60000004 not in $V — Blink2hw.code patch did not reach instruction memory" >&2
-  grep -n '6000000' "$V" || true
+  echo "error: $EXPECT_MHI not in $V — image did not reach instruction memory" >&2
+  grep -ni '6000000' "$V" || true
   exit 1
 fi
-if grep -qE '6000000[28]' "$V"; then
-  echo "error: old delay word 60000002 or 60000008 still present in $V" >&2
-  exit 1
+
+if [[ "$FPGA_IMAGE" == "blink3" ]]; then
+  echo "==> Checking Blink3 trampoline / BL Toggle encodings"
+  for word in f7000409 f7000410 f7ffffdc; do
+    if grep -qi "$word" "$V"; then
+      echo "    found $word"
+    else
+      echo "error: $word not in $V (trampoline or relocated BL missing)" >&2
+      exit 1
+    fi
+  done
 fi
 
 echo "==> Gowin_SP instances (expect 2)"
@@ -61,22 +99,23 @@ mkdir -p "$ROOT/gowin/src"
   cat "$V"
 } > "$ROOT/gowin/src/CPUMinimalWrapper.v"
 
-echo "==> Gowin syn+PNR (GW1NSR-LV4CQN48PC6/I5)"
+echo "==> Gowin syn+PNR (GW1NSR-LV4CQN48PC6/I5) out=$GOWIN_OUT_NAME"
 mkdir -p "$ROOT/gowin/impl"
 # gw_sh writes impl next to the Tcl unless -d is used; run from gowin/
 cd "$ROOT/gowin"
 gw_sh "$ROOT/gowin/gowin_build.tcl"
 
 echo "==> Bitstream"
-mapfile -t FS < <(find "$ROOT/gowin" -name '*.fs' -type f | sort)
-if [[ ${#FS[@]} -eq 0 ]]; then
-  echo "error: no .fs bitstream produced" >&2
+FS="$ROOT/gowin/impl/pnr/${GOWIN_OUT_NAME}.fs"
+if [[ ! -f "$FS" ]]; then
+  echo "error: expected $FS was not produced" >&2
+  find "$ROOT/gowin/impl" -name '*.fs' -type f || true
   exit 1
 fi
-for f in "${FS[@]}"; do
-  echo "    $f"
-done
+echo "    $FS"
 echo ""
 echo "SRAM load only (never flash; -m is the default write-sram flag):"
-echo "  openFPGALoader -b tangnano4k -m ${FS[-1]}"
+echo "  tools/sram_load.sh -b tangnano4k $FS"
+echo "  openFPGALoader -b tangnano4k -m $FS"
 echo "Do NOT pass -f / --write-flash / --external-flash."
+echo "Do not load the Primer 20K."

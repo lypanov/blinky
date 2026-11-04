@@ -1,6 +1,7 @@
 # Recreate the Tang Nano 4K Gowin project and run syn+PNR.
-# Device: GW1NSR-LV4CQN48PC6/I5 (GW1NSR-4C, QN48P). Top: CPUMinimalWrapper.
+# Device: GW1NSR-LV4CQN48PC6/I5 (GW1NSR-4C, QN48P). Top: blinky_top.
 # Invoked from tools/gowin_build.sh; do not run with QT_QPA_PLATFORM=offscreen.
+# Default output name is blink3 (linked LightToggle). Override with GOWIN_OUT_NAME.
 
 set ROOT [file normalize [file join [file dirname [info script]] ..]]
 set OUT  [file join $ROOT gowin]
@@ -17,7 +18,11 @@ add_file -type sdc     [file join $OUT blinky.sdc]
 
 set_option -top_module blinky_top
 set_option -verilog_std sysv2017
-set_option -output_base_name blink2hw_4x
+if {[info exists ::env(GOWIN_OUT_NAME)] && $::env(GOWIN_OUT_NAME) ne ""} {
+  set_option -output_base_name $::env(GOWIN_OUT_NAME)
+} else {
+  set_option -output_base_name blink3
+}
 set_option -synthesis_tool gowinsynthesis
 set_option -place_option 2
 # blinky_top only brings out clock/reset/led/uart — keep MSPI/JTAG as dedicated.

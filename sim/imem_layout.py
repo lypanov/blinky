@@ -41,6 +41,14 @@ BLINK3_MAXITER_PC = 0x105C  # MHI R0, 4 (imm does not fit MOV)
 BLINK3_MAXITER_STORE_PC = 0x1060
 BLINK3_MHI_WORD = 0x60000004
 BLINK3_IMEM_WORDS = 0x1100 // 4  # 0x0000 .. 0x10FC
+# Power-of-two pad so CPUSubset0's PC>>2 index cannot run off the Vec on FPGA.
+BLINK3_FPGA_IMEM_WORDS = 2048
+BLINK3_CLOCK_HZ = 27_000_000
+# Verilator (after BL/R15): skip-loop is 15 cycles; the Toggle iteration is 33.
+# LED edge period = (N-1)*15 + 33 = 15N + 18. Full blink (on+off) is two edges.
+BLINK3_SKIP_CYCLES = 15
+BLINK3_EDGE_EXTRA = 18
+MHI_R0 = 0x60000000
 
 
 def setup_word(addr: int) -> int | None:
@@ -135,6 +143,54 @@ def blink3_imem(final_system_path: str) -> list[int]:
     for addr, word, _note in blink3_startup_trampoline():
         mem[addr // 4] = word
     return mem
+
+
+def mhi_r0(high16: int) -> int:
+    """F1 MHI R0, imm — `R0 := imm << 16`. 262144 uses imm=4, 131072 uses imm=2."""
+    if high16 < 0 or high16 > 0xFFFF:
+        raise ValueError(f"MHI immediate out of range: {high16}")
+    return MHI_R0 | (high16 & 0xFFFF)
+
+
+def patch_blink3_maxiter(words: list[int], n: int) -> list[int]:
+    """Replace LightToggle's MHI delay word. n must be a multiple of 65536."""
+    if n <= 0 or n & 0xFFFF:
+        raise ValueError(f"maxIterations {n} must be a positive multiple of 65536 (MHI high half)")
+    out = list(words)
+    idx = BLINK3_MAXITER_PC // 4
+    if idx >= len(out):
+        raise ValueError(f"IMEM too short for MHI at 0x{BLINK3_MAXITER_PC:X}")
+    out[idx] = mhi_r0(n >> 16)
+    return out
+
+
+def pad_imem(words: list[int], length: int = BLINK3_FPGA_IMEM_WORDS) -> list[int]:
+    if length < len(words):
+        raise ValueError(f"cannot pad {len(words)} words down to {length}")
+    return list(words) + [BEEF] * (length - len(words))
+
+
+def blink3_cycles_per_edge(n: int) -> int:
+    return BLINK3_SKIP_CYCLES * n + BLINK3_EDGE_EXTRA
+
+
+def blink3_predicted_hz(n: int, clock_hz: int = BLINK3_CLOCK_HZ) -> dict[str, float | int | str]:
+    """Sim-RAM prediction. Hardware SPRAM wait-states may make this an upper bound."""
+    cpe = blink3_cycles_per_edge(n)
+    toggle = clock_hz / cpe
+    blink = toggle / 2.0
+    return {
+        "max_iterations": n,
+        "cycles_per_edge": cpe,
+        "clock_hz": clock_hz,
+        "toggle_rate_hz": toggle,
+        "frequency_hz": blink,
+        "period_s": 1.0 / blink,
+        "note": (
+            "sim says 15N+18 cycles/LED edge at 27 MHz; "
+            "Gowin SPRAM wait-states may slow the hardware loop"
+        ),
+    }
 
 
 def write_words(path: str, words: list[int]) -> None:

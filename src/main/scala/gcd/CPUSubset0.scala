@@ -426,7 +426,9 @@ object CPUSubset0 {
     Option(System.getenv("CHISEL_CPU_PROJECT_ROOT")).getOrElse {
       // Attempt to find project root by looking for a marker file/directory
       var current = new File(sys.props("user.dir"))
-      while (current != null && !new File(current, "build.sc").exists()) {
+      while (current != null &&
+             !new File(current, "build.sc").exists() &&
+             !new File(current, "build.mill").exists()) {
         current = current.getParentFile
       }
       if (current != null) current.getAbsolutePath
@@ -466,39 +468,62 @@ object CPUSubset0 {
     
     // Get project root
     val projectRoot = getProjectRoot()
-    
-    // Load instructions from Blink2hw.code
-    val blink2hwCodePath = new File(projectRoot, "tests/Blink2hw.code").getAbsolutePath
-    val programInstructions = loadInstructionsFromFile(blink2hwCodePath)
+
+    // Default FPGA image is Blink3 (linked LightToggle + AMMT, trampoline at 0).
+    // FPGA_IMAGE=blink2 restores the old Blink2hw small-IMEM path.
+    val fpgaImage = sys.env.getOrElse("FPGA_IMAGE", "blink3")
+    val (programInstructions, customMemoryImage) = fpgaImage match {
+      case "blink3" =>
+        val imemArg = sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
+        val imemFile = new File(imemArg)
+        val imemPath =
+          if (imemFile.isAbsolute) imemFile.getAbsolutePath
+          else new File(projectRoot, imemArg).getAbsolutePath
+        val words = loadInstructionsFromFile(imemPath)
+        if (words.isEmpty) {
+          throw new RuntimeException(
+            s"Blink3 IMEM empty at $imemPath — run sim/build_blink3_imem.py first"
+          )
+        }
+        println(s"FPGA image: Blink3 custom IMEM ${words.length} words from $imemPath")
+        (Seq.empty[String], Some(words))
+      case _ =>
+        val blink2hwCodePath = new File(projectRoot, "tests/Blink2hw.code").getAbsolutePath
+        val programInstructions = loadInstructionsFromFile(blink2hwCodePath)
+        println(s"FPGA image: Blink2hw ${programInstructions.length} instructions from $blink2hwCodePath")
+        (programInstructions, None)
+    }
+
+    val firtoolOpts = Array(
+      "-disable-all-randomization",
+      "-strip-debug-info",
+      "--lowering-options=disallowLocalVariables,disallowPackedArrays,noAlwaysComb"
+    )
     
     // Generate the base CPU Verilog for testing and debugging
     val verilogCode = ChiselStage.emitSystemVerilog(
-      gen = new CPUSubset0(programInstructions),
-      firtoolOpts = Array(
-        "-disable-all-randomization",
-        "-strip-debug-info",
-        "--lowering-options=disallowLocalVariables,disallowPackedArrays,noAlwaysComb"
-      )
+      gen = new CPUSubset0(programInstructions, customMemoryImage = customMemoryImage),
+      firtoolOpts = firtoolOpts
     )
     
     // Generate the top-level wrapper for FPGA synthesis (with real Gowin RAM)
     val topVerilogCode = ChiselStage.emitSystemVerilog(
-      gen = new CPUMinimalWrapper(useRealGowin = true, programInstructions),
-      firtoolOpts = Array(
-        "-disable-all-randomization",
-        "-strip-debug-info",
-        "--lowering-options=disallowLocalVariables,disallowPackedArrays,noAlwaysComb"
-      )
+      gen = new CPUMinimalWrapper(
+        useRealGowin = true,
+        programInstructions = programInstructions,
+        customMemoryImage = customMemoryImage
+      ),
+      firtoolOpts = firtoolOpts
     )
     
     // Generate a simulation-friendly version (with mock RAM)
     val simVerilogCode = ChiselStage.emitSystemVerilog(
-      gen = new CPUMinimalWrapper(useRealGowin = false, programInstructions),
-      firtoolOpts = Array(
-        "-disable-all-randomization",
-        "-strip-debug-info",
-        "--lowering-options=disallowLocalVariables,disallowPackedArrays,noAlwaysComb"
-      )
+      gen = new CPUMinimalWrapper(
+        useRealGowin = false,
+        programInstructions = programInstructions,
+        customMemoryImage = customMemoryImage
+      ),
+      firtoolOpts = firtoolOpts
     )
     
     // Write the simulation version
