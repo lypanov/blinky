@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Enrich a Verilator CPUSimTop trace with RISC5 disassembly and Oberon source.
 
-Used for both Blink2 (default IMEM) and Blink3 (unfixed linked image). Does not
-change the loader or the CPU — it only labels what the sim actually did.
+Used for both Blink2 (default IMEM) and Blink3 (linked image). Labels what
+the sim actually did.
 """
 from __future__ import annotations
 
@@ -179,8 +179,8 @@ LT_SOURCE = {
     14: (14, "load maxIterations"),
     15: (14, "IF counter >= maxIterations"),
     16: (14, "BLT skip Toggle"),
-    17: (15, "MMT.Toggle  ; BL → 0x1000 (R15 still not written)"),
-    18: (16, "counter := 0  ; correct return address of the BL (0x1090)"),
+    17: (15, "MMT.Toggle  ; BL → 0x1000, R15 := 0x1090"),
+    18: (16, "counter := 0  ; return from Toggle"),
     19: (16, "reload SB"),
     20: (16, "store counter"),
     21: (12, "BT back to WHILE"),
@@ -293,8 +293,8 @@ def build_blink3(imem_path: str) -> tuple[list[dict], dict]:
             {"file": "tests/AMemoryMappedToggle.Mod", "source": ammt_mod, "title": "AMemoryMappedToggle"},
             {"file": "tests/Blink3test.Mod", "source": lt_mod, "title": "LightToggle (Blink3)"},
         ],
-        "title": "Blink3 — AMMT BEGIN runs (light := 0); R15 still dropped",
-        "subtitle": "Startup trampoline calls module init at 0x1028, then LightToggle",
+        "title": "Blink3 — AMMT BEGIN, then Toggle via BL (R15 = PC+4)",
+        "subtitle": "Trampoline BLs stand in for Modules.Load body calls",
         "ammt_mod_offset": ammt_off,
         "lt_mod_offset": lt_off,
     }
@@ -370,13 +370,20 @@ def find_blink3_failure(steps: list[dict]) -> dict | None:
     r15_after = int(land.get("r15") or r15)
     hex_word = bl.get("hex") or ""
     insn = hex_word if str(hex_word).startswith("0x") else f"0x{hex_word}"
-    kind = "bl_no_r15" if actual == BLINK3_TOGGLE else "bl_wrong_target"
-    if actual == BLINK3_TOGGLE:
+    r15_written = r15_after == BLINK3_RETURN
+    if actual == BLINK3_TOGGLE and r15_written:
+        kind = "bl_ok"
+        label = (
+            "BL at 0x108C lands on Toggle at 0x1000 and writes R15 = 0x1090."
+        )
+    elif actual == BLINK3_TOGGLE:
+        kind = "bl_no_r15"
         label = (
             "BL at 0x108C lands on Toggle at 0x1000 (loader matches Modules.Mod). "
             "R15 is not written."
         )
     else:
+        kind = "bl_wrong_target"
         label = (
             f"BL at 0x108C jumps to 0x{actual:X}, not Toggle at 0x1000. "
             "R15 is not written."
@@ -391,7 +398,7 @@ def find_blink3_failure(steps: list[dict]) -> dict | None:
         "r15_at_bl": r15,
         "r15_after": r15_after,
         "r15_expected": BLINK3_RETURN,
-        "r15_written": r15_after == BLINK3_RETURN,
+        "r15_written": r15_written,
         "step_index": bl_i,
         "landing_step_index": bl_i + 1 if bl_i + 1 < len(steps) else bl_i,
         "insn": insn,

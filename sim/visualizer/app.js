@@ -200,7 +200,7 @@ function failBannerHtml(f) {
     ? `landed on Toggle at <code>${hex32(f.actual_target)}</code> (loader matches Modules.Mod).`
     : `jumped to <code>${hex32(f.actual_target)}</code>, not Toggle at <code>${hex32(f.expected_target)}</code>.`;
   return `BL at <code>${hex32(f.bl_pc)}</code> ${where}
-    R15 ${r15ok ? "was written" : "stayed " + hex32(f.r15_after) + " — CPU never saved PC+4 (" + hex32(f.r15_expected) + ")"}.`;
+    R15 ${r15ok ? "was written to " + hex32(f.r15_expected) : "stayed " + hex32(f.r15_after) + " — CPU never saved PC+4 (" + hex32(f.r15_expected) + ")"}.`;
 }
 
 function initBannerText(init) {
@@ -240,14 +240,13 @@ function applyCycle() {
 
   const f = t.failure;
   const atFail = !!(f && (i === f.step_index || i === f.landing_step_index));
-  // Highlight R15 whenever we are on the BL or its landing, because the CPU
-  // still does not write LNK. Target may already be Toggle (loader fixed).
   $("reg-15").classList.toggle("stale", !!(f && !f.r15_written && atFail));
   $("fail-banner").classList.toggle("here", atFail);
+  $("fail-banner").classList.toggle("ok", !!(f && f.r15_written));
   const init = t.init;
   const atInit = !!(init && (i === init.begin_step_index || i === init.store_step_index));
   $("init-banner").classList.toggle("here", atInit);
-  $("brand-dot").classList.toggle("fail", state.image === "blink3");
+  $("brand-dot").classList.toggle("fail", state.image === "blink3" && !(f && f.r15_written));
 
   const edges = t.led_toggles || (t.summary && t.summary.toggle_cycles) || [];
   const periods = [];
@@ -338,8 +337,15 @@ function selectImage(name) {
   $("btn-init").classList.toggle("hidden", !t.init);
   $("btn-light").classList.toggle("hidden", !t.init);
   $("fail-banner").classList.toggle("hidden", !t.failure);
+  $("fail-banner").classList.toggle("ok", !!(t.failure && t.failure.r15_written));
+  $("btn-fail").classList.toggle("danger", !(t.failure && t.failure.r15_written));
   $("init-banner").classList.toggle("hidden", !t.init);
-  if (t.failure) $("fail-text").innerHTML = failBannerHtml(t.failure);
+  if (t.failure) {
+    $("fail-title").textContent = t.failure.r15_written
+      ? "Blink3 BL writes R15."
+      : "Blink3 remaining issue.";
+    $("fail-text").innerHTML = failBannerHtml(t.failure);
+  }
   if (t.init) $("init-text").textContent = initBannerText(t.init);
   renderSource(t.mod_source || []);
   renderAsm(p);
@@ -350,7 +356,9 @@ function jumpToFailure() {
   const t = currentTrace();
   if (!t || !t.failure) return;
   stop();
-  state.i = t.failure.step_index;
+  state.i = t.failure.r15_written
+    ? t.failure.landing_step_index
+    : t.failure.step_index;
   applyCycle();
 }
 

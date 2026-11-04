@@ -51,6 +51,8 @@ button.hidden, .hidden { display: none !important; }
   border-bottom: 1px solid #7a2410; font-size: 13px; line-height: 1.45;
 }
 .fail-banner.here { background: #5a1a12; box-shadow: inset 4px 0 0 var(--fail); }
+.fail-banner.ok { background: #0f2a1c; color: #c8ffe0; border-bottom-color: #1a6b40; }
+.fail-banner.ok.here { background: #164a30; box-shadow: inset 4px 0 0 var(--ok); }
 .fail-banner strong { color: #fff; margin-right: 8px; }
 .fail-banner code { font-family: var(--mono); color: #ffe08a; }
 .init-banner {

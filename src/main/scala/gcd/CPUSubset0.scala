@@ -186,6 +186,13 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       }
       
       when (takeBranch) {
+        // ISA: v=1 (format bit 0) is BL — plant LNK, then jump.
+        // Do not use the regWrite path: that would also update N/Z.
+        when (format(0)) {
+          regs(15) := pc + 4.U
+          printf(p"BL: R15 = ${pc + 4.U} (PC+4)\n")
+          printf(p"Writing ${pc + 4.U} to register 15 (R15 = ${pc + 4.U})\n")
+        }
         // Check if this is a branch to register or branch with offset based on format bits
         when (isBranchToReg) {
           // Branch to register: Use register c as the branch target

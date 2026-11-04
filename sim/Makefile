@@ -15,7 +15,7 @@ TB        := $(SIMDIR)/tb_blink2.cpp
 VERILATOR ?= verilator
 CYCLES    ?= 800
 TOGGLES   ?= 6
-BLINK3_CYCLES ?= 500
+BLINK3_CYCLES ?= 800
 
 export PATH := $(HOME)/bin:/usr/local/bin:$(PATH)
 export CHISEL_CPU_PROJECT_ROOT := $(ROOT)
@@ -107,7 +107,7 @@ run-blink3: $(BIN3)
 	cd $(ROOT) && $(BIN3) \
 		--program blink3 \
 		--cycles $(BLINK3_CYCLES) \
-		--toggles 0 \
+		--toggles 6 \
 		--fst $(OUT)/blink3.fst \
 		--led $(OUT)/blink3_led_toggles.csv \
 		--trace $(OUT)/blink3_trace.json

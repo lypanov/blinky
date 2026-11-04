@@ -2,42 +2,32 @@
   "entries": [
     {
       "addr": 0,
-      "hex": "4f000008",
-      "disasm": "MOV R15, 0x8",
+      "hex": "f7000409",
+      "disasm": "BL always, off=1033",
       "file": null,
       "line": null,
       "src": null,
-      "note": "MOV R15, 0x08 ; AMMT BEGIN returns here (not BL)",
+      "note": "BL AMMT BEGIN at 0x1028 ; R15 := 0x04 (light := 0)",
       "mark": "trampoline"
     },
     {
       "addr": 4,
-      "hex": "e7000408",
-      "disasm": "B always, off=1032",
+      "hex": "f7000410",
+      "disasm": "BL always, off=1040",
       "file": null,
       "line": null,
       "src": null,
-      "note": "B AMMT BEGIN at 0x1028 (light := 0)",
+      "note": "BL LightToggle BEGIN at 0x1048 ; R15 := 0x08",
       "mark": "trampoline"
     },
     {
       "addr": 8,
-      "hex": "4f0000b0",
-      "disasm": "MOV R15, 0xb0",
+      "hex": "e7ffffff",
+      "disasm": "B always, off=-1",
       "file": null,
       "line": null,
       "src": null,
-      "note": "MOV R15, 0xB0 ; halt for LightToggle",
-      "mark": "trampoline"
-    },
-    {
-      "addr": 12,
-      "hex": "e700040e",
-      "disasm": "B always, off=1038",
-      "file": null,
-      "line": null,
-      "src": null,
-      "note": "B LightToggle BEGIN at 0x1048",
+      "note": "halt if LightToggle BEGIN returns",
       "mark": "trampoline"
     },
     {
@@ -527,7 +517,7 @@
       "file": "tests/Blink3test.Mod",
       "line": 15,
       "src": "MMT.Toggle; (* Use the toggle function from the imported module *)",
-      "note": "MMT.Toggle  ; BL \u2192 0x1000 (R15 still not written)",
+      "note": "MMT.Toggle  ; BL \u2192 0x1000, R15 := 0x1090",
       "mark": "call-bl"
     },
     {
@@ -537,7 +527,7 @@
       "file": "tests/Blink3test.Mod",
       "line": 16,
       "src": "counter := 0;",
-      "note": "counter := 0  ; correct return address of the BL (0x1090)",
+      "note": "counter := 0  ; return from Toggle",
       "mark": "return-addr"
     },
     {
@@ -641,8 +631,8 @@
     "END LightToggle."
   ],
   "mod_file": "tests/Blink3test.Mod + AMemoryMappedToggle.Mod",
-  "title": "Blink3 \u2014 AMMT BEGIN runs (light := 0); R15 still dropped",
-  "subtitle": "Startup trampoline calls module init at 0x1028, then LightToggle",
+  "title": "Blink3 \u2014 AMMT BEGIN, then Toggle via BL (R15 = PC+4)",
+  "subtitle": "Trampoline BLs stand in for Modules.Load body calls",
   "modules": [
     {
       "file": "tests/AMemoryMappedToggle.Mod",

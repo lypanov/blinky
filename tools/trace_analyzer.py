@@ -413,6 +413,7 @@ class TraceAnalyzer:
                 f"Decoded fields:",
                 f"  Condition: {instr.fields['cond']} ({cond_names[instr.fields['cond']]})",
                 f"  v (link): {instr.fields['v']}"
+                + ("  → BL plants R15 = PC+4" if instr.fields["v"] else "")
             ])
             if instr.fields["bit29"] == 0:  # Branch to register
                 annotated.append(f"  C (reg): R{instr.fields['c']}")
