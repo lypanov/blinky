@@ -4,8 +4,9 @@
 # .fs (not flash).
 #
 # Usage:
-#   tools/gowin_build.sh                         # Blink3, maxIterations=262144
-#   BLINK3_MAXITER=131072 tools/gowin_build.sh   # Blink3, half delay
+#   tools/gowin_build.sh                         # Blink3 Nano 4K, N=262144
+#   BLINK3_MAXITER=131072 tools/gowin_build.sh   # Blink3 Nano 4K, half delay
+#   BOARD=primer20k tools/gowin_build.sh         # Blink3 Primer 20K Dock
 #   FPGA_IMAGE=blink2 tools/gowin_build.sh       # old Blink2hw small IMEM
 set -euo pipefail
 
@@ -15,6 +16,7 @@ export PATH="${HOME}/bin:/usr/local/bin:${PATH}"
 cd "$ROOT"
 
 FPGA_IMAGE="${FPGA_IMAGE:-blink3}"
+BOARD="${BOARD:-nano4k}"
 BLINK3_MAXITER="${BLINK3_MAXITER:-262144}"
 BLINK3_IMEM="${BLINK3_IMEM:-$ROOT/sim/visualizer/imem/blink3.words}"
 export FPGA_IMAGE BLINK3_IMEM
@@ -99,23 +101,40 @@ mkdir -p "$ROOT/gowin/src"
   cat "$V"
 } > "$ROOT/gowin/src/CPUMinimalWrapper.v"
 
-echo "==> Gowin syn+PNR (GW1NSR-LV4CQN48PC6/I5) out=$GOWIN_OUT_NAME"
-mkdir -p "$ROOT/gowin/impl"
-# gw_sh writes impl next to the Tcl unless -d is used; run from gowin/
-cd "$ROOT/gowin"
-gw_sh "$ROOT/gowin/gowin_build.tcl"
+case "$BOARD" in
+  nano4k|tangnano4k)
+    echo "==> Gowin syn+PNR (GW1NSR-LV4CQN48PC6/I5) out=$GOWIN_OUT_NAME"
+    mkdir -p "$ROOT/gowin/impl"
+    # gw_sh writes impl next to the Tcl unless -d is used; run from gowin/
+    cd "$ROOT/gowin"
+    gw_sh "$ROOT/gowin/gowin_build.tcl"
+    FS="$ROOT/gowin/impl/pnr/${GOWIN_OUT_NAME}.fs"
+    SEARCH="$ROOT/gowin/impl"
+    LOAD_HINT="tools/sram_load.sh -b tangnano4k $FS"$'\n'"  openFPGALoader -b tangnano4k -m $FS"
+    ;;
+  primer20k|tangprimer20k)
+    echo "==> Gowin syn+PNR (GW2A-LV18PG256C8/I7 Dock) out=$GOWIN_OUT_NAME"
+    mkdir -p "$ROOT/gowin/primer20k/impl"
+    cd "$ROOT/gowin/primer20k"
+    gw_sh "$ROOT/gowin/primer20k/gowin_blink3.tcl"
+    FS="$ROOT/gowin/primer20k/impl/pnr/${GOWIN_OUT_NAME}.fs"
+    SEARCH="$ROOT/gowin/primer20k/impl"
+    LOAD_HINT="tools/sram_load.sh -b tangprimer20k $FS"$'\n'"  openFPGALoader -b tangprimer20k -m $FS"
+    ;;
+  *)
+    echo "error: BOARD=$BOARD (use nano4k or primer20k)" >&2
+    exit 1
+    ;;
+esac
 
 echo "==> Bitstream"
-FS="$ROOT/gowin/impl/pnr/${GOWIN_OUT_NAME}.fs"
 if [[ ! -f "$FS" ]]; then
   echo "error: expected $FS was not produced" >&2
-  find "$ROOT/gowin/impl" -name '*.fs' -type f || true
+  find "$SEARCH" -name '*.fs' -type f || true
   exit 1
 fi
 echo "    $FS"
 echo ""
 echo "SRAM load only (never flash; -m is the default write-sram flag):"
-echo "  tools/sram_load.sh -b tangnano4k $FS"
-echo "  openFPGALoader -b tangnano4k -m $FS"
+echo "  $LOAD_HINT"
 echo "Do NOT pass -f / --write-flash / --external-flash."
-echo "Do not load the Primer 20K."

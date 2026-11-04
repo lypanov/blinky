@@ -365,9 +365,13 @@ gowin/src/
 gowin/*.gprj.user
 gowin/ip/gowin_sp/
 gowin/primer20k/impl/
+gowin/primer20k/src/
 gowin/primer20k/led_build.v
 gowin/primer20k/*.gprj.user
 gowin/primer20k/led.v.bak
+# Primer 20K Blink3 .fs is ~1.7 MB; keep it local / CI artifact, not git.
+gowin/primer20k/**/*.fs
+*.fs
 docs/blink-measure/**/clip.mkv
 docs/blink-measure/**/capture.log
 docs/blink-measure/**/result.json.stdout
