@@ -1,0 +1,197 @@
+// Behavioural user side of Gowin's HyperRAM Memory Interface (IPUG944-2.1).
+//
+// The encrypted PHY (hpram_code_1N2A.v) cannot be simulated. This model
+// implements the plain-Verilog user ports of HPRAM_TOP / Table 5-1 and the
+// handshake in figures 4-6 (command), 4-7 (write data) and 4-11 (read data):
+//
+//   * cmd_en is a one-cycle pulse. While it is high, cmd and addr are valid.
+//     cmd = 1 writes, cmd = 0 reads.
+//   * Burst length is 16 bytes: four 32-bit beats. Write beat 0 is sampled
+//     on the cmd_en cycle; beats 1..3 follow on the next three clocks.
+//   * data_mask bit 0 means "write this byte". 0xF leaves the word unchanged.
+//   * addr is a 16-bit-word address (byte address >> 1), 22 bits for 8 MB.
+//     A 16-byte burst starts on an address whose low 3 bits are 0.
+//   * rd_data_valid stays high for four clocks. Figure 4-11 shows a gap
+//     after cmd_en and does not give its length. FIRST_VALID below places
+//     the first valid 13 user clocks after the cmd_en edge, inside the
+//     Table 4-2 minimum of 15 user clocks between commands (burst 16,
+//     memory clock <= 166 MHz). The bridge waits for both, so a longer
+//     real-IP gap only slows the hardware; it does not change the data.
+//   * init_calib rises and stays high. Real calibration is milliseconds;
+//     INIT_CYCLES is short so a trace can show the stall. The blink rate
+//     is measured after calibration on both sides.
+//   * clk_out is the user clock. Here it is clk, which stands in for the
+//     hardware clk_out (memory_clk / 2). memory_clk is accepted and unused.
+//
+// `define HYPER_CORRUPT makes every read return 0. The prologue must then
+// keep the LED dark. Timing of rd_data_valid does not change.
+
+`timescale 1ns/1ps
+
+module HyperRamUserModel (
+  input         clk,
+  input         memory_clk,
+  input         pll_lock,
+  input         rst_n,
+  input  [31:0] wr_data,
+  output reg [31:0] rd_data,
+  output reg    rd_data_valid,
+  input  [21:0] addr,
+  input         cmd,
+  input         cmd_en,
+  output reg    init_calib,
+  output        clk_out,
+  input  [3:0]  data_mask
+);
+
+  localparam integer WORDS = 2048;
+  localparam integer INIT_CYCLES = 64;
+  // Loaded into the countdown the cmd_en cycle. The countdown runs on
+  // later clocks, so the first rd_data_valid is FIRST_VALID+1 user
+  // clocks after cmd_en. 12 → first valid at +13, inside Tcmd = 15.
+  localparam integer FIRST_VALID = 12;
+  localparam integer TCMD = 15;
+
+  assign clk_out = clk;
+  // The PHY consumes memory_clk. The user model is clocked by clk.
+  wire unused_memory_clk = memory_clk;
+
+  reg [31:0] mem [0:WORDS-1];
+  integer mi;
+  initial begin
+    for (mi = 0; mi < WORDS; mi = mi + 1)
+      mem[mi] = 32'h0000_0000;
+  end
+
+  reg [31:0] cycle;
+  reg [31:0] last_cmd;
+  reg        seen_cmd;
+  reg [7:0]  fault;
+  reg [7:0]  init_cnt;
+
+  reg        wr_busy;
+  reg [2:0]  wr_beat;
+  reg [21:0] wr_base;
+
+  reg        rd_busy;
+  reg [7:0]  rd_wait;
+  reg [2:0]  rd_beat;
+  reg [21:0] rd_base;
+
+  task automatic apply_write;
+    input [21:0] base;
+    input [2:0]  beat;
+    input [31:0] data;
+    input [3:0]  mask;
+    integer idx;
+    reg [31:0] oldv;
+    begin
+      idx = (base >> 1) + beat;
+      if (idx < 0 || idx >= WORDS) begin
+        fault <= fault | 8'h04;
+        $display("HYPER_RANGE_FAULT addr=%h beat=%0d", base, beat);
+      end else begin
+`ifndef HYPER_CORRUPT
+        oldv = mem[idx];
+        if (!mask[0]) oldv[7:0]   = data[7:0];
+        if (!mask[1]) oldv[15:8]  = data[15:8];
+        if (!mask[2]) oldv[23:16] = data[23:16];
+        if (!mask[3]) oldv[31:24] = data[31:24];
+        mem[idx] = oldv;
+`endif
+      end
+    end
+  endtask
+
+  function [31:0] read_word;
+    input [21:0] base;
+    input [2:0]  beat;
+    integer idx;
+    begin
+      idx = (base >> 1) + beat;
+      if (idx < 0 || idx >= WORDS)
+        read_word = 32'hEEEE_EEEE;
+`ifdef HYPER_CORRUPT
+      else
+        read_word = 32'h0000_0000;
+`else
+      else
+        read_word = mem[idx];
+`endif
+    end
+  endfunction
+
+  always @(posedge clk) begin
+    if (!rst_n || !pll_lock) begin
+      init_calib <= 1'b0;
+      init_cnt <= 8'h0;
+      rd_data_valid <= 1'b0;
+      rd_data <= 32'h0;
+      cycle <= 32'h0;
+      seen_cmd <= 1'b0;
+      last_cmd <= 32'h0;
+      fault <= 8'h0;
+      wr_busy <= 1'b0;
+      rd_busy <= 1'b0;
+      wr_beat <= 3'h0;
+      rd_beat <= 3'h0;
+      rd_wait <= 8'h0;
+    end else begin
+      cycle <= cycle + 32'h1;
+      rd_data_valid <= 1'b0;
+
+      if (!init_calib) begin
+        if (init_cnt == INIT_CYCLES)
+          init_calib <= 1'b1;
+        else
+          init_cnt <= init_cnt + 8'h1;
+      end else begin
+        if (wr_busy) begin
+          apply_write(wr_base, wr_beat, wr_data, data_mask);
+          if (wr_beat == 3'd3)
+            wr_busy <= 1'b0;
+          else
+            wr_beat <= wr_beat + 3'd1;
+        end
+
+        if (rd_busy) begin
+          if (rd_wait != 8'h0) begin
+            rd_wait <= rd_wait - 8'h1;
+          end else begin
+            rd_data <= read_word(rd_base, rd_beat);
+            rd_data_valid <= 1'b1;
+            if (rd_beat == 3'd3)
+              rd_busy <= 1'b0;
+            else
+              rd_beat <= rd_beat + 3'd1;
+          end
+        end
+
+        if (cmd_en) begin
+          if (wr_busy || rd_busy) begin
+            fault <= fault | 8'h01;
+            $display("HYPER_TIMING_FAULT overlap cycle=%0d", cycle);
+          end else if (seen_cmd && (cycle - last_cmd) < TCMD) begin
+            fault <= fault | 8'h02;
+            $display("HYPER_TIMING_FAULT gap %0d cycle=%0d", cycle - last_cmd, cycle);
+          end else begin
+            seen_cmd <= 1'b1;
+            last_cmd <= cycle;
+            if (cmd) begin
+              apply_write(addr, 3'd0, wr_data, data_mask);
+              wr_base <= addr;
+              wr_beat <= 3'd1;
+              wr_busy <= 1'b1;
+            end else begin
+              rd_base <= addr;
+              rd_beat <= 3'd0;
+              rd_wait <= FIRST_VALID;
+              rd_busy <= 1'b1;
+            end
+          end
+        end
+      end
+    end
+  end
+
+endmodule

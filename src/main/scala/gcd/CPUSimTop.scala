@@ -14,8 +14,10 @@ import java.io.File
  */
 class CPUSimTop(
     programInstructions: Seq[String],
-    customMemoryImage: Option[Seq[String]] = None
+    customMemoryImage: Option[Seq[String]] = None,
+    memBackend: String = "blockram"
 ) extends Module {
+  val hyper = memBackend == "hyperram"
   val io = IO(new Bundle {
     val led = Output(Bool())
     val pc = Output(UInt(32.W))
@@ -30,14 +32,42 @@ class CPUSimTop(
     val memRead = Output(Bool())
   })
 
-  val cpu = Module(new CPUSubset0(programInstructions, customMemoryImage = customMemoryImage))
-  val memoryController = Module(new MemoryController(useRealGowin = false))
-
-  memoryController.io.cpuAddr := cpu.io.memAddr
-  memoryController.io.cpuWriteData := cpu.io.memWriteData
-  memoryController.io.cpuWrite := cpu.io.memWrite
-  memoryController.io.cpuRead := cpu.io.memRead
-  cpu.io.memReadData := memoryController.io.cpuReadData
+  val cpu = Module(new CPUSubset0(
+    programInstructions,
+    customMemoryImage = customMemoryImage,
+    waitForStores = hyper,
+    requireMemCheck = hyper
+  ))
+  if (hyper) {
+    val bridge = Module(new HyperRamBridge)
+    val model = Module(new HyperRamUserModel)
+    bridge.io.cpuAddr := cpu.io.memAddr
+    bridge.io.cpuWriteData := cpu.io.memWriteData
+    bridge.io.cpuWrite := cpu.io.memWrite
+    bridge.io.cpuRead := cpu.io.memRead
+    cpu.io.memReadData := bridge.io.cpuReadData
+    cpu.io.memStall := bridge.io.memStall
+    model.io.clk := clock
+    model.io.memory_clk := clock
+    model.io.pll_lock := true.B
+    model.io.rst_n := ~reset.asBool
+    model.io.cmd := bridge.io.hr.cmd
+    model.io.cmd_en := bridge.io.hr.cmd_en
+    model.io.addr := bridge.io.hr.addr
+    model.io.wr_data := bridge.io.hr.wr_data
+    model.io.data_mask := bridge.io.hr.data_mask
+    bridge.io.hr.rd_data := model.io.rd_data
+    bridge.io.hr.rd_data_valid := model.io.rd_data_valid
+    bridge.io.hr.init_calib := model.io.init_calib
+  } else {
+    val memoryController = Module(new MemoryController(useRealGowin = false))
+    memoryController.io.cpuAddr := cpu.io.memAddr
+    memoryController.io.cpuWriteData := cpu.io.memWriteData
+    memoryController.io.cpuWrite := cpu.io.memWrite
+    memoryController.io.cpuRead := cpu.io.memRead
+    cpu.io.memReadData := memoryController.io.cpuReadData
+    cpu.io.memStall := false.B
+  }
 
   io.led := cpu.io.led
   io.pc := cpu.io.pc
@@ -95,6 +125,18 @@ object CPUSimTop {
           () => new CPUSimTop(Seq.empty, customMemoryImage = Some(words)),
           s"$targetDir/CPUSimTopBlink3.v",
           "blink3"
+        )
+      case "hyperram" =>
+        val imemPath = new File(
+          projectRoot,
+          sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/hyperram.words")
+        ).getAbsolutePath
+        val words = loadInstructionsFromFile(imemPath)
+        println(s"CPUSimTop: HyperRAM IMEM ${words.length} words from $imemPath")
+        (
+          () => new CPUSimTop(Seq.empty, customMemoryImage = Some(words), memBackend = "hyperram"),
+          s"$targetDir/CPUSimTopHyper.v",
+          "hyperram"
         )
       case _ =>
         val defaultCode = new File(projectRoot, "tests/Blink2test.code").getAbsolutePath

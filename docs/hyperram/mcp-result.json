@@ -1,0 +1,36 @@
+{
+  "board": "nano4k",
+  "frequency_hz": 1.5,
+  "edge_frequency_hz": null,
+  "fft_frequency_hz": 1.5,
+  "trusted_method": "fft",
+  "trusted_reason": "blinking LED FFT (edge detector found no in-band period)",
+  "status": "blinking",
+  "confidence": 0.88,
+  "source": "blinking-led",
+  "n_leds": 2,
+  "n_blinking": 1,
+  "n_steady": 1,
+  "colors": [
+    "red"
+  ],
+  "target_led_id": 0,
+  "measure_roi": {
+    "x": 222,
+    "y": 253,
+    "w": 46,
+    "h": 38
+  },
+  "roi": {
+    "x": 222,
+    "y": 253,
+    "w": 46,
+    "h": 38
+  },
+  "assign_reason": "upper=primer20k n=2 orange=1 lower=nano4k n=2 orange=0 cy=154/272",
+  "paths": {
+    "json": "/home/lypanov/fpga/blink-measure/20261105-002543-mcp/result.json",
+    "plot": "/home/lypanov/fpga/blink-measure/20261105-002543-mcp/nano4k.png",
+    "annotated": "/home/lypanov/fpga/blink-measure/20261105-002543-mcp/leds-annotated.jpg"
+  }
+}
