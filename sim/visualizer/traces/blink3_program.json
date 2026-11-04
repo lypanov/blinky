@@ -2,12 +2,42 @@
   "entries": [
     {
       "addr": 0,
-      "hex": "e7000411",
-      "disasm": "B always, off=1041",
+      "hex": "4f000008",
+      "disasm": "MOV R15, 0x8",
       "file": null,
       "line": null,
       "src": null,
-      "note": "sim trampoline: B to LightToggle entry (not a BL)",
+      "note": "MOV R15, 0x08 ; AMMT BEGIN returns here (not BL)",
+      "mark": "trampoline"
+    },
+    {
+      "addr": 4,
+      "hex": "e7000408",
+      "disasm": "B always, off=1032",
+      "file": null,
+      "line": null,
+      "src": null,
+      "note": "B AMMT BEGIN at 0x1028 (light := 0)",
+      "mark": "trampoline"
+    },
+    {
+      "addr": 8,
+      "hex": "4f0000b0",
+      "disasm": "MOV R15, 0xb0",
+      "file": null,
+      "line": null,
+      "src": null,
+      "note": "MOV R15, 0xB0 ; halt for LightToggle",
+      "mark": "trampoline"
+    },
+    {
+      "addr": 12,
+      "hex": "e700040e",
+      "disasm": "B always, off=1038",
+      "file": null,
+      "line": null,
+      "src": null,
+      "note": "B LightToggle BEGIN at 0x1048",
       "mark": "trampoline"
     },
     {
@@ -248,7 +278,7 @@
       "line": 14,
       "src": "light := 0; (* Initialize light to off *)",
       "note": "BEGIN light := 0  prologue",
-      "mark": null
+      "mark": "module-init"
     },
     {
       "addr": 4140,
@@ -287,8 +317,8 @@
       "file": "tests/AMemoryMappedToggle.Mod",
       "line": 14,
       "src": "light := 0; (* Initialize light to off *)",
-      "note": "store light",
-      "mark": null
+      "note": "store light := 0",
+      "mark": "init-store"
     },
     {
       "addr": 4156,
@@ -611,8 +641,8 @@
     "END LightToggle."
   ],
   "mod_file": "tests/Blink3test.Mod + AMemoryMappedToggle.Mod",
-  "title": "Blink3 \u2014 imported Toggle (loader fixed, R15 still dropped)",
-  "subtitle": "BL now lands on Toggle at 0x1000; CPUSubset0 never writes R15",
+  "title": "Blink3 \u2014 AMMT BEGIN runs (light := 0); R15 still dropped",
+  "subtitle": "Startup trampoline calls module init at 0x1028, then LightToggle",
   "modules": [
     {
       "file": "tests/AMemoryMappedToggle.Mod",

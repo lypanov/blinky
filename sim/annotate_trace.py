@@ -16,8 +16,10 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 sys.path.insert(0, os.path.dirname(__file__))
 from instruction_parser import disassemble  # noqa: E402
 from imem_layout import (  # noqa: E402
+    BLINK3_AMMT_BODY,
     BLINK3_BL_PC,
     BLINK3_ENTRY,
+    BLINK3_LIGHT_ADDR,
     BLINK3_RETURN,
     BLINK3_TOGGLE,
     BLINK3_WRONG_LAND,
@@ -25,6 +27,7 @@ from imem_layout import (  # noqa: E402
     HALT_START,
     HALT_WORD,
     SETUP,
+    blink3_startup_trampoline,
 )
 
 WATCH_ADDRS = {
@@ -151,7 +154,7 @@ AMMT_SOURCE = {
     11: (14, "save LNK"),
     12: (14, "light := 0"),
     13: (14, "SB := MT[1]"),
-    14: (14, "store light"),
+    14: (14, "store light := 0"),
     15: (15, "restore LNK"),
     16: (15, "restore SP"),
     17: (15, "BT R15"),
@@ -229,13 +232,8 @@ def build_blink3(imem_path: str) -> tuple[list[dict], dict]:
     words = load_words_file(imem_path)
     entries = []
 
-    # Address 0 trampoline (B to LightToggle).
-    if words:
-        entries.append(entry(
-            0, words[0],
-            note="sim trampoline: B to LightToggle entry (not a BL)",
-            mark="trampoline",
-        ))
+    for addr, word, note in blink3_startup_trampoline():
+        entries.append(entry(addr, word, note=note, mark="trampoline"))
     add_setup_and_halt(entries)
 
     ammt_base = 0x1000
@@ -243,7 +241,13 @@ def build_blink3(imem_path: str) -> tuple[list[dict], dict]:
         addr = ammt_base + i * 4
         word = words[addr // 4]
         line, note = AMMT_SOURCE.get(i, (None, None))
-        mark = "expected-target" if addr == BLINK3_TOGGLE else None
+        mark = None
+        if addr == BLINK3_TOGGLE:
+            mark = "expected-target"
+        elif addr == BLINK3_AMMT_BODY:
+            mark = "module-init"
+        elif addr == BLINK3_AMMT_BODY + 0x10:
+            mark = "init-store"
         entries.append(entry(
             addr, word,
             file="tests/AMemoryMappedToggle.Mod" if line else None,
@@ -289,8 +293,8 @@ def build_blink3(imem_path: str) -> tuple[list[dict], dict]:
             {"file": "tests/AMemoryMappedToggle.Mod", "source": ammt_mod, "title": "AMemoryMappedToggle"},
             {"file": "tests/Blink3test.Mod", "source": lt_mod, "title": "LightToggle (Blink3)"},
         ],
-        "title": "Blink3 — imported Toggle (loader fixed, R15 still dropped)",
-        "subtitle": "BL now lands on Toggle at 0x1000; CPUSubset0 never writes R15",
+        "title": "Blink3 — AMMT BEGIN runs (light := 0); R15 still dropped",
+        "subtitle": "Startup trampoline calls module init at 0x1028, then LightToggle",
         "ammt_mod_offset": ammt_off,
         "lt_mod_offset": lt_off,
     }
@@ -323,6 +327,32 @@ def attach_dmem(cycles: list[dict]) -> None:
             if addr in mem:
                 snap[str(addr)] = {"addr": addr, "name": name, "value": mem[addr]}
         c["dmem"] = snap
+
+
+def find_blink3_init(steps: list[dict]) -> dict | None:
+    begin_i = None
+    store_i = None
+    light_after = None
+    for i, c in enumerate(steps):
+        pc = int(c.get("pc") or 0)
+        if pc == BLINK3_AMMT_BODY and begin_i is None:
+            begin_i = i
+        if pc == BLINK3_AMMT_BODY + 0x10 and store_i is None:
+            store_i = i
+        dmem = c.get("dmem") or {}
+        rec = dmem.get(str(BLINK3_LIGHT_ADDR)) or dmem.get(BLINK3_LIGHT_ADDR)
+        if rec and rec.get("value") == 0 and store_i is not None and i >= store_i:
+            light_after = 0
+    if begin_i is None:
+        return None
+    return {
+        "begin_pc": BLINK3_AMMT_BODY,
+        "store_pc": BLINK3_AMMT_BODY + 0x10,
+        "light_addr": BLINK3_LIGHT_ADDR,
+        "light_after": light_after,
+        "begin_step_index": begin_i,
+        "store_step_index": store_i if store_i is not None else begin_i,
+    }
 
 
 def find_blink3_failure(steps: list[dict]) -> dict | None:
@@ -398,6 +428,10 @@ def annotate(trace: dict, program: list[dict], meta: dict) -> dict:
             cyc["mark"] = "call-bl"
         elif pc == BLINK3_TOGGLE:
             cyc["mark"] = cyc.get("mark") or "expected-target"
+        elif pc == BLINK3_AMMT_BODY:
+            cyc["mark"] = "module-init"
+        elif pc == BLINK3_AMMT_BODY + 0x10:
+            cyc["mark"] = "init-store"
     return trace
 
 
@@ -452,6 +486,7 @@ def main() -> int:
     trace["image"] = args.image
     if args.image == "blink3":
         trace["failure"] = find_blink3_failure(trace["cycles"])
+        trace["init"] = find_blink3_init(trace["cycles"])
         trace["ammt_mod_offset"] = meta.get("ammt_mod_offset")
         trace["lt_mod_offset"] = meta.get("lt_mod_offset")
 
@@ -477,6 +512,7 @@ def main() -> int:
     print("[annotate] clocks:", summary["n_clocks"], "instruction steps:", summary["n_steps"])
     print("[annotate] LED edges at cycles:", summary["toggle_cycles"])
     if args.image == "blink3":
+        print("[annotate] init:", json.dumps(trace.get("init"), indent=2))
         print("[annotate] failure:", json.dumps(trace.get("failure"), indent=2))
     return 0
 
