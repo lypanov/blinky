@@ -1,0 +1,30 @@
+LED alignment + colour + 30 fps blink (Bee, 2026-11-04)
+
+Scene: Primer 20K above, Nano 4K below, one 640x480 Logitech frame.
+FPGA / serial / openFPGALoader were not touched.
+
+auto_adjust (LED-priority, not mean luma)
+  score=280.0 n_blobs=6 red=True orange=True
+  brightness=128 contrast=40 saturation=80 gain=48
+  auto_exposure=1 exposure_time_absolute=310
+  white_balance_automatic=0 white_balance_temperature=3800
+  exposure_dynamic_framerate=0
+  This QuickCam delivers fps ≈ exposure/10 until it caps at 30.
+  Short shutter (50–110) made a pretty still but recorded ~6 fps and
+  aliased Blink3 3.43 Hz to ~2.56 Hz. Exposure >= 250 keeps 25–30 fps.
+
+colour (peak RGB from 06-auto-after.jpg)
+  4K red     RGB 245,0,0   hue 0    class=red
+  4K red     RGB 255,22,25 hue 359  class=red
+  20K USB    RGB 250,2,0   hue 0    class=red
+  20K orange RGB 165,66,0  hue 24   class=orange
+  20K orange RGB 246,72,105 hue 349 class=orange (G/R)
+
+detect_leds (geometry + colour, no USB cords)
+  assign_reason=upper=primer20k n=4 orange=3 lower=nano4k n=2 orange=1 cy=144/297
+  boards: primer20k above (orange user LEDs), nano4k below (red pair)
+
+measure_blink(roi=nano4k) via detected board bbox 278,274,46,47
+  trusted=edge 3.417 Hz  (fft=3.383 Hz, snr=68.2, conf=0.96)
+  predicted Blink3=3.433 Hz  error=-0.47%
+  capture delivered_fps=30.083 n_frames=361 duration_s=12 wall_s=12.782

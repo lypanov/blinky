@@ -24,6 +24,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+_TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _TOOLS_DIR not in sys.path:
+    sys.path.insert(0, _TOOLS_DIR)
+from blink_trust import (  # noqa: E402
+    choose_trusted,
+    parse_roi_arg,
+    predicted_blink3,
+    search_window,
+)
+
 # Hardware Blink2 (tests/Blink2hw.Mod) vs Verilator Blink2test.
 CLOCK_HZ = 27_000_000
 HW_MAX_ITERATIONS = 524_288
@@ -127,13 +137,10 @@ def iter_rgb_frames(path: str, width: int, height: int):
 
 
 def parse_roi(spec: str) -> tuple[int, int, int, int]:
-    parts = [int(p.strip()) for p in spec.split(",")]
-    if len(parts) != 4:
+    kind, xywh = parse_roi_arg(spec)
+    if kind != "manual" or xywh is None:
         raise ValueError("ROI must be x,y,w,h")
-    x, y, w, h = parts
-    if w <= 0 or h <= 0:
-        raise ValueError("ROI width/height must be positive")
-    return x, y, w, h
+    return xywh
 
 
 def clamp_roi(x: int, y: int, w: int, h: int, width: int, height: int) -> tuple[int, int, int, int]:
@@ -261,7 +268,7 @@ def measure_series(
     duration = (len(brightness) - 1) / fps if len(brightness) > 1 else 0.0
     warnings: list[str] = []
 
-    freq = None
+    edge_hz = None
     period = None
     period_std = None
     period_median = None
@@ -272,36 +279,58 @@ def measure_series(
         period_std = float(np.std(periods)) if len(periods) else None
         period_median = float(np.median(periods)) if len(periods) else None
         if period > 0:
-            freq = 1.0 / period
+            edge_hz = 1.0 / period
     elif len(edges) >= 2 and duration > 0:
         # Half-periods only: two edges ≈ one full blink.
         n_full = len(edges) / 2.0
-        freq = n_full / duration
-        period = 1.0 / freq if freq else None
+        edge_hz = n_full / duration
+        period = 1.0 / edge_hz if edge_hz else None
 
     fft_hz, fft_snr = fft_peak_hz(brightness, fps)
-    if freq is None and fft_hz:
+    trusted, trusted_reason = choose_trusted(
+        edge_hz=edge_hz,
+        fft_hz=fft_hz,
+        fft_snr=float(fft_snr),
+        edge_count=int(len(edges)),
+        duration_s=duration,
+    )
+    if trusted == "untrusted":
+        freq = None
+        warnings.append(trusted_reason)
+    elif trusted == "fft" and fft_hz:
         freq = fft_hz
         period = 1.0 / freq
+        warnings.append(trusted_reason)
+    elif trusted == "edge" and edge_hz:
+        freq = edge_hz
+    else:
+        freq = edge_hz or fft_hz
+        if freq:
+            period = 1.0 / freq
 
     duty = float(states.mean()) if len(states) else None
 
-    # Confidence: period regularity × on/off separation × enough edges.
+    # Confidence must separate a clean blink from a missed/steady LED.
     conf = 0.0
-    if freq and period and span > 0:
+    if trusted == "untrusted":
+        conf = 0.12
+    elif freq and period:
         cv = (period_std / period) if (period_std is not None and period > 0) else 1.0
         regular = max(0.0, 1.0 - min(cv, 1.0))
-        sep = min(1.0, span / (np.std(brightness) * 2.0 + 1e-9))
-        n_need = max(4.0, duration * freq)
+        noise = float(np.std(brightness)) + 1e-9
+        sep = min(1.0, span / (2.0 * noise))
+        n_need = max(4.0, duration * freq * 1.5)
         enough = min(1.0, len(edges) / n_need) if n_need else 0.0
-        conf = float(max(0.0, min(1.0, 0.5 * regular + 0.3 * sep + 0.2 * enough)))
-        if fft_hz and abs(fft_hz - freq) / max(freq, 1e-9) > 0.25:
-            conf *= 0.6
+        agree = 1.0
+        if edge_hz and fft_hz:
+            rel = abs(fft_hz - edge_hz) / max(edge_hz, fft_hz, 1e-9)
+            agree = 1.0 if rel <= 0.12 else 0.2
+        snr_term = min(1.0, float(fft_snr) / 8.0)
+        conf = float(max(0.0, min(1.0, 0.35 * regular + 0.25 * enough + 0.2 * agree + 0.2 * snr_term)))
+        if agree < 1.0:
             warnings.append(
-                f"edge frequency {freq:.3f} Hz disagrees with FFT peak {fft_hz:.3f} Hz"
+                f"edge frequency {edge_hz:.3f} Hz disagrees with FFT peak {fft_hz:.3f} Hz"
             )
-    if fft_snr > 5 and conf < 0.3:
-        conf = min(0.7, conf + 0.3)
 
     nyquist = fps / 2.0
     aliasing = None
@@ -319,15 +348,20 @@ def measure_series(
             )
             warnings.append(aliasing)
 
-    if span < 5:
+    if trusted != "untrusted" and span < 3 and float(fft_snr) < 5:
         warnings.append("on/off brightness gap is small; ROI may have missed the LED")
-        conf = min(conf, 0.3)
-    if len(edges) < 4:
+        conf = min(conf, 0.35)
+    if trusted != "untrusted" and len(edges) < 4:
         warnings.append(f"only {len(edges)} edges in {duration:.1f}s; frequency is uncertain")
         conf = min(conf, 0.35)
+    if trusted == "untrusted":
+        conf = min(conf, 0.15)
 
     return {
         "frequency_hz": freq,
+        "edge_frequency_hz": edge_hz,
+        "trusted_method": trusted,
+        "trusted_reason": trusted_reason,
         "period_s": period,
         "period_median_s": period_median,
         "period_std_s": period_std,
@@ -382,7 +416,17 @@ def plot_brightness(
     freq = meas["frequency_hz"]
     title = "LED brightness vs time"
     if freq:
-        title += f"  —  {freq:.4f} Hz  (T={meas['period_s']:.4f}s, conf={meas['confidence']:.2f})"
+        edge = meas.get("edge_frequency_hz")
+        fft = meas.get("fft_frequency_hz")
+        method = meas.get("trusted_method") or "?"
+        extra = f"trusted={method}"
+        if edge:
+            extra += f" edge={edge:.4f}"
+        if fft:
+            extra += f" fft={fft:.4f}"
+        title += (
+            f"  —  {freq:.4f} Hz  (T={meas['period_s']:.4f}s, conf={meas['confidence']:.2f}, {extra})"
+        )
     ax.set_title(title)
     ax.set_xlabel("time (s)")
     ax.set_ylabel("mean (R − G) in ROI")
@@ -445,11 +489,24 @@ def analyze(
     var = np.maximum(sumsq / used - mean_rg ** 2, 0.0)
     std = np.sqrt(var)
 
-    if roi_spec:
-        x, y, w, h = clamp_roi(*parse_roi(roi_spec), width, height)
+    kind, xywh = parse_roi_arg(roi_spec)
+    if kind == "manual" and xywh is not None:
+        x, y, w, h = clamp_roi(*xywh, width, height)
         method = "manual"
+    elif kind == "full":
+        x, y, w, h = 0, 0, width, height
+        method = "full"
     else:
-        x, y, w, h, method = auto_roi(std, mean_r, mean_g)
+        sx, sy, sw, sh = search_window(kind, width, height)
+        x, y, w, h, method = auto_roi(
+            std[sy : sy + sh, sx : sx + sw],
+            mean_r[sy : sy + sh, sx : sx + sw],
+            mean_g[sy : sy + sh, sx : sx + sw],
+        )
+        x += sx
+        y += sy
+        if kind != "auto":
+            method = f"{method}+{kind}"
 
     # Pass 2: brightness time series from the ROI.
     brightness = []
@@ -462,13 +519,13 @@ def analyze(
         brightness.append(float(np.mean(np.maximum(patch[:, :, 0] - patch[:, :, 1], 0.0))))
     brightness = np.asarray(brightness, dtype=np.float64)
 
-    # Prefer fps implied by the kept samples if probe duration is trustworthy.
-    probed_n = meta.get("n_frames")
+    # Prefer fps implied by decoded frames / duration. Container avg_frame_rate
+    # is the requested 30 fps even when this Logitech only delivered ~6.
+    probed_n = n if n else meta.get("n_frames")
     probed_d = meta.get("duration")
-    if probed_n and probed_d and probed_d > 0:
-        fps_from_file = (probed_n - 1) / probed_d if probed_n > 1 else fps
-        # Only replace if close — container copy can have odd nb_frames.
-        if 0.5 * fps < fps_from_file < 1.5 * fps:
+    if probed_n and probed_d and probed_d > 0 and probed_n > 1:
+        fps_from_file = (probed_n - 1) / probed_d
+        if fps_from_file >= 4.0:
             fps = fps_from_file
 
     meas = measure_series(brightness, fps)
@@ -504,8 +561,16 @@ def analyze(
         for i, (ti, b) in enumerate(zip(times, brightness)):
             f.write(f"{ti:.6f},{b:.4f},{int(meas['states'][i])}\n")
 
+    blink3 = predicted_blink3()
+    err_blink3 = None
+    if meas["frequency_hz"]:
+        err_blink3 = 100.0 * (meas["frequency_hz"] - blink3["frequency_hz"]) / blink3["frequency_hz"]
+
     result = {
         "frequency_hz": meas["frequency_hz"],
+        "edge_frequency_hz": meas["edge_frequency_hz"],
+        "trusted_method": meas["trusted_method"],
+        "trusted_reason": meas["trusted_reason"],
         "period_s": meas["period_s"],
         "period_median_s": meas["period_median_s"],
         "period_std_s": meas["period_std_s"],
@@ -519,6 +584,7 @@ def analyze(
         "confidence": meas["confidence"],
         "threshold": meas["threshold"],
         "fft_frequency_hz": meas["fft_frequency_hz"],
+        "fft_snr": meas["fft_snr"],
         "aliasing_warning": meas["aliasing_warning"],
         "warnings": meas["warnings"],
         "fps": fps,
@@ -528,7 +594,14 @@ def analyze(
         "n_frames_analyzed": meas["n_frames"],
         "n_frames_total": n,
         "video": os.path.abspath(video),
-        "roi": {"x": x, "y": y, "w": w, "h": h, "method": method},
+        "roi": {
+            "x": x,
+            "y": y,
+            "w": w,
+            "h": h,
+            "method": method,
+            "requested": roi_spec or "auto",
+        },
         "paths": {
             "json": os.path.abspath(json_path),
             "plot": os.path.abspath(plot_png),
@@ -537,6 +610,8 @@ def analyze(
         },
         "expected": exp,
         "error_pct_vs_expected": err,
+        "predicted_blink3": blink3,
+        "error_pct_vs_blink3": err_blink3,
     }
     with open(json_path, "w") as f:
         json.dump(result, f, indent=2)
@@ -601,9 +676,15 @@ def self_test() -> int:
             return 1
         err = abs(got - freq) / freq
         print(json.dumps({"got_hz": got, "expected_hz": freq, "rel_err": err,
+                          "edge_hz": result.get("edge_frequency_hz"),
+                          "fft_hz": result.get("fft_frequency_hz"),
+                          "trusted": result.get("trusted_method"),
                           "confidence": result["confidence"], "roi": result["roi"]}, indent=2))
         if err > 0.08:
             print(f"self-test FAIL: {got:.4f} Hz vs {freq} Hz", file=sys.stderr)
+            return 1
+        if result.get("trusted_method") not in ("edge", "fft"):
+            print("self-test FAIL: missing trusted_method", file=sys.stderr)
             return 1
         print("self-test OK", file=sys.stderr)
         return 0
@@ -614,7 +695,10 @@ def main() -> int:
     ap.add_argument("--video", help="recorded clip (mjpeg/mp4/mkv)")
     ap.add_argument("--outdir", help="directory for JSON / PNG / CSV")
     ap.add_argument("--warmup", type=float, default=8.0, help="seconds to discard at start")
-    ap.add_argument("--roi", help="manual ROI x,y,w,h (pixels)")
+    ap.add_argument(
+        "--roi",
+        help="auto (default), full, top, bottom, nano4k, primer20k, or x,y,w,h",
+    )
     ap.add_argument("--fps", type=float, help="override detected fps")
     ap.add_argument("--self-test", action="store_true", help="synthetic 2 Hz blink sanity check")
     args = ap.parse_args()

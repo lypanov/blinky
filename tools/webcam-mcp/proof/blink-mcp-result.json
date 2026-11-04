@@ -1,0 +1,261 @@
+{
+  "frequency_hz": 3.417123585969692,
+  "edge_frequency_hz": 3.417123585969692,
+  "fft_frequency_hz": 3.383065875810527,
+  "fft_snr": 68.19723278927167,
+  "trusted_method": "edge",
+  "trusted_reason": "edge/threshold period agrees with FFT",
+  "confidence": 0.9626,
+  "predicted_blink3_hz": 3.4332275390625,
+  "error_pct_vs_blink3": -0.46906163106233967,
+  "roi": {
+    "x": 278,
+    "y": 274,
+    "w": 46,
+    "h": 47,
+    "method": "manual",
+    "requested": "278,274,46,47"
+  },
+  "roi_requested": "nano4k",
+  "board": "nano4k",
+  "detected_roi": "278,274,46,47",
+  "leds": {
+    "assign_reason": "upper=primer20k n=4 orange=2 lower=nano4k n=2 orange=1 cy=144/297",
+    "boards": {
+      "primer20k": {
+        "name": "primer20k",
+        "cx": 331.4,
+        "cy": 143.8,
+        "roi": {
+          "x": 252,
+          "y": 92,
+          "w": 144,
+          "h": 88
+        },
+        "measure_roi": {
+          "x": 252,
+          "y": 92,
+          "w": 144,
+          "h": 88
+        },
+        "target_led_id": 0,
+        "n_leds": 4,
+        "n_blinking": 1,
+        "n_steady": 3,
+        "colors": [
+          "orange",
+          "red"
+        ],
+        "orientation": {
+          "blinking_vs_centroid": [
+            "right"
+          ],
+          "steady_vs_centroid": [
+            "left",
+            "right",
+            "left"
+          ],
+          "span_x": 103.8,
+          "span_y": 58.4
+        },
+        "led_ids": [
+          0,
+          3,
+          4,
+          5
+        ]
+      },
+      "nano4k": {
+        "name": "nano4k",
+        "cx": 302.1,
+        "cy": 297.5,
+        "roi": {
+          "x": 278,
+          "y": 274,
+          "w": 46,
+          "h": 47
+        },
+        "measure_roi": {
+          "x": 278,
+          "y": 274,
+          "w": 46,
+          "h": 47
+        },
+        "target_led_id": 1,
+        "n_leds": 2,
+        "n_blinking": 0,
+        "n_steady": 2,
+        "colors": [
+          "orange",
+          "red"
+        ],
+        "orientation": {
+          "blinking_vs_centroid": [],
+          "steady_vs_centroid": [
+            "below",
+            "above"
+          ],
+          "span_x": 3.9,
+          "span_y": 16.7
+        },
+        "led_ids": [
+          1,
+          2
+        ]
+      }
+    },
+    "leds": [
+      {
+        "id": 0,
+        "x": 380.5,
+        "y": 104.0,
+        "w": 6,
+        "h": 1,
+        "area": 6,
+        "r": 61.9,
+        "g": 0.0,
+        "b": 0.0,
+        "hue": 0.0,
+        "sat": 1.0,
+        "color": "red",
+        "state": "blinking",
+        "frequency_hz": 1.24,
+        "cv": 0.416,
+        "mean_chroma": 47.35,
+        "board": "primer20k",
+        "x0": 378,
+        "y0": 104
+      },
+      {
+        "id": 1,
+        "x": 300.1,
+        "y": 305.8,
+        "w": 20,
+        "h": 5,
+        "area": 84,
+        "r": 144.6,
+        "g": 0.0,
+        "b": 0.1,
+        "hue": 360.0,
+        "sat": 1.0,
+        "color": "red",
+        "state": "steady",
+        "frequency_hz": null,
+        "cv": 0.023,
+        "mean_chroma": 115.91,
+        "board": "nano4k",
+        "x0": 290,
+        "y0": 304
+      },
+      {
+        "id": 2,
+        "x": 304.0,
+        "y": 289.1,
+        "w": 16,
+        "h": 7,
+        "area": 52,
+        "r": 160.3,
+        "g": 44.7,
+        "b": 47.2,
+        "hue": 358.7,
+        "sat": 0.721,
+        "color": "orange",
+        "state": "steady",
+        "frequency_hz": null,
+        "cv": 0.011,
+        "mean_chroma": 93.46,
+        "board": "nano4k",
+        "x0": 296,
+        "y0": 286
+      },
+      {
+        "id": 3,
+        "x": 276.7,
+        "y": 162.4,
+        "w": 25,
+        "h": 11,
+        "area": 213,
+        "r": 100.9,
+        "g": 24.5,
+        "b": 0.0,
+        "hue": 14.6,
+        "sat": 1.0,
+        "color": "orange",
+        "state": "steady",
+        "frequency_hz": null,
+        "cv": 0.015,
+        "mean_chroma": 85.85,
+        "board": "primer20k",
+        "x0": 264,
+        "y0": 157
+      },
+      {
+        "id": 4,
+        "x": 354.4,
+        "y": 147.6,
+        "w": 4,
+        "h": 4,
+        "area": 13,
+        "r": 86.8,
+        "g": 17.3,
+        "b": 20.2,
+        "hue": 357.5,
+        "sat": 0.801,
+        "color": "red",
+        "state": "steady",
+        "frequency_hz": null,
+        "cv": 0.043,
+        "mean_chroma": 45.93,
+        "board": "primer20k",
+        "x0": 353,
+        "y0": 146
+      },
+      {
+        "id": 5,
+        "x": 313.9,
+        "y": 161.0,
+        "w": 9,
+        "h": 6,
+        "area": 23,
+        "r": 91.2,
+        "g": 37.2,
+        "b": 43.1,
+        "hue": 353.5,
+        "sat": 0.592,
+        "color": "orange",
+        "state": "steady",
+        "frequency_hz": null,
+        "cv": 0.025,
+        "mean_chroma": 45.8,
+        "board": "primer20k",
+        "x0": 308,
+        "y0": 156
+      }
+    ],
+    "annotated": "/home/lypanov/fpga/blink-measure/20261104-171135-mcp/leds-annotated.jpg"
+  },
+  "duration_s": 10.016666666666666,
+  "fps": 29.950083194675543,
+  "warnings": [],
+  "paths": {
+    "json": "/home/lypanov/fpga/blink-measure/20261104-171135-mcp/result.json",
+    "plot": "/home/lypanov/fpga/blink-measure/20261104-171135-mcp/brightness.png",
+    "roi_frame": "/home/lypanov/fpga/blink-measure/20261104-171135-mcp/roi.png",
+    "csv": "/home/lypanov/fpga/blink-measure/20261104-171135-mcp/brightness.csv"
+  },
+  "video": "/home/lypanov/fpga/blink-measure/20261104-171135-mcp/clip.mkv",
+  "capture": {
+    "path": "/home/lypanov/fpga/blink-measure/20261104-171135-mcp/clip.mkv",
+    "log": "/home/lypanov/fpga/blink-measure/20261104-171135-mcp/clip.log",
+    "device": "/dev/video0",
+    "duration_s": 12.0,
+    "wall_s": 12.782,
+    "fps": 30,
+    "delivered_fps": 30.083,
+    "n_frames": 361,
+    "width": 640,
+    "height": 480,
+    "lock_exposure": true,
+    "bytes": 4684313
+  }
+}
