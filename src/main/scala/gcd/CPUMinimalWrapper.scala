@@ -3,7 +3,11 @@ package gcd
 import chisel3._
 import chisel3.util._
 
-class CPUMinimalWrapper(useRealGowin: Boolean = true, programInstructions: Seq[String]) extends Module {
+class CPUMinimalWrapper(
+    useRealGowin: Boolean = true,
+    programInstructions: Seq[String] = Seq.empty[String],
+    customMemoryImage: Option[Seq[String]] = None
+) extends Module {
   val io = IO(new Bundle {
     val led = Output(Bool())         // LED output
     val deadbeef = Output(UInt(16.W)) // RAM value
@@ -12,8 +16,9 @@ class CPUMinimalWrapper(useRealGowin: Boolean = true, programInstructions: Seq[S
     val uart_tx = Output(Bool())     // UART transmit pin
   })
   
-  // Internal CPU with the provided program instructions
-  val cpu = Module(new CPUSubset0(programInstructions))
+  // Blink2 uses the small default IMEM (programInstructions). Blink3 passes
+  // the linked image + address-0 BL trampoline as customMemoryImage.
+  val cpu = Module(new CPUSubset0(programInstructions, customMemoryImage = customMemoryImage))
   io.led := cpu.io.led
   
   // Use the abstracted RAM controller for cycling display

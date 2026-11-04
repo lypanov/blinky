@@ -2,7 +2,7 @@
 
 Chisel 6.6 / Mill 0.12.5 CPU. **Not RISC-V.** ISA: [`docs/risc_5_arch.txt`](docs/risc_5_arch.txt). Memory map: [`docs/memory_map.txt`](docs/memory_map.txt).
 
-Commit `a68a501` is the last known-good-on-hardware snapshot: Oberon `Blink2hw` plus UART. This branch is **main-forward**: `main`'s Logger / linker / MT work on top of the blink2-4x Verilator/visualizer/webcam/Gowin tooling. Hardware still uses `tests/Blink2hw.Mod` (`maxIterations := 262144`, 2x delay word `0x60000004`). Simulation uses `tests/Blink2test.Mod` (`maxIterations := 5`). LED MMIO snoops stores to `0x10` or `0x50` (module vars moved to 0x50 on `main`).
+Commit `a68a501` is the last known-good-on-hardware snapshot: Oberon `Blink2hw` plus UART. `main` through PR #14 is Blink3 in sim (loader, AMMT BEGIN trampoline, `BL` writes R15, `maxIterations := 262144`). This branch SRAM-loads that Blink3 image on the **Tang Nano 4K** (never flash; do not touch the Primer 20K). LED MMIO snoops stores to `0x10` or `0x50`.
 
 ## Tang Primer 20K Dock
 
@@ -51,7 +51,16 @@ BLINK2_CODE=tests/Blink2test.code mill chisel-blinky.runMain gcd.CPUSimTop
 make -C sim run CYCLES=800 TOGGLES=6
 ```
 
-FPGA bitstream generation is unchanged: `./build.sh` still emits `CPUMinimalWrapper.v` from `tests/Blink2hw.code`.
+FPGA bitstream for the Tang Nano 4K is Blink3 (linked `LightToggle` + `AMemoryMappedToggle`, trampoline at address 0 that `BL`s each BEGIN). SRAM only:
+
+```sh
+tools/gowin_build.sh                          # N=262144
+tools/sram_load.sh -b tangnano4k gowin/impl/pnr/blink3_n262144.fs
+BLINK3_MAXITER=131072 tools/gowin_build.sh    # N=131072, then load blink3_n131072.fs
+tools/measure_blink.sh
+```
+
+`FPGA_IMAGE=blink2 tools/gowin_build.sh` still emits the old Blink2hw small IMEM. Do not pass `-f` / flash. Do not load the Primer 20K. Sim says an LED edge is `15N+18` cycles at 27 MHz (upper bound if SPRAM wait-states apply). Measurements: [`docs/blink-measure/blink3/`](docs/blink-measure/blink3/).
 
 ## Oberon compiler (Norebo)
 
