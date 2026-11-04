@@ -15,8 +15,10 @@ IO_PORT "reset" IO_TYPE=LVCMOS18 PULL_MODE=DOWN;
 IO_LOC "clock" 45;
 IO_PORT "clock" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 
-# UART — onboard USB debugger, FT2232 channel B (the 4K has no spare PMOD).
-# Pin 19 TX, pin 18 RX, 8N1 115200 into UartLedGate. Channel A stays JTAG.
+# UART pins in this bitstream: package 19 TX, package 18 RX, 8N1 115200.
+# Schematic Tang_Nano_4K_3603 uses those balls for camera PIXDATA, and the
+# onboard BL702 UART GPIOs are not wired to the FPGA. See
+# docs/uart-led-gate/hardware.md.
 IO_LOC "io_uart_tx" 19;
 IO_PORT "io_uart_tx" IO_TYPE=LVCMOS18 PULL_MODE=NONE DRIVE=8;
 IO_LOC "io_uart_rx" 18;

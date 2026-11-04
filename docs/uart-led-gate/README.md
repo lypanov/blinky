@@ -24,9 +24,11 @@ not part of this change.
 
 ## Where the pins are
 
-Tang Nano 4K: `tang-nano-4k.cst` already uses the onboard USB debugger,
-FT2232 channel B. Pin 18 is RX, pin 19 is TX. Channel A stays JTAG. There
-is no spare PMOD on this board.
+Tang Nano 4K: `tang-nano-4k.cst` places RX on package pin 18 and TX on pin 19.
+The onboard BL702 (bus 3 device 81) does expose a USB-UART on its second
+interface, but schematic 3603 does not connect that UART to the FPGA, and
+pins 18/19 are camera data. The SRAM test is written up in
+[`hardware.md`](hardware.md).
 
 Tang Primer 20K Dock: `gowin/primer20k/primer20k.cst` maps FPGA TX to **M11**
 and FPGA RX to **T13**, the BL702 USB-UART balls (same as BeebFpga and
@@ -87,3 +89,11 @@ BOARD=primer20k tools/gowin_build.sh
 ```
 
 The `.fs` files are gitignored. Do not pass `-f`.
+
+The Nano 4K bitstream above was SRAM-loaded on bus 3 device 81
+(`openFPGALoader --busdev-num 003:081 -b tangnano4k -m`, no `-f`). The
+Primer 20K was not loaded. Webcam `check_all(duration=10)` moved the 4K
+from 0.968 Hz to 3.329 Hz (Blink3 is 3.433 Hz). Three `0x01` / `0x00`
+cycles on `/dev/ttyUSB3` (interface 1 of that same BL702, 115200 8N1)
+left the 4K at 3.32 Hz the whole time. Path, schematic, and stills:
+[`hardware.md`](hardware.md). The 4K was left running this image.
