@@ -170,13 +170,14 @@ object CPUSimTop {
           s"$targetDir/CPUSimTopBlink3.v",
           "blink3"
         )
-      case "ddr3" | "ddr3fixup" =>
-        val extra = if (image == "ddr3fixup") 20 else 0
+      case "ddr3" | "ddr3fixup" | "ddr3rsc" =>
+        val extra = if (image == "ddr3rsc") 32 else if (image == "ddr3fixup") 20 else 0
         val imemPath = new File(
           projectRoot,
           sys.env.getOrElse(
             "BLINK3_IMEM",
-            if (image == "ddr3fixup") "sim/visualizer/imem/ddr3fixup.words"
+            if (image == "ddr3rsc") "sim/visualizer/imem/ddr3rsc.words"
+            else if (image == "ddr3fixup") "sim/visualizer/imem/ddr3fixup.words"
             else "sim/visualizer/imem/ddr3.words"
           )
         ).getAbsolutePath

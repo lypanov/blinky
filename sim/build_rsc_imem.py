@@ -251,6 +251,9 @@ def rsc_imem(
         max_iter=max_iter,
         mov_iter=mov_iter,
         success=ALU,
+        # The failure scanner runs through 0x1400. The ALU has to sit
+        # there, so a miss is the two-instruction hold instead.
+        hold_scan=False,
     )
     alu, _ = assemble_alu(alu_break, success=READER)
     reader, _ = assemble_reader(byte_break)

@@ -13,14 +13,14 @@
 // 0.720844 Hz. This build is the CPU prologue. The steady blink is
 // the Blink3 body after every compare difference is zero.
 //
-// The fixup ALU runs once, before Blink3, so it is not in the delay
-// loop. Verilator of that image, N = 5, 32, 128, 512, 1024, periods
-// exact and the same line as the step-1 fit:
+// The byte reader runs once, after the fixup ALU and before Blink3,
+// so neither is in the delay loop. Verilator of that image, N = 5,
+// 32, 128, 512, 1024, periods exact and the same line:
 //   pclk/edge = 576*N + 788
 // N = 262144 is 150995732 controller clocks per edge.
 //   edge = 96750000/150995732 = 0.640747 Hz
 //   full blink = 0.320373 Hz, 93.641 frames at 30 fps
-// A corrupt read, or one wrong ALU constant, leaves the pin dark.
+// A corrupt read, or one wrong header byte, leaves the pin dark.
 // Locked before the SRAM load.
 
 module blinky_top_ddr3 (
@@ -52,7 +52,7 @@ module blinky_top_ddr3 (
   wire        cpu_led;
   wire [31:0] cpu_pc;
   wire [31:0] cpu_r0, cpu_r4, cpu_r5, cpu_r7, cpu_r8, cpu_r9;
-  wire [31:0] cpu_mask;
+  wire [39:0] cpu_mask;
   wire        unused_uart_tx;
 
   wire        ddr_rd;
@@ -401,17 +401,24 @@ module blinky_top_ddr3 (
       hex32 = {hex16(v[31:16]), hex16(v[15:0])};
     end
   endfunction
+  function [15:0] hex8;
+    input [7:0] v;
+    begin
+      hex8 = {hexdig(v[7:4]), hexdig(v[3:0])};
+    end
+  endfunction
 
-  // 80 bytes: calib, hold, PC, the 28-bit check mask, the pattern
+  // 82 bytes: calib, hold, PC, the 40-bit check mask, the pattern
   // sum (R5), the last read column and one beat pair, the last write
-  // address and data, the complement sum (R9), then the two write
-  // steps. A fixup miss leaves a zero in the mask and the pin dark.
-  localparam integer UBYTES = 80;
+  // address and data, the complement sum (R9), then the raw write
+  // step and the step lane 0 actually uses. A missing zero leaves
+  // the pin dark.
+  localparam integer UBYTES = 82;
   wire [UBYTES*8-1:0] msg = {
     read_calib_done ? "C" : ".",
     hold_sync[1] ? "H" : ".",
     hex16(pc_snap), " ",
-    hex32(cpu_mask), " ",
+    hex8(cpu_mask[39:32]), hex32(cpu_mask[31:0]), " ",
     hex32(cpu_r5), " ",
     hex32({6'd0, cap_addr}), " ",
     hex32(cap_beats[31:0]), " ",
