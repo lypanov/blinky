@@ -239,9 +239,23 @@ int main(int argc, char** argv) {
   const bool shift1 = has(argc, argv, "+ddr3_lane1=12");
   const bool corrupt = has(argc, argv, "+ddr3_corrupt");
   const bool place_fetch = has(argc, argv, "+ddr3_place_fetch");
-  const int center = plus_int(argc, argv, "ddr3_center", place_fetch ? 9 : 10);
-  const int off0 = plus_int(argc, argv, "ddr3_lane0", 10) - center;
-  const int off1 = plus_int(argc, argv, "ddr3_lane1", 10) - center;
+  const bool wlevel_eye = has(argc, argv, "+ddr3_wlevel_eye");
+  const bool fetch_eye = has(argc, argv, "+ddr3_fetch_eye");
+  const int center = plus_int(argc, argv, "ddr3_center", 10);
+  // Fetch route: absolute 9 and 10 are both one above the eye.
+  // Both lanes at edge-3 leaves lane 0 one below. fetch_eye is offset 0.
+  int off0 = plus_int(argc, argv, "ddr3_lane0", 10) - center;
+  int off1 = plus_int(argc, argv, "ddr3_lane1", 10) - center;
+  if (wlevel_eye) {
+    off0 = -1;
+    off1 = 0;
+  } else if (fetch_eye) {
+    off0 = 0;
+    off1 = 0;
+  } else if (place_fetch) {
+    off0 = 1;
+    off1 = 1;
+  }
 
   if (pin_set) {
     // Cold step-10 line: lane 0 even-word alias, lane 1 only DQ5, and
