@@ -52,7 +52,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
                  waitForStores: Boolean = false,
                  requireMemCheck: Boolean = false,
                  extraChecks: Int = 0,
-                 fetchStored: Boolean = false) extends Module {
+                 fetchStored: Boolean = false,
+                 chainFix: Boolean = false) extends Module {
   val io = IO(new Bundle {
     val r0 = Output(UInt(32.W))  // Output register R0 for testing
     val r1 = Output(UInt(32.W))  // Output register R1 for testing
@@ -194,7 +195,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val nextDone = WireDefault(doneFetch)
   val nextWord = WireDefault(fetchedWord)
   val startFetch = WireDefault(false.B)
-  if (fetchStored) {
+  if (chainFix) {
+    // Step 5 fills the overlay from the patch table, after pcNext is known.
+    instructionRom.io.overlayEn := false.B
+    instructionRom.io.overlayData := 0.U
+  } else if (fetchStored) {
     stallFetch := atPatch && !doneFetch
     when (stallFetch) {
       when (!fetching && !inject) {
@@ -214,14 +219,53 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       nextDone := false.B
     }
     instructionRom.io.overlayEn := inject
+    instructionRom.io.overlayData := fetchedWord
   } else {
     instructionRom.io.overlayEn := false.B
+    instructionRom.io.overlayData := 0.U
   }
-  instructionRom.io.overlayData := fetchedWord
   fetching := nextFetching
   inject := nextInject
   doneFetch := nextDone
   fetchedWord := nextWord
+
+  // Step 5. The P and D sites sit inside the delay loop, so a HyperRAM
+  // round trip on every fetch would change the blink. A general table of
+  // 32-bit compares did not fit (5367 logic, limit 4608). The walker only
+  // stores these ten addresses, so each slot is a constant low-byte match
+  // in the 0x10 page. The fetch compare uses the registered PC, not the
+  // next-PC adder: pc+4, or pc while a memory op is waiting. A compare of
+  // the full next PC missed 27 MHz (slack about -9 ns). Three branches in
+  // this image are special: 0x1088 is taken when N differs from V, 0x10A8
+  // is an unconditional BT, and 0x1D34 / 0x1D68 jump onto 0x10AC / 0x10C0.
+  // An unpatched load of the page reads the ROM placeholder. HyperRAM
+  // powers up empty. chainFix false leaves the earlier images alone.
+  val patchOffs = Seq(0x0c, 0x34, 0x54, 0x68, 0x8c, 0x94, 0xac, 0xb0, 0xc0, 0xc4)
+  val nPatch = patchOffs.length
+  val holdForCode = WireDefault(false.B)
+  val codeRomAddr = WireDefault(0.U(32.W))
+  val chainHold = WireDefault(false.B)
+  val patchValid = if (chainFix) RegInit(VecInit(Seq.fill(nPatch)(false.B))) else VecInit(Seq.fill(nPatch)(false.B))
+  val patchData = if (chainFix) Reg(Vec(nPatch, UInt(32.W))) else WireDefault(VecInit(Seq.fill(nPatch)(0.U(32.W))))
+  // Which slot a code-page load hit. The 32-bit mux is the next cycle, so
+  // the issue path is only these bits and not the data mux.
+  val patchLoad = if (chainFix) RegInit(false.B) else false.B
+  val patchLoadHit = if (chainFix) Reg(Vec(nPatch, Bool())) else VecInit(Seq.fill(nPatch)(false.B))
+  val romPhase = if (chainFix) RegInit(0.U(2.W)) else 0.U(2.W)
+  val romDest = if (chainFix) Reg(UInt(4.W)) else 0.U(4.W)
+  if (chainFix) {
+    chainHold := romPhase =/= 0.U
+  }
+
+  def siteMatch(addr: UInt, armed: Boolean): Vec[Bool] = {
+    val hits = Wire(Vec(nPatch, Bool()))
+    val page = (addr(31, 8) === 0x10.U(24.W)) && (addr(1, 0) === 0.U)
+    for (i <- patchOffs.indices) {
+      val tag = page && (addr(7, 0) === patchOffs(i).U(8.W))
+      hits(i) := (if (armed) tag && patchValid(i) else tag)
+    }
+    hits
+  }
   
   // Instruction decode
   val format = instruction(31, 28)
@@ -289,12 +333,41 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       io.memAddr := patchPC
       io.memRead := true.B
     }
+  } .elsewhen (chainHold) {
+    // Unpatched code-window load. Phase 1 writes the ROM word that the
+    // issue cycle addressed. Phase 2 refetches PC+4 and only then advances,
+    // so the following instruction is not the data word.
+      if (chainFix) {
+      when (romPhase === 1.U) {
+        regWrite := true.B
+        regWriteAddr := romDest
+        regWriteData := instruction
+        romPhase := 2.U
+      } .otherwise {
+        pcNext := pc + 4.U
+        romPhase := 0.U
+      }
+    } else {
+      pcNext := pc
+    }
   } .elsewhen (memoryAccessPending) {
     when (!io.memStall) {
       when (memoryIsLoad) {
         // RISC5 inbus1: LDB zero-extends the lane adr[1:0] selects.
         // LDW returns the word. Same completion cycle either way.
-        val loaded = io.memReadData
+        // A patch-hit code load never asked HyperRAM. The issue cycle
+        // recorded which slot hit. This cycle selects that stored word.
+        val patchWord = if (chainFix) {
+          (0 until nPatch).foldLeft(io.memReadData) { (acc, i) =>
+            Mux(patchLoadHit(i), patchData(i), acc)
+          }
+        } else io.memReadData
+        val loaded = if (chainFix) Mux(patchLoad, patchWord, io.memReadData) else io.memReadData
+        if (chainFix) {
+          when (patchLoad) {
+            patchLoad := false.B
+          }
+        }
         val loadedByte = MuxLookup(memoryLane, loaded(7, 0))(Seq(
           0.U -> loaded(7, 0),
           1.U -> loaded(15, 8),
@@ -376,21 +449,55 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val effectiveAddr = regs(regB) + signExtOffset
     
     when (isLoad) {  // LDW and LDB. The byte extract is on the completion cycle.
-        io.memAddr := effectiveAddr
-        io.memRead := true.B
-        io.memByte := isByte
-        memoryAccessPending := true.B
-        memoryIsLoad := true.B
-        memoryIsByte := isByte
-        memoryLane := effectiveAddr(1, 0)
-        memoryTargetReg := regA
-        printf(p"Load start ${effectiveAddr} -> R${regA} byte=${isByte}\n")
+        val useHyper = WireDefault(true.B)
+        if (chainFix) {
+          val hits = siteMatch(effectiveAddr, armed = true)
+          val page = !isByte && effectiveAddr(1, 0) === 0.U && effectiveAddr(31, 8) === 0x10.U(24.W)
+          when (hits.asUInt.orR) {
+            useHyper := false.B
+            patchLoad := true.B
+            for (i <- patchOffs.indices) {
+              patchLoadHit(i) := hits(i)
+            }
+            memoryAccessPending := true.B
+            memoryIsLoad := true.B
+            memoryIsByte := false.B
+            memoryLane := 0.U
+            memoryTargetReg := regA
+          } .elsewhen (page) {
+            useHyper := false.B
+            holdForCode := true.B
+            codeRomAddr := effectiveAddr
+            romDest := regA
+            romPhase := 1.U
+          }
+        }
+        when (useHyper) {
+          io.memAddr := effectiveAddr
+          io.memRead := true.B
+          io.memByte := isByte
+          memoryAccessPending := true.B
+          memoryIsLoad := true.B
+          memoryIsByte := isByte
+          memoryLane := effectiveAddr(1, 0)
+          memoryTargetReg := regA
+          printf(p"Load start ${effectiveAddr} -> R${regA} byte=${isByte}\n")
+        }
     } .otherwise {  // Store instructions
       when (!isByte) {  // STW - Store Word
         // Start a memory write operation
         io.memAddr := effectiveAddr
         io.memWriteData := regs(regA)
         io.memWrite := true.B
+        if (chainFix) {
+          val hits = siteMatch(effectiveAddr, armed = false)
+          for (i <- patchOffs.indices) {
+            when (hits(i)) {
+              patchValid(i) := true.B
+              patchData(i) := regs(regA)
+            }
+          }
+        }
         
         // LED MMIO: a68a501 snooped 0x10 (R13 hack). After 9d190e2, Blink2
         // stores `light` at the module variable block 0x50. Snoop both so
@@ -456,8 +563,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       }
     }
     
-    // For memory operations, we only advance PC after completing the operation
-    when (!memoryAccessPending) {
+    // For memory operations, we only advance PC after completing the operation.
+    // A code-window ROM read holds the PC so the data word is not executed.
+    when (!memoryAccessPending && !holdForCode) {
       pcNext := nextPC
     }
   } .elsewhen (isF1Format || (format(3, 2) === "b00".U)) {
@@ -626,6 +734,37 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     // For any other format (not implemented), just increment PC
     pcNext := nextPC
   }
+
+  if (chainFix) {
+    // Address the ROM is actually reading, for the cases in this image.
+    // A waiting memory op has already moved PC to the instruction being
+    // refetched. Every other fetch in the loop is the fall-through.
+    val lookupPc = Mux(memoryAccessPending, pc, pc + 4.U)
+    val lookupHits = siteMatch(lookupPc, armed = true)
+    val skipFall = !memoryAccessPending && (
+      (pc === 0x1088.U && (n ^ v)) || (pc === 0x10a8.U)
+    )
+    val forceAc = !memoryAccessPending && (pc === 0x1d34.U) && patchValid(6)
+    val forceC0 = !memoryAccessPending && (pc === 0x1d68.U) && patchValid(8)
+    val useHits = Wire(Vec(nPatch, Bool()))
+    for (i <- patchOffs.indices) {
+      useHits(i) := lookupHits(i) && !skipFall
+    }
+    useHits(6) := (lookupHits(6) && !skipFall) || forceAc
+    useHits(8) := (lookupHits(8) && !skipFall) || forceC0
+    val fetchData = (0 until nPatch).foldLeft(0.U(32.W)) { (acc, i) =>
+      Mux(useHits(i), patchData(i), acc)
+    }
+    when (useHits.asUInt.orR) {
+      instructionRom.io.overlayEn := true.B
+      instructionRom.io.overlayData := fetchData
+    }
+    when (romPhase === 1.U) {
+      instructionRom.io.addr := ((pc + 4.U) >> 2)(addrBits - 1, 0)
+    } .elsewhen (holdForCode) {
+      instructionRom.io.addr := (codeRomAddr >> 2)(addrBits - 1, 0)
+    }
+  }
   
   // Register write logic
   when (regWrite) {
@@ -720,14 +859,16 @@ object CPUSubset0 {
     val fixup = fpgaImage == "fixup"
     val rsc = fpgaImage == "rsc"
     val fetchbl = fpgaImage == "fetchbl"
-    val hyper = fpgaImage == "hyperram" || fixup || rsc || fetchbl
+    val pdchain = fpgaImage == "pdchain"
+    val hyper = fpgaImage == "hyperram" || fixup || rsc || fetchbl || pdchain
     // 20 matches sim/build_fixup_imem.py. 32 matches sim/build_rsc_imem.py.
     // 34 matches sim/build_fetchbl_imem.py (those 32, plus the stored BL
-    // and the link register). A mismatch leaves the LED dark, because a
-    // slot that is never stored stays clear.
-    val extra = if (fetchbl) 34 else if (rsc) 32 else if (fixup) 20 else 0
+    // and the link register). 37 matches sim/build_pdchain_imem.py.
+    // A mismatch leaves the LED dark, because a slot that is never stored
+    // stays clear.
+    val extra = if (pdchain) 37 else if (fetchbl) 34 else if (rsc) 32 else if (fixup) 20 else 0
     val (programInstructions, customMemoryImage) = fpgaImage match {
-      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" =>
+      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" =>
         val imemArg = sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
         val imemFile = new File(imemArg)
         val imemPath =
@@ -740,7 +881,8 @@ object CPUSubset0 {
           )
         }
         val imageName =
-          if (fetchbl) "step-4 stored BL + HyperRAM"
+          if (pdchain) "step-5 P/D chain + HyperRAM"
+          else if (fetchbl) "step-4 stored BL + HyperRAM"
           else if (rsc) "step-3 byte/.rsc reader + HyperRAM"
           else if (fixup) "fixup ALU + HyperRAM"
           else if (hyper) "HyperRAM prologue + Blink3"
@@ -768,7 +910,8 @@ object CPUSubset0 {
         waitForStores = hyper,
         requireMemCheck = hyper,
         extraChecks = extra,
-        fetchStored = fetchbl
+        fetchStored = fetchbl,
+        chainFix = pdchain
       ),
       firtoolOpts = firtoolOpts
     )
@@ -781,7 +924,8 @@ object CPUSubset0 {
         customMemoryImage = customMemoryImage,
         memBackend = if (hyper) "hyperram" else "blockram",
         extraChecks = extra,
-        fetchStored = fetchbl
+        fetchStored = fetchbl,
+        chainFix = pdchain
       ),
       firtoolOpts = firtoolOpts
     )
@@ -794,7 +938,8 @@ object CPUSubset0 {
         customMemoryImage = customMemoryImage,
         memBackend = if (hyper) "hyperram" else "blockram",
         extraChecks = extra,
-        fetchStored = fetchbl
+        fetchStored = fetchbl,
+        chainFix = pdchain
       ),
       firtoolOpts = firtoolOpts
     )
