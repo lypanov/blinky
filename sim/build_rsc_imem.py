@@ -130,7 +130,7 @@ def _read_int(a: Asm, base: int, offset: int) -> None:
     a.word(f0(8, 1, 1, 2))
 
 
-def assemble_reader(break_slot: int | None) -> tuple[list[int], dict[int, int]]:
+def assemble_reader(break_slot: int | None = None, success: int = 0) -> tuple[list[int], dict[int, int]]:
     exp = expected_map()
     if set(exp) != set(range(20, 20 + BYTE_CHECKS)):
         raise SystemExit(f"expected slots 20..31, got {sorted(exp)}")
@@ -218,7 +218,9 @@ def assemble_reader(break_slot: int | None) -> tuple[list[int], dict[int, int]]:
 
     a.word(f1(9, 0, 10, 0))
     a.branch("hold", BNE)
-    a.at(lambda pc: cond_branch(pc, 0, ALWAYS))
+    # Default target is address 0, which is the step-3 image. Step 4 passes
+    # the stored-BL prologue. The encoding for target 0 is unchanged.
+    a.at(lambda pc, success=success: cond_branch(pc, success, ALWAYS))
     a.label("hold")
     a.word(f1(8, 1, 1, 1))
     a.branch("hold", ALWAYS)
