@@ -77,6 +77,7 @@ module blinky_top_ddr3 (
   wire [7:0]  unused_wstep;
   wire [7:0]  wstep_run;
   wire [7:0]  wstep1;
+  wire [7:0]  wstep1_run;
   wire [1:0]  unused_rclkpos;
   wire [2:0]  unused_rclksel;
   wire [63:0] unused_debug;
@@ -103,11 +104,19 @@ module blinky_top_ddr3 (
   // the blinking LED stays dark, which is the failure state. Reset is
   // released on cpu_clk so the CPU actually clocks the reset in.
   reg [1:0] cpu_rst_sync = 2'b11;
+`ifdef DDR3_READER
+  reg sweep_reset = 1'b1;
+`endif
   always @(posedge cpu_clk or negedge pll_lock) begin
     if (!pll_lock)
       cpu_rst_sync <= 2'b11;
     else
+`ifdef DDR3_READER
+      // The step sweep holds the CPU between trials. DDR3 keeps running.
+      cpu_rst_sync <= {cpu_rst_sync[0], !read_calib_done | sweep_reset};
+`else
       cpu_rst_sync <= {cpu_rst_sync[0], !read_calib_done};
+`endif
   end
   wire cpu_reset = cpu_rst_sync[1];
 
@@ -432,7 +441,12 @@ module blinky_top_ddr3 (
     hex32({6'd0, wr_addr}), " ",
     hex32({16'd0, wr_data}), " ",
     hex32(cpu_r9), " ",
+`ifdef DDR3_READER
+    // Sweep image: programmed lane 1, then programmed lane 0.
+    hex16({8'h00, wstep1_run}), " ",
+`else
     hex16({8'h00, unused_wstep}), " ",
+`endif
     hex16({8'h00, wstep_run}), "\n"
   };
   reg [UBYTES*8-1:0] snap = {UBYTES{8'h00}};
@@ -509,9 +523,99 @@ module blinky_top_ddr3 (
 `ifdef DDR3_READER
   localparam [7:0] LANE0_STEP = 8'd9;
   localparam [7:0] LANE1_STEP = 8'd9;
+  // One place, steps 6..16. Phase 0 programs both lanes to the same
+  // step. Phases 1..3 leave lane 1 on the write-level result, one
+  // below it, and one above it. Each trial dwells long enough for one
+  // UART line. A full mask that stays full parks; a one-cycle compare
+  // glitch does not. The prologue is rerun from CPU reset. The DDR3
+  // controller is not reset, so the place and the leveling stay put.
+  localparam [1:0] SW_RST = 2'd0, SW_RUN = 2'd1, SW_DONE = 2'd2;
+  reg [1:0] sw = SW_RST;
+  reg [3:0] sw_idx = 4'd0;
+  reg [1:0] sw_phase = 2'd0;
+  reg [26:0] sw_t = 27'd0;
+  reg [12:0] sw_pass_cnt = 13'd0;
+  reg [7:0] step0_ov = 8'd6;
+  reg [7:0] step1_ov = 8'd6;
+  wire [7:0] sw_base = 8'd6 + {4'd0, sw_idx};
+  reg [7:0] sw_l1;
+  always @(*) begin
+    case (sw_phase)
+      2'd0: sw_l1 = sw_base;
+      2'd1: sw_l1 = wstep1;
+      2'd2: sw_l1 = wstep1 - 8'd1;
+      default: sw_l1 = wstep1 + 8'd1;
+    endcase
+  end
+  wire step_ov_en = read_calib_done;
+  wire sw_mask_full = (cpu_mask == 40'hFF_FFFFFFFF);
+  always @(posedge pclk or negedge pll_lock) begin
+    if (!pll_lock) begin
+      sw <= SW_RST;
+      sw_idx <= 4'd0;
+      sw_phase <= 2'd0;
+      sw_t <= 27'd0;
+      sw_pass_cnt <= 13'd0;
+      sweep_reset <= 1'b1;
+      step0_ov <= 8'd6;
+      step1_ov <= 8'd6;
+    end else if (!read_calib_done) begin
+      sw <= SW_RST;
+      sw_t <= 27'd0;
+      sw_pass_cnt <= 13'd0;
+      sweep_reset <= 1'b1;
+    end else begin
+      step0_ov <= sw_base;
+      step1_ov <= sw_l1;
+      if (sw_mask_full && sw_pass_cnt != 13'h1FFF)
+        sw_pass_cnt <= sw_pass_cnt + 13'd1;
+      else if (!sw_mask_full)
+        sw_pass_cnt <= 13'd0;
+      case (sw)
+        SW_RST: begin
+          sweep_reset <= 1'b1;
+          sw_pass_cnt <= 13'd0;
+          if (sw_t == 27'd20000) begin
+            sw_t <= 27'd0;
+            sweep_reset <= 1'b0;
+            sw <= SW_RUN;
+          end else
+            sw_t <= sw_t + 27'd1;
+        end
+        SW_RUN: begin
+          sweep_reset <= 1'b0;
+          // ~0.93 s. Park only after the mask has been full for 4096
+          // clocks and the prologue has had time to finish.
+          if (sw_t > 27'd2000000 && sw_pass_cnt == 13'h1FFF)
+            sw <= SW_DONE;
+          else if (sw_t == 27'd90000000) begin
+            sw_t <= 27'd0;
+            sw_pass_cnt <= 13'd0;
+            if (sw_idx == 4'd10) begin
+              sw_idx <= 4'd0;
+              if (sw_phase == 2'd3)
+                sw <= SW_DONE;
+              else begin
+                sw_phase <= sw_phase + 2'd1;
+                sw <= SW_RST;
+              end
+            end else begin
+              sw_idx <= sw_idx + 4'd1;
+              sw <= SW_RST;
+            end
+          end else
+            sw_t <= sw_t + 27'd1;
+        end
+        default: sweep_reset <= 1'b0;
+      endcase
+    end
+  end
 `else
   localparam [7:0] LANE0_STEP = 8'd10;
   localparam [7:0] LANE1_STEP = 8'd0;
+  wire [7:0] step0_ov = 8'd0;
+  wire [7:0] step1_ov = 8'd0;
+  wire step_ov_en = 1'b0;
 `endif
   ddr3_controller #(
     .ROW_WIDTH(13), .COL_WIDTH(10), .BANK_WIDTH(3),
@@ -547,6 +651,10 @@ module blinky_top_ddr3 (
     .wstep        (unused_wstep),
     .wstep_run    (wstep_run),
     .wstep1       (wstep1),
+    .wstep1_run   (wstep1_run),
+    .step0_ov     (step0_ov),
+    .step1_ov     (step1_ov),
+    .step_ov_en   (step_ov_en),
     .read_calib_done(read_calib_done),
     .rclkpos      (unused_rclkpos),
     .rclksel      (unused_rclksel),

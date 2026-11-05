@@ -87,6 +87,12 @@ module ddr3_controller
     output reg [7:0]  wstep,        // write-level result for DQS0
     output reg [7:0]  wstep1,       // write delay for DQS1
     output reg [7:0]  wstep_run,    // DQS0 delay actually used after calib
+    output reg [7:0]  wstep1_run,   // DQS1 delay actually used after calib
+    // After read calibration, step_ov_en selects these instead of the
+    // LANE*_STEP parameters. It stays low through write leveling.
+    input      [7:0]  step0_ov,
+    input      [7:0]  step1_ov,
+    input             step_ov_en,
 
     // Read calibration
     // Increment rclkpos/rclksel, send a BL8 read command, and once a rburst
@@ -233,15 +239,16 @@ assign read_calib_done = rcalib_done;
 // an offset, so a later edge detection cannot land on the same delay.
 // The read gate stays put. Lane 1 is forced the same way only when
 // LANE1_STEP is non-zero, and only after read calibration, so write
-// leveling still searches on the live wstep1.
-reg [7:0] wstep1_run;
+// leveling still searches on the live wstep1. step_ov_en is the
+// reader's step sweep; it is applied at the same point.
 always @(posedge pclk) begin
     if (~rst_lock_n) begin
         wstep_run <= 8'd0;
         wstep1_run <= 8'd0;
     end else if (rcalib_done) begin
-        wstep_run <= LANE0_STEP;
-        wstep1_run <= (LANE1_STEP == 8'd0) ? wstep1 : LANE1_STEP;
+        wstep_run  <= step_ov_en ? step0_ov : LANE0_STEP;
+        wstep1_run <= step_ov_en ? step1_ov :
+                      ((LANE1_STEP == 8'd0) ? wstep1 : LANE1_STEP);
     end else begin
         wstep_run <= wstep;
         wstep1_run <= wstep1;
