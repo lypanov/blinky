@@ -58,3 +58,144 @@ and at 10 were worse (`20AA38AA`, `9AFF9AFF`). No pair put R5 at
 The webcam was not used. The locked rate was not changed to chase the
 camera. The Nano 4K was not loaded. The Dock was put back on the
 accepted ALU bitstream `ddr3fixup_n262144.fs`.
+
+## Simulation stand-in
+
+`sim/Ddr3UserModel.v` is the command port after calibration. The PHY
+(OSER8, DQS, the DLL) is not in it, and the controller and the bridge
+were not changed to hide a miss. Read `data_ready` is still the 9th
+clock, read `busy` clears on the 10th, write and refresh `busy` clear
+on the 6th, and `calib` rises after 64 clocks. The array is still 4096
+halfwords, two bytes per column. A halfword write is one BC4 beat: DM
+unmasks that beat and drives `din` onto both lanes. It does not mask
+one byte of the x16 beat. The bridge has already merged a byte store
+into `din`. Both lanes have to land on that same beat, or the merged
+byte does not come back.
+
+`sim/run_ddr3_standin.sh` is the witness. N = 5 is `--mov-iter 5`.
+The board was not loaded for this model. No bitstream was built, and
+neither FPGA was programmed.
+
+### Passing eye
+
+Step 10 is the passing write delay on both lanes. That is the forced
+`wstep_run` of the word images. Lane 1 defaults to 10 as well, which
+is "lane 1 matched". `HOLD` is on, and the read's last cycle reloads
+the write delay (`WLOADN`).
+
+| image | first edge | period | R5 | R9 | mask |
+| --- | --- | --- | --- | --- | --- |
+| `ddr3` | 22634 | 3668 | `FFFFFFFF` | `FFFFFFE1` | `FF` |
+| `ddr3fixup` | 25434 | 3668 | `FFFFFFFF` | `FFFFFFE1` | `FFFFFFF` |
+| `ddr3rsc` | 32902 | 3668 | see below | `FFFFFFE1` | `FFFFFFFFFF` |
+
+The reader reuses R5, and the blink edge is at PC `0x101C`, so R5
+there is 0. On the prologue and ALU images R5 is still the pattern
+sum. A set mask bit is a check word stored as zero. The 40 reader
+bits are `0x7C0` through `0x87C`. N = 32 on the reader image has
+period 19220 and first edge 48454, which is 32902 + 576*27. The
+locked line was not refit.
+
+The command-port byte walk passes only on this eye. Four STB bytes
+`11 22 33 44` at `0x920` read back as `0x44332211`. The neighbour
+word `0xA5A5A5A5` at `0x924` survives, including after STB `0x77` at
+byte 3, which updates the word to `0x77332211` and leaves byte
+`0x33` in place. A flat `mem[idx] <= din` store would pass that walk
+with a wrong DM or a one-lane write as well. The cases below fail it.
+
+### What each plusarg does
+
+| plusarg | command-port effect |
+| --- | --- |
+| (none) | step 10, both lanes, `HOLD`, `WLOADN`, one BC4 beat |
+| `+ddr3_lane0=N` `+ddr3_lane1=N` | write delay for that lane. 10 lands on the addressed column. 9 is one beat early. 11 is one beat late. Any other N stores that lane's byte `N-10` columns away |
+| `+ddr3_nohold` | the read FIFO is not reset |
+| `+ddr3_nowload` | no `WLOADN` reload after `HOLD` |
+| `+ddr3_dm_all` | `din` is written to all four beats of the group |
+| `+ddr3_dm_lane0` | only lane 0, `DQ[7:0]` |
+| `+ddr3_dm_lane1` | only lane 1, `DQ[15:8]` |
+| `+ddr3_corrupt` | reads return 0 |
+| `+ddr3_late` | `dout` is one clock after `data_ready` |
+
+DM faults ignore the write-delay eye. The port test still reports
+edge 0 on the good model, fails closed on `+ddr3_corrupt`, and
+reports edge 1 on `+ddr3_late`.
+
+### Reader image, 0 LED edges
+
+The UART signatures are from the two-instruction prologue hold
+(`0x1390`/`0x1394`), which is what `ddr3rsc` and `ddr3fixup` use.
+The prologue-only image's failure path is the scanner, and that
+scanner overwrites R5, so these R5 values are checked on `ddr3rsc`.
+
+| case | PC | mask | R5 | R9 |
+| --- | --- | --- | --- | --- |
+| `+ddr3_lane0=9 +ddr3_lane1=9` | prologue hold | `F0` | `AAAAAAAA` | `55555536` |
+| `+ddr3_lane1=9` | prologue hold | `F0` | `AAFFAAFF` | `550054E1` |
+| `+ddr3_lane0=9` | prologue hold | `F0` | `FFAAFFAA` | `00550036` |
+| `+ddr3_lane0=11 +ddr3_lane1=11` | prologue hold | `F0` | `55555554` | `AAAAAA8C` |
+| `+ddr3_nohold` | prologue hold | `A0` | `AAAAAAAA` | `55555536` |
+| `+ddr3_nowload` | `0x1B44` | `FFFFFFF` | `FFFFFFBF` | `FFFFFFE1` |
+| `+ddr3_corrupt` | prologue hold | `0` | `0` | `0` |
+| `+ddr3_dm_all` | prologue hold | `C0` | `55555554` | `AAAAAA8C` |
+| `+ddr3_dm_lane0` | prologue hold | `30` | `00FF00FF` | `1EE11EE1` |
+| `+ddr3_dm_lane1` | prologue hold | `0` | `FF00FF00` | `E11EE100` |
+| `--break-slot 30` | `0x1B44` | `BFFFFFFFFF` | `0` | `FFFFFFE1` |
+
+Step 9 writes the even word of a BC4 group into both words of the
+group on that lane, and does not let the odd word replace it. An odd
+column then reads back the even column, which is the pattern sum
+`AAAAAAAA` and the complement sum `55555536`. An odd column that was
+stored on its own is kept: MT[1] at `0x14`, MT[2] at `0x18`, the
+alias word `0x11111111` at `0x114`, and the sentinel at `0x7F0`.
+Those four checks still pass, so the mask is `F0`. Lane 1 alone at
+step 9 leaves lane 0's pattern bytes at `FF` and lane 1's at `AA`
+(`AAFFAAFF`, complement `550054E1`, mask still `F0`).
+
+The UART row "lane 0 forced to 9, lane 1 left calibrated, R5
+`AAFFAAFF`" is this model's `+ddr3_lane1=9` with lane 0 left at 10.
+On that placement the board's good eye for lane 0 had moved to step
+9, and step 10 was the bad one. The model keeps step 10 as the good
+eye for both lanes, which is the eye the passing word images used.
+It does not copy that placement's step numbers, and it does not move
+the locked rate.
+
+Step 11 writes the odd word over both words of the group. Both lanes
+at 11 give R5 `55555554` and R9 `AAAAAA8C` with mask `F0`. That is
+the other whole-beat edge. It is not the UART value `AAABB34B` from
+lane 0 forced to 11.
+
+`+ddr3_nohold` is a read alias. The writes land, and a column with
+`addr[1]` set returns the even column. The sums match, but the
+isolated odd words do not, so the mask is `A0` (MT[2] and the
+sentinel still match). This is not step 1's earlier mask `0000`.
+
+`+ddr3_nowload` does not move the prologue. Those stores happen
+before any read, so the low 28 mask bits are set and R9 is still
+`FFFFFFE1`. `HOLD` stops the write clock, and without the reload a
+store that follows a read lands two columns later. The eye test
+writes `0x5A74` at column `0x28`, reads it, then writes `0x1111` and
+finds that half at `0x2A`. The byte walk is the same case, so the
+CPU sits in the reader hold at `0x1B44` with the top 12 mask bits
+clear. R5 there is `FFFFFFBF`, the reader's own accumulator, not
+the prologue sum. The refresh pair does not clear the skew.
+
+Any other step stores that lane's byte `step-10` columns away.
+`+ddr3_lane1=12` leaves the `0x11` at column `0x30` and puts the
+`0x22` at `0x32`. The parked UART residuals `65FFFFFF` /
+`A9FFFFE1`, `AAABB34B`, `20AA38AA`, and `9AFF9AFF` are not
+reproduced. Those were sub-beat DLL eyes from one placement. The
+command-port model does not invent them.
+
+`+ddr3_dm_all` paints every beat of the group, so a neighbour in the
+same burst does not survive and the prologue is not the `F0` alias.
+`+ddr3_dm_lane0` leaves lane 1 at `00` (`00FF00FF`).
+`+ddr3_dm_lane1` leaves lane 0 at `00` (`FF00FF00`).
+
+`+ddr3_corrupt` returns 0, and the CPU image produces 0 LED edges.
+`--break-slot 30` adds 1 to one reader expected constant. The
+prologue and ALU checks stay zero. Bit 38 (reader slot 30) stays
+clear, the mask is `BFFFFFFFFF`, and the CPU stays in the reader
+hold with 0 LED edges.
+
+The board was not loaded.
