@@ -17,7 +17,8 @@ class CPUSimTop(
     customMemoryImage: Option[Seq[String]] = None,
     memBackend: String = "blockram",
     hyperFirstValid: Int = 12,
-    extraChecks: Int = 0
+    extraChecks: Int = 0,
+    fetchStored: Boolean = false
 ) extends Module {
   val hyper = memBackend == "hyperram"
   val io = IO(new Bundle {
@@ -39,7 +40,8 @@ class CPUSimTop(
     customMemoryImage = customMemoryImage,
     waitForStores = hyper,
     requireMemCheck = hyper,
-    extraChecks = extraChecks
+    extraChecks = extraChecks,
+    fetchStored = fetchStored
   ))
   if (hyper) {
     val bridge = Module(new HyperRamBridge)
@@ -130,36 +132,41 @@ object CPUSimTop {
           s"$targetDir/CPUSimTopBlink3.v",
           "blink3"
         )
-      case "hyperram" | "fixup" | "rsc" =>
+      case "hyperram" | "fixup" | "rsc" | "fetchbl" =>
         val imemPath = new File(
           projectRoot,
           sys.env.getOrElse(
             "BLINK3_IMEM",
-            if (image == "rsc") "sim/visualizer/imem/rsc.words"
+            if (image == "fetchbl") "sim/visualizer/imem/fetchbl.words"
+            else if (image == "rsc") "sim/visualizer/imem/rsc.words"
             else if (image == "fixup") "sim/visualizer/imem/fixup.words"
             else "sim/visualizer/imem/hyperram.words"
           )
         ).getAbsolutePath
         val words = loadInstructionsFromFile(imemPath)
-        // 12 is the pre-load model. fixup and rsc simulate the fitted read
-        // latency unless HYPER_FIRST_VALID overrides it.
+        // 12 is the pre-load model. Later HyperRAM images simulate the fitted
+        // read latency unless HYPER_FIRST_VALID overrides it.
         val firstValid = sys.env.get("HYPER_FIRST_VALID").map(_.toInt).getOrElse(
           if (image == "hyperram") 12 else 13
         )
         val extra = image match {
+          case "fetchbl" => 34
           case "rsc" => 32
           case "fixup" => 20
           case _ => 0
         }
+        // FETCH_STORED=0 is the split-bus sim: same words, ROM fetch. Dark.
+        val fetchStored = image == "fetchbl" && sys.env.getOrElse("FETCH_STORED", "1") != "0"
         println(s"CPUSimTop: $image IMEM ${words.length} words from $imemPath")
-        println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra")
+        println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra fetchStored=$fetchStored")
         (
           () => new CPUSimTop(
             Seq.empty,
             customMemoryImage = Some(words),
             memBackend = "hyperram",
             hyperFirstValid = firstValid,
-            extraChecks = extra
+            extraChecks = extra,
+            fetchStored = fetchStored
           ),
           s"$targetDir/CPUSimTopHyper.v",
           image

@@ -377,6 +377,13 @@ sim/obj_dir_rsc_n8/
 sim/obj_dir_rsc_break/
 sim/obj_dir_blink3_rsc_n5/
 sim/obj_dir_fixup_rsc_n5/
+sim/obj_dir_fetchbl_n5/
+sim/obj_dir_fetchbl_n6/
+sim/obj_dir_fetchbl_n8/
+sim/obj_dir_fetchbl_break/
+sim/obj_dir_fetchbl_split/
+sim/obj_dir_blink3_fetch_n5/
+sim/obj_dir_rsc_fetch_n5/
 sim/visualizer/trace.json
 sim/visualizer/program.json
 sim/visualizer/imem/
