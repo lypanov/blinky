@@ -106,13 +106,14 @@ module blinky_top_ddr3 (
   reg [1:0] cpu_rst_sync = 2'b11;
 `ifdef DDR3_READER
   reg sweep_reset = 1'b1;
+  reg cold_run = 1'b0;
 `endif
   always @(posedge cpu_clk or negedge pll_lock) begin
     if (!pll_lock)
       cpu_rst_sync <= 2'b11;
     else
 `ifdef DDR3_READER
-      // The step sweep holds the CPU between trials. DDR3 keeps running.
+      // Held across a controller reset and until that trial's WSTEP is loaded.
       cpu_rst_sync <= {cpu_rst_sync[0], !read_calib_done | sweep_reset};
 `else
       cpu_rst_sync <= {cpu_rst_sync[0], !read_calib_done};
@@ -352,7 +353,13 @@ module blinky_top_ddr3 (
     end
   end
 `else
+`ifdef DDR3_READER
+  // Each trial resets the DRAM (DDR3_nRESET follows this) so the
+  // prologue does not read the previous trial's bytes.
+  assign ddr_resetn = pll_lock & cold_run;
+`else
   assign ddr_resetn = pll_lock;
+`endif
   assign port_passed = 1'b0;
   assign port_failed = 1'b0;
   assign port_done = 1'b0;
@@ -523,90 +530,107 @@ module blinky_top_ddr3 (
 `ifdef DDR3_READER
   localparam [7:0] LANE0_STEP = 8'd9;
   localparam [7:0] LANE1_STEP = 8'd9;
-  // One place, steps 6..16. Phase 0 programs both lanes to the same
-  // step. Phases 1..3 leave lane 1 on the write-level result, one
-  // below it, and one above it. Each trial dwells long enough for one
-  // UART line. A full mask that stays full parks; a one-cycle compare
-  // glitch does not. The prologue is rerun from CPU reset. The DDR3
-  // controller is not reset, so the place and the leveling stay put.
-  localparam [1:0] SW_RST = 2'd0, SW_RUN = 2'd1, SW_DONE = 2'd2;
-  reg [1:0] sw = SW_RST;
-  reg [3:0] sw_idx = 4'd0;
-  reg [1:0] sw_phase = 2'd0;
-  reg [26:0] sw_t = 27'd0;
-  reg [12:0] sw_pass_cnt = 13'd0;
-  reg [7:0] step0_ov = 8'd6;
-  reg [7:0] step1_ov = 8'd6;
-  wire [7:0] sw_base = 8'd6 + {4'd0, sw_idx};
-  reg [7:0] sw_l1;
-  always @(*) begin
-    case (sw_phase)
-      2'd0: sw_l1 = sw_base;
-      2'd1: sw_l1 = wstep1;
-      2'd2: sw_l1 = wstep1 - 8'd1;
-      default: sw_l1 = wstep1 + 8'd1;
-    endcase
-  end
-  wire step_ov_en = read_calib_done;
-  wire sw_mask_full = (cpu_mask == 40'hFF_FFFFFFFF);
+  // Cold prologue. Both lanes get one absolute step. The controller
+  // reset drops DDR3_nRESET, so the array does not keep the previous
+  // trial. After read calibration the step is loaded, with the CPU
+  // still reset, and only then does the prologue store. R5 FFFFFFFF
+  // or a full mask parks (center). AAAAAAAA steps both lanes down one,
+  // 55555554 steps them up one. Any other sum parks on that one pair.
+  localparam [2:0] C_RST = 3'd0, C_INIT = 3'd1, C_ARM = 3'd2,
+                   C_RUN = 3'd3, C_HOLD = 3'd4;
+  reg [2:0] cst = C_RST;
+  reg [26:0] ct = 27'd0;
+  reg [1:0] ctry = 2'd0;
+  reg [7:0] cstep = 8'd10;
+  reg [7:0] step0_ov = 8'd10;
+  reg [7:0] step1_ov = 8'd10;
+  reg step_ov_en = 1'b0;
+  reg [31:0] r5_s = 32'd0;
+  wire mask_full = (cpu_mask == 40'hFF_FFFFFFFF);
   always @(posedge pclk or negedge pll_lock) begin
     if (!pll_lock) begin
-      sw <= SW_RST;
-      sw_idx <= 4'd0;
-      sw_phase <= 2'd0;
-      sw_t <= 27'd0;
-      sw_pass_cnt <= 13'd0;
+      cst <= C_RST;
+      ct <= 27'd0;
+      ctry <= 2'd0;
+      cstep <= 8'd10;
+      step0_ov <= 8'd10;
+      step1_ov <= 8'd10;
+      step_ov_en <= 1'b0;
+      cold_run <= 1'b0;
       sweep_reset <= 1'b1;
-      step0_ov <= 8'd6;
-      step1_ov <= 8'd6;
-    end else if (!read_calib_done) begin
-      sw <= SW_RST;
-      sw_t <= 27'd0;
-      sw_pass_cnt <= 13'd0;
-      sweep_reset <= 1'b1;
+      r5_s <= 32'd0;
     end else begin
-      step0_ov <= sw_base;
-      step1_ov <= sw_l1;
-      if (sw_mask_full && sw_pass_cnt != 13'h1FFF)
-        sw_pass_cnt <= sw_pass_cnt + 13'd1;
-      else if (!sw_mask_full)
-        sw_pass_cnt <= 13'd0;
-      case (sw)
-        SW_RST: begin
+      r5_s <= cpu_r5;
+      step0_ov <= cstep;
+      step1_ov <= cstep;
+      case (cst)
+        C_RST: begin
+          cold_run <= 1'b0;
+          step_ov_en <= 1'b0;
           sweep_reset <= 1'b1;
-          sw_pass_cnt <= 13'd0;
-          if (sw_t == 27'd20000) begin
-            sw_t <= 27'd0;
+          // Long enough for DDR3_nRESET to be seen, then init runs
+          // after release.
+          if (ct == 27'd200000) begin
+            ct <= 27'd0;
+            cold_run <= 1'b1;
+            cst <= C_INIT;
+          end else
+            ct <= ct + 27'd1;
+        end
+        C_INIT: begin
+          cold_run <= 1'b1;
+          step_ov_en <= 1'b0;
+          sweep_reset <= 1'b1;
+          if (read_calib_done) begin
+            ct <= 27'd0;
+            step_ov_en <= 1'b1;
+            cst <= C_ARM;
+          end else if (ct == 27'd5000000) begin
+            ct <= 27'd0;
+            cst <= C_HOLD;
+          end else
+            ct <= ct + 27'd1;
+        end
+        C_ARM: begin
+          // WLOADN is low, so this loads WSTEP before any store.
+          cold_run <= 1'b1;
+          step_ov_en <= 1'b1;
+          sweep_reset <= 1'b1;
+          if (ct == 27'd20000) begin
+            ct <= 27'd0;
             sweep_reset <= 1'b0;
-            sw <= SW_RUN;
+            cst <= C_RUN;
           end else
-            sw_t <= sw_t + 27'd1;
+            ct <= ct + 27'd1;
         end
-        SW_RUN: begin
+        C_RUN: begin
+          cold_run <= 1'b1;
+          step_ov_en <= 1'b1;
           sweep_reset <= 1'b0;
-          // ~0.93 s. Park only after the mask has been full for 4096
-          // clocks and the prologue has had time to finish.
-          if (sw_t > 27'd2000000 && sw_pass_cnt == 13'h1FFF)
-            sw <= SW_DONE;
-          else if (sw_t == 27'd90000000) begin
-            sw_t <= 27'd0;
-            sw_pass_cnt <= 13'd0;
-            if (sw_idx == 4'd10) begin
-              sw_idx <= 4'd0;
-              if (sw_phase == 2'd3)
-                sw <= SW_DONE;
-              else begin
-                sw_phase <= sw_phase + 2'd1;
-                sw <= SW_RST;
-              end
-            end else begin
-              sw_idx <= sw_idx + 4'd1;
-              sw <= SW_RST;
-            end
+          // ~1.03 s, longer than one UART line, after the prologue.
+          // 27 bits holds this. 140e6 does not.
+          if (ct == 27'd100000000) begin
+            ct <= 27'd0;
+            if (mask_full || r5_s == 32'hFFFFFFFF)
+              cst <= C_HOLD;
+            else if (ctry != 2'd2 && r5_s == 32'hAAAAAAAA && cstep != 8'd0) begin
+              cstep <= cstep - 8'd1;
+              ctry <= ctry + 2'd1;
+              cst <= C_RST;
+            end else if (ctry != 2'd2 && r5_s == 32'h55555554 && cstep != 8'd31) begin
+              cstep <= cstep + 8'd1;
+              ctry <= ctry + 2'd1;
+              cst <= C_RST;
+            end else
+              cst <= C_HOLD;
           end else
-            sw_t <= sw_t + 27'd1;
+            ct <= ct + 27'd1;
         end
-        default: sweep_reset <= 1'b0;
+        default: begin
+          cold_run <= 1'b1;
+          step_ov_en <= 1'b1;
+          sweep_reset <= 1'b0;
+        end
       endcase
     end
   end
