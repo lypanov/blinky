@@ -58,6 +58,10 @@ run "$EYE" +ddr3_fetch_eye +ddr3_lane0=10 +ddr3_lane1=7
 run "$EYE" +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
 run "$EYE" +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=6
 run "$EYE" +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=8
+# P/D place. Lane 0 at 11 with lane 1 at 7, and lane 1 at 6, are
+# both the even-word alias. The flag names no eye.
+run "$EYE" +ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=7
+run "$EYE" +ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=6
 # Cold prologue, both lanes programmed to step 10 after reset.
 # Lane 0 is the even-word alias. Lane 1 stays on the column except DQ5
 # (bit 13 of the mask). DQ1 (odd-clear bit 1) still clears the high
@@ -292,10 +296,11 @@ run sim/obj_dir/ddr3_cpu_ddr3fetch_rom/ddr3_cpu --cycles 80000 --edges 0 \
   --pc 1f00 --r5 00000000 --r9 ffffffe1 --mask 1ffffffffff \
   +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
 
-# P/D chain on the same DDR3 port. The eye is the accepted fetch pair.
-# The chain runs outside the delay loop, so the period stays 576*N+788.
-# First edge is 38626 at N=5 (5076 cycles after the stored-BL image).
-# Bare +ddr3_fetch_eye leaves the lanes at 10 and holds in the prologue.
+# P/D chain on the same DDR3 port. The chain runs outside the delay
+# loop, so once the column is right the period stays 576*N+788 and
+# the first edge is 38626 at N=5. That column is not a Dock step:
+# the two measured pairs are the even-word alias. Bare
+# +ddr3_fetch_eye is the fetch centers with the lanes left at 10.
 python3 sim/build_pdchain_imem.py --mov-iter 5 --pad 2048 \
   --out sim/obj_dir/ddr3pd_n5.words
 python3 sim/build_pdchain_imem.py --mov-iter 8 --pad 2048 \
@@ -309,21 +314,25 @@ write_hex sim/obj_dir/ddr3pd_n5.words
 CPU ddr3pd --cycles 80000 --edges 0 --pc 1390 \
   --r5 00544054 --r9 00a9c18c --mask 30 \
   +ddr3_fetch_eye
+# Dock rows. Lane 1 at 7 and at 6 are the same alias. No eye.
+CPU ddr3pd --cycles 80000 --edges 0 --pc 1390 \
+  --r5 aaaaaaaa --r9 55555536 --mask f0 \
+  +ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=7
+CPU ddr3pd --cycles 80000 --edges 0 --pc 1390 \
+  --r5 aaaaaaaa --r9 55555536 --mask f0 \
+  +ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=6
+# Column aligned. These steps are not a Dock pair.
 CPU ddr3pd --cycles 120000 --edges 2 --period 3668 --first 38626 \
-  --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff \
-  +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
+  --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff
 write_hex sim/obj_dir/ddr3pd_n8.words
 CPU ddr3pd --cycles 100000 --edges 2 --period 5396 --first 40354 \
-  --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff \
-  +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
+  --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff
 write_hex sim/obj_dir/ddr3pd_n32.words
 CPU ddr3pd --cycles 160000 --edges 2 --period 19220 --first 54178 \
-  --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff \
-  +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
+  --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff
 write_hex sim/obj_dir/ddr3pd_b32.words
 CPU ddr3pd --cycles 80000 --edges 0 --pc 1d8c \
-  --r5 00000000 --r9 00000008 --mask 1effffffffff \
-  +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
+  --r5 00000000 --r9 00000008 --mask 1effffffffff
 write_hex sim/obj_dir/ddr3pd_n5.words
 say "elaborate ddr3pd CHAIN_FIX=0"
 if ! CHAIN_FIX=0 SIM_IMAGE=ddr3pd \
@@ -339,8 +348,7 @@ build ddr3pd-rom verilator "${VFLAGS[@]}" -DPRINTF_COND=0 \
   sim/CpuClock.v sim/Ddr3UserModel.v sim/tb_ddr3_cpu.cpp
 write_hex sim/obj_dir/ddr3pd_n5.words
 run sim/obj_dir/ddr3_cpu_ddr3pd_rom/ddr3_cpu --cycles 80000 --edges 0 \
-  --pc 1d8c --r5 fffffff4 --r9 00000008 --mask ffffffffff \
-  +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
+  --pc 1d8c --r5 fffffff4 --r9 00000008 --mask ffffffffff
 
 if [[ "$FAIL" -ne 0 ]]; then
   echo "stand-in mismatches" >&2

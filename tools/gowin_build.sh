@@ -415,8 +415,9 @@ case "$BOARD" in
     if [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" || "$FPGA_IMAGE" == "ddr3pd" ]]; then
       # The reader sweep is DDR3_READER. The stored-BL image and the
       # P/D-chain image set each lane from its write-level edge
-      # (lane 0 minus 1, lane 1 minus 3). The prologue and the ALU
-      # keep lane 1 on the write-level result.
+      # (lane 0 minus 1, lane 1 minus 3). On the P/D place that pair
+      # and backoff 2/4 both printed the even-word alias. The prologue
+      # and the ALU keep lane 1 on the write-level result.
       if [[ "$FPGA_IMAGE" == "ddr3pd" ]]; then
         printf '%s\n' '`define DDR3_PD' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
       elif [[ "$FPGA_IMAGE" == "ddr3fetch" ]]; then
