@@ -48,9 +48,11 @@ module ddr3_controller
     // constants and loads each lane with its own write-level edge
     // minus that many codes. WLEVEL_BACKOFF1 is lane 1's count;
     // zero there uses WLEVEL_BACKOFF for both. On the ALU place
-    // lane 0's edge was 0x0D and its eye was 0x0A. On the fetch
-    // route lane 0's eye is one code before its edge and lane 1's
-    // eye is three codes before its edge.
+    // lane 0's edge was 0x0D and its eye was 0x0A. The fetch image
+    // that passed uses backoff 1 and 3. That build's edges were
+    // 0x0C and 0x0A, so the steps were 0x0B and 0x07. An earlier
+    // fetch trial measured lane 0's edge as 0x0D. The stand-in
+    // does not read this edge.
     parameter [7:0] LANE0_STEP = 8'd10,
     parameter [7:0] LANE1_STEP = 8'd0,
     parameter [7:0] WLEVEL_BACKOFF = 8'd0,
