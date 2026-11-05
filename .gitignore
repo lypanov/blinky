@@ -396,6 +396,8 @@ sim/obj_dir_moddesc_n6/
 sim/obj_dir_moddesc_n8/
 sim/obj_dir_moddesc_break/
 sim/obj_dir_moddesc_split/
+sim/obj_dir_files_n5/
+sim/obj_dir_files_split/
 sim/visualizer/trace.json
 sim/visualizer/program.json
 sim/visualizer/imem/
