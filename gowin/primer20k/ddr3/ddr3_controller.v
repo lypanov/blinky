@@ -28,7 +28,7 @@ module ddr3_controller
     parameter RP   = 6,     // 13.75ns, precharge to active
     parameter RCD  = 6,     // 13.75ns, active to r/w
     parameter RC   = 20,    // 48.25ns, ref/active to ref/active
-    parameter MOD  = 12     // 12nCK/15ns, cycles after MRS before any other command
+    parameter MOD  = 12,    // 12nCK/15ns, cycles after MRS before any other command
 `else
     // DDR3-1066
     parameter CAS  = 7,     // MR0[6,5,4,2] = 0110
@@ -38,8 +38,15 @@ module ddr3_controller
     parameter MRD  = 8,     // >=4 cycles, mode register set delay
     parameter RP   = 8,     // 13.75ns, precharge to active
     parameter RC   = 26,    // 48.25ns, ref/active to ref/active
-    parameter MOD  = 12     // 12nCK/15ns, cycles after MRS before any other command
+    parameter MOD  = 12,    // 12nCK/15ns, cycles after MRS before any other command
 `endif
+    // Absolute write delay loaded after read calibration. Lane 0's odd
+    // column comes back as the even one on the leading edge of the eye.
+    // 10 is the ALU place. The reader place's eye is 9; that build passes
+    // LANE0_STEP=9 and LANE1_STEP=9. LANE1_STEP=0 leaves lane 1 on the
+    // write-level result, which is the ALU place.
+    parameter [7:0] LANE0_STEP = 8'd10,
+    parameter [7:0] LANE1_STEP = 8'd0
 )
 (
     // DDR3 side interface
@@ -224,14 +231,21 @@ assign read_calib_done = rcalib_done;
 // Lane 0's odd column comes back as the even one when the write delay
 // stays on the DQ[0] leading edge. Force an absolute step instead of
 // an offset, so a later edge detection cannot land on the same delay.
-// 10 is the step lane 1 settled on. The read gate stays put.
+// The read gate stays put. Lane 1 is forced the same way only when
+// LANE1_STEP is non-zero, and only after read calibration, so write
+// leveling still searches on the live wstep1.
+reg [7:0] wstep1_run;
 always @(posedge pclk) begin
-    if (~rst_lock_n)
+    if (~rst_lock_n) begin
         wstep_run <= 8'd0;
-    else if (rcalib_done)
-        wstep_run <= 8'd10;
-    else
+        wstep1_run <= 8'd0;
+    end else if (rcalib_done) begin
+        wstep_run <= LANE0_STEP;
+        wstep1_run <= (LANE1_STEP == 8'd0) ? wstep1 : LANE1_STEP;
+    end else begin
         wstep_run <= wstep;
+        wstep1_run <= wstep1;
+    end
 end
 
 `ifdef SIM
@@ -675,7 +689,7 @@ generate
         ) u_dqs (
             .FCLK(fclk), .PCLK(pclk), .DQSIN(DDR3_DQS[i0]), .RESET(~rst_lock_n), .HOLD(dqs_hold), 
             .RLOADN(1'b0), .WLOADN(wload_n), .RMOVE(1'b0), .WMOVE(1'b0),
-            .DLLSTEP(dllstep), .WSTEP(i0 == 0 ? wstep_run : wstep1), // per-lane delay
+            .DLLSTEP(dllstep), .WSTEP(i0 == 0 ? wstep_run : wstep1_run), // per-lane delay
             .RCLKSEL(rclksel), .READ(dqs_read),
             .DQSR90(clk_dqsr[i0]), .WPOINT(dqs_waddr[i0]), .RPOINT(dqs_raddr[i0]), 
             .DQSW0(clk_dqsw[i0]), .DQSW270(clk_dqsw270[i0]), .RBURST(rburst[i0])

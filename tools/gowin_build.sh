@@ -393,6 +393,13 @@ case "$BOARD" in
     mkdir -p "$ROOT/gowin/primer20k/impl"
     cd "$ROOT/gowin/primer20k"
     if [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" ]]; then
+      # The reader place's eye is programmed step 9 on both lanes.
+      # The prologue and the ALU keep the default force of 10.
+      if [[ "$FPGA_IMAGE" == "ddr3rsc" ]]; then
+        printf '%s\n' '`define DDR3_READER' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
+      else
+        printf '%s\n' '// prologue and ALU: lane 0 stays at step 10' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
+      fi
       gw_sh "$ROOT/gowin/primer20k/gowin_ddr3.tcl"
     else
       gw_sh "$ROOT/gowin/primer20k/gowin_blink3.tcl"
