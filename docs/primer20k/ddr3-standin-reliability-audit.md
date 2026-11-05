@@ -5,12 +5,11 @@ bitstream and does not start step 6. Step 5 remains with the stand-in
 agent until a bitstream and this model agree. The audit is what has
 to change before a later Modules.Load step can trust `stand-in matches`.
 
-The sim agent's thread was not readable from this worker.
-`batch-fetch-details` only runs on a managed cloud agent. The local
-store for `bc-5a35e67c-7a90-564d-ac3b-59f0c2650296` has an empty file
-index, and `/cursor/stores/bc-5a35e67c-7a90-564d-ac3b-59f0c2650296` is
-not on this machine. What follows is from the commits, `sim/Ddr3UserModel.v`,
-`sim/run_ddr3_standin.sh`, the controller, and `docs/primer20k/`.
+The commits are read together with the sim agent's transcript
+(`bc-5a35e67c-7a90-564d-ac3b-59f0c2650296`, 2341 records). The dump
+ends on the decision to fit the P/D miss and load one code further
+back. Commit `89fd0ae` is that load's result, written after the last
+line of the dump.
 
 ## The pattern
 
@@ -88,6 +87,41 @@ stand-in still has the old centers, so it calls lane 0 at 12 a miss.
    starts empty on every process. Dropping that table as a target was
    right. The P/D miss is a cold hold at `0x1394` with a stable
    `AAAAAAAA` line. Cold versus warm does not explain it.
+
+## What the transcript shows
+
+The published sentence and the reasoning next to it disagree at the
+false green, and they agree on the later refit.
+
+- After the warm sweep they wrote that a plusarg hardcoding the target
+  sum would be dishonest, and that the stand-in cannot grow a new
+  offset rule for those sums without inventing a PHY. Modules was told
+  to stop sweeping steps 6..16. The cold `DFAADFAA` line was then given
+  a mask chosen to hit that one UART: "a single center-9 offset cannot
+  explain the result", so `+ddr3_pin_even=20FF` plus a DQ1 clear. That
+  is the fitted plusarg the sweep note had just refused, aimed at one
+  line instead of the table.
+- In the same stretch they wrote that the stand-in cannot derive the
+  eye from the command port, and that center is a plusarg rather than
+  a property of the bitstream. The next published prediction was still
+  a center: `+ddr3_place_fetch` sets this route's center to 9, and both
+  lanes at 9 are the pass. The Dock at step 9 printed `AAAAAAAA`.
+- The `0cd9710` report says `stand-in matches`, and `+ddr3_fetch_eye`
+  is this pass. While building that tip they noted the eye test forces
+  offset 0 in the C++ harness. After the rejection they read their own
+  tip back: the plusarg is only used in that C++ testbench to zero
+  offsets, the Verilog never reads it, and the default center-10 lanes
+  match the Dock pass by coincidence, so the fake witness looks correct.
+  They also wrote that `+ddr3_place_fetch` forces offset +1 and ignores
+  the lane numbers. `4dfd5d8` is that correction, and it says in the
+  same note that the model still cannot name the next build's edge.
+- Handed step 5, they wrote: the Dock kept steps `000B` and `0007` and
+  printed the even-word alias, so this place's column is one code below
+  the fetch eye; teach the stand-in that pair, then program one code
+  further back and check it on the board. The same stretch sets
+  `+ddr3_pd_eye` centers to 10 and 6. That is the step-9 sequence
+  again. The load that followed stayed on the alias, and `89fd0ae`
+  then took the eye out of the flag.
 
 ## What the 4K path did that this does not
 
