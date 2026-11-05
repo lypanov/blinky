@@ -22,7 +22,8 @@ add_file -type sdc     [file join $HERE ddr3.sdc]
 set_option -top_module blinky_top_ddr3
 set_option -verilog_std sysv2017
 # ddr3_eye.vh is written by tools/gowin_build.sh. The reader image
-# defines DDR3_READER; the prologue and the ALU do not.
+# defines DDR3_READER. The stored-BL image defines DDR3_FETCH. The
+# prologue and the ALU do not.
 set_option -include_path $HERE
 if {[info exists ::env(GOWIN_OUT_NAME)] && $::env(GOWIN_OUT_NAME) ne ""} {
   set_option -output_base_name $::env(GOWIN_OUT_NAME)

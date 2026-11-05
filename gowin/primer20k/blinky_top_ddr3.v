@@ -24,11 +24,11 @@
 // A corrupt read, or one wrong header byte, leaves the pin dark.
 // Locked before the SRAM load.
 //
-// DDR3_READER programs both write lanes to step 9 after read
-// calibration. That is the data eye of the reader place. The ALU
-// place stays on the default: lane 0 at step 10, lane 1 on the
-// write-level result. The delay loop is unchanged, so the rate above
-// is the reader prediction with +ddr3_center=9 and both lanes at 9.
+// DDR3_READER is the cold step sweep. The place that passed
+// programmed both lanes to step 10. DDR3_FETCH forces both lanes to
+// that step and does not sweep. The ALU place stays on the default:
+// lane 0 at step 10, lane 1 on the write-level result. The delay
+// loop is unchanged, so the rate above is the stored-BL prediction.
 
 module blinky_top_ddr3 (
   input  Clock,
@@ -378,6 +378,14 @@ module blinky_top_ddr3 (
       hold_seen <= 1'b0;
     else if (cpu_pc[15:0] >= 16'h1390 && cpu_pc[15:0] < 16'h1400)
       hold_seen <= 1'b1;
+`ifdef DDR3_FETCH
+    // These are spin holds. The fetch itself stalls on 0x1F00 while
+    // the stored word is read, so that address is not a hold.
+    else if (cpu_pc[15:0] == 16'h1B44 || cpu_pc[15:0] == 16'h1B48
+          || cpu_pc[15:0] == 16'h1C20 || cpu_pc[15:0] == 16'h1C24
+          || cpu_pc[15:0] == 16'h1CD8 || cpu_pc[15:0] == 16'h1CDC)
+      hold_seen <= 1'b1;
+`endif
   end
   reg [1:0] hold_sync = 2'b00;
   reg [15:0] pc_snap = 16'd0;
@@ -450,6 +458,9 @@ module blinky_top_ddr3 (
     hex32(cpu_r9), " ",
 `ifdef DDR3_READER
     // Sweep image: programmed lane 1, then programmed lane 0.
+    hex16({8'h00, wstep1_run}), " ",
+`elsif DDR3_FETCH
+    // Stored-BL image: both lanes are forced to step 10.
     hex16({8'h00, wstep1_run}), " ",
 `else
     hex16({8'h00, unused_wstep}), " ",
@@ -642,7 +653,13 @@ module blinky_top_ddr3 (
   end
 `else
   localparam [7:0] LANE0_STEP = 8'd10;
+`ifdef DDR3_FETCH
+  // The step-3 place passed with both lanes at step 10. Lane 1 is not
+  // left on the write-level result.
+  localparam [7:0] LANE1_STEP = 8'd10;
+`else
   localparam [7:0] LANE1_STEP = 8'd0;
+`endif
   wire [7:0] step0_ov = 8'd0;
   wire [7:0] step1_ov = 8'd0;
   wire step_ov_en = 1'b0;

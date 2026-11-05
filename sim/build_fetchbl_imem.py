@@ -180,6 +180,8 @@ def fetchbl_imem(
         max_iter=max_iter,
         mov_iter=mov_iter,
         success=ALU,
+        # The scanner walks 64 words and runs past the ALU at 0x1400.
+        hold_scan=False,
     )
     alu, _ = assemble_alu(alu_break, success=READER)
     reader, _ = assemble_reader(reader_break, success=PROG)
