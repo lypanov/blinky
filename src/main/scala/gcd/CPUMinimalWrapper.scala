@@ -22,7 +22,8 @@ class CPUMinimalWrapper(
     memBackend: String = "blockram",
     hyperFirstValid: Int = 12,
     extraChecks: Int = 0,
-    fetchStored: Boolean = false
+    fetchStored: Boolean = false,
+    chainFix: Boolean = false
 ) extends Module {
   val hyper = memBackend == "hyperram"
   val exposeHyper = hyper && useRealGowin
@@ -38,7 +39,8 @@ class CPUMinimalWrapper(
     waitForStores = hyper,
     requireMemCheck = hyper,
     extraChecks = extraChecks,
-    fetchStored = fetchStored
+    fetchStored = fetchStored,
+    chainFix = chainFix
   ))
   io.led := cpu.io.led
   

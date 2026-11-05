@@ -18,7 +18,8 @@ class CPUSimTop(
     memBackend: String = "blockram",
     hyperFirstValid: Int = 12,
     extraChecks: Int = 0,
-    fetchStored: Boolean = false
+    fetchStored: Boolean = false,
+    chainFix: Boolean = false
 ) extends Module {
   val hyper = memBackend == "hyperram"
   val io = IO(new Bundle {
@@ -41,7 +42,8 @@ class CPUSimTop(
     waitForStores = hyper,
     requireMemCheck = hyper,
     extraChecks = extraChecks,
-    fetchStored = fetchStored
+    fetchStored = fetchStored,
+    chainFix = chainFix
   ))
   if (hyper) {
     val bridge = Module(new HyperRamBridge)
@@ -132,12 +134,13 @@ object CPUSimTop {
           s"$targetDir/CPUSimTopBlink3.v",
           "blink3"
         )
-      case "hyperram" | "fixup" | "rsc" | "fetchbl" =>
+      case "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" =>
         val imemPath = new File(
           projectRoot,
           sys.env.getOrElse(
             "BLINK3_IMEM",
-            if (image == "fetchbl") "sim/visualizer/imem/fetchbl.words"
+            if (image == "pdchain") "sim/visualizer/imem/pdchain.words"
+            else if (image == "fetchbl") "sim/visualizer/imem/fetchbl.words"
             else if (image == "rsc") "sim/visualizer/imem/rsc.words"
             else if (image == "fixup") "sim/visualizer/imem/fixup.words"
             else "sim/visualizer/imem/hyperram.words"
@@ -150,6 +153,7 @@ object CPUSimTop {
           if (image == "hyperram") 12 else 13
         )
         val extra = image match {
+          case "pdchain" => 37
           case "fetchbl" => 34
           case "rsc" => 32
           case "fixup" => 20
@@ -157,8 +161,11 @@ object CPUSimTop {
         }
         // FETCH_STORED=0 is the split-bus sim: same words, ROM fetch. Dark.
         val fetchStored = image == "fetchbl" && sys.env.getOrElse("FETCH_STORED", "1") != "0"
+        // CHAIN_FIX=0 is the same words with no patch table and no ROM read
+        // of the code window. The walk loads zeros and the pin stays dark.
+        val chainFix = image == "pdchain" && sys.env.getOrElse("CHAIN_FIX", "1") != "0"
         println(s"CPUSimTop: $image IMEM ${words.length} words from $imemPath")
-        println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra fetchStored=$fetchStored")
+        println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix")
         (
           () => new CPUSimTop(
             Seq.empty,
@@ -166,7 +173,8 @@ object CPUSimTop {
             memBackend = "hyperram",
             hyperFirstValid = firstValid,
             extraChecks = extra,
-            fetchStored = fetchStored
+            fetchStored = fetchStored,
+            chainFix = chainFix
           ),
           s"$targetDir/CPUSimTopHyper.v",
           image
