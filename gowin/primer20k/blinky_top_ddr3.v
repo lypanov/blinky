@@ -25,11 +25,12 @@
 // Locked before the SRAM load.
 //
 // DDR3_READER is the cold step sweep. The place that passed
-// programmed both lanes to step 10. DDR3_FETCH is a new route: those
-// same codes are one DLL step above its eye, so it forces both lanes
-// to step 9 and does not sweep. The ALU place stays on the default:
-// lane 0 at step 10, lane 1 on the write-level result. The delay
-// loop is unchanged, so the rate above is the stored-BL prediction.
+// programmed both lanes to step 10. DDR3_FETCH does not reuse that
+// code: on its route, steps 9 and 10 are the same even-word alias.
+// Lane 0 loads its write-level edge minus 1. Lane 1 loads its
+// edge minus 3. The ALU
+// place stays on lane 0 at step 10 and lane 1 on the write-level
+// result. The delay loop is unchanged.
 
 module blinky_top_ddr3 (
   input  Clock,
@@ -461,7 +462,7 @@ module blinky_top_ddr3 (
     // Sweep image: programmed lane 1, then programmed lane 0.
     hex16({8'h00, wstep1_run}), " ",
 `elsif DDR3_FETCH
-    // Stored-BL image: both lanes are forced to this route's eye.
+    // Stored-BL image: lane 1 one code above 0006, then lane 0.
     hex16({8'h00, wstep1_run}), " ",
 `else
     hex16({8'h00, unused_wstep}), " ",
@@ -542,6 +543,8 @@ module blinky_top_ddr3 (
 `ifdef DDR3_READER
   localparam [7:0] LANE0_STEP = 8'd9;
   localparam [7:0] LANE1_STEP = 8'd9;
+  localparam [7:0] WLEVEL_BACKOFF = 8'd0;
+  localparam [7:0] WLEVEL_BACKOFF1 = 8'd0;
   // Cold prologue. Both lanes get one absolute step. The controller
   // reset drops DDR3_nRESET, so the array does not keep the previous
   // trial. After read calibration the step is loaded, with the CPU
@@ -653,15 +656,16 @@ module blinky_top_ddr3 (
     end
   end
 `else
-`ifdef DDR3_FETCH
-  // Reader place passed at step 10. On this route step 10 is the
-  // even-word alias (R5 AAAAAAAA, beats A5A5A5A5). The eye is step 9
-  // on both lanes. Lane 1 is not left on the write-level result.
-  localparam [7:0] LANE0_STEP = 8'd9;
-  localparam [7:0] LANE1_STEP = 8'd9;
-`else
   localparam [7:0] LANE0_STEP = 8'd10;
   localparam [7:0] LANE1_STEP = 8'd0;
+`ifdef DDR3_FETCH
+  // Lane 0 at code 000B is centered. Lane 1 at 0006 is the
+  // even-word alias (R5 AAFFAAFF), one code below that center.
+  localparam [7:0] WLEVEL_BACKOFF = 8'd1;
+  localparam [7:0] WLEVEL_BACKOFF1 = 8'd3;
+`else
+  localparam [7:0] WLEVEL_BACKOFF = 8'd0;
+  localparam [7:0] WLEVEL_BACKOFF1 = 8'd0;
 `endif
   wire [7:0] step0_ov = 8'd0;
   wire [7:0] step1_ov = 8'd0;
@@ -669,7 +673,9 @@ module blinky_top_ddr3 (
 `endif
   ddr3_controller #(
     .ROW_WIDTH(13), .COL_WIDTH(10), .BANK_WIDTH(3),
-    .LANE0_STEP(LANE0_STEP), .LANE1_STEP(LANE1_STEP)
+    .LANE0_STEP(LANE0_STEP), .LANE1_STEP(LANE1_STEP),
+    .WLEVEL_BACKOFF(WLEVEL_BACKOFF),
+    .WLEVEL_BACKOFF1(WLEVEL_BACKOFF1)
   ) u_ddr3 (
     .DDR3_DQ      (DDR3_DQ),
     .DDR3_DQS     (DDR3_DQS),

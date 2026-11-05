@@ -15,22 +15,23 @@ back through the DDR3 bridge. `extraChecks` is 34. The pin gate is
 42 bits. The UART mask is still 40 bits, so slots 32 and 33 are not
 on the line. A full UART mask plus the blink is those two slots.
 
-The loaded bitstream forces both write lanes to step 10, the eye the
-step-3 place passed on. There is no step sweep. Lane 1 is not left
-on the write-level result. The ALU image is unchanged. On this route
-those codes are one DLL step above the eye. The source now forces
-both lanes to step 9, which is the one program named below.
+The first loaded bitstream forced both write lanes to step 10, the
+eye the step-3 place passed on. There is no step sweep. Lane 1 is
+not left on the write-level result. The ALU image is unchanged. On
+this route those codes are the even-word alias, and so is step 9.
+The image that passed programs each lane from its own write-level
+edge. That pass is the last section.
 
 The new code is outside the delay loop. The period stays the step-1
 line. The HyperRAM formula `103*N+142` is not this board.
 
 ## Locked rate, from simulation only
 
-`sim/run_ddr3_standin.sh`, this route's eye (`+ddr3_place_fetch`,
-both lanes at step 9, `HOLD`, `WLOADN`, no pin mask). The period and
-the first edge are the same numbers the center-10 eye printed,
-because offset 0 returns the same bytes. The loaded step-10 pair is
-not this table. It is the prologue hold under "What a DDR3 miss looks like".
+`sim/run_ddr3_standin.sh`, this route's eye (`+ddr3_fetch_eye`,
+`HOLD`, `WLOADN`, no pin mask). The period and the first edge are
+the same numbers the center-10 eye printed, because offset 0 returns
+the same bytes. The loaded step-10 pair is not this table. It is the
+prologue hold under "What a DDR3 miss looks like".
 
 | N | period | first edge | mask | R5 | R9 |
 | --- | ---: | ---: | --- | --- | --- |
@@ -173,10 +174,9 @@ steps now `0009`:
 CH1390 00000000F0 AAAAAAAA 000003F9 A5A5A5A5 000003EF 00000000 55555536 0009 0009
 ```
 
-`+ddr3_place_fetch +ddr3_lane0=9 +ddr3_lane1=9` prints R5
-`00000000`, not `AAAAAAAA`. The model does not print this sum for
-step 9. No further step was loaded. The webcam was not used. The
-Dock is back on the ALU image:
+At `878b767`, `+ddr3_place_fetch +ddr3_lane0=9 +ddr3_lane1=9` printed
+R5 `00000000`, not `AAAAAAAA`. No further step was loaded. The
+webcam was not used. The Dock is back on the ALU image:
 
 ```
 C.106C 0FFFFFFF FFFFFFFF 0000000D 00700000 00000039 00000003 FFFFFFE1 000D 000A
@@ -184,7 +184,105 @@ C.106C 0FFFFFFF FFFFFFFF 0000000D 00700000 00000039 00000003 FFFFFFE1 000D 000A
 
 Tip `878b767` failed on the Dock. The same column, beats, write
 address, R5, and R9 came back with the steps changed from `000A` to
-`0009`. The stand-in agent now owns finishing step 4, board and
-model together, until those two agree. This note is the record of
-both trials. The Dock stays on `ddr3fixup_n262144.fs`. No further
-fetch bitstream is loaded from here, and step 5 is not started.
+`0009`. The absolute code is not the center on this route. Steps 9
+and 10 are the same even-word alias.
+
+## Eye is the write-level edge minus 3
+
+On the ALU place the write-level edge is `000D` and the passing
+delay is `000A`, three codes earlier. Lane 0 at the edge itself is
+the odd-column-reads-as-even failure. The fetch route moved that
+edge. Forcing 9 or 10 does not track it, and one code does not leave
+the alias. `DDR3_FETCH` now loads each lane with its own edge minus
+3. The UART steps are those delays, not constants.
+
+`+ddr3_place_fetch` with the lanes at 10, and the same flag with the
+lanes at 9, both print the Dock line. `+ddr3_wlevel_eye` is both
+lanes at the edge minus 3.
+
+## Edge minus 3
+
+One SRAM load of that bitstream, TNS 0 on `pclk` and `cpu_clk`. The
+line repeats:
+
+```
+CH1394 00000000F0 00550054 000003F9 A5A5A5A5 000003EF 00000000 FFAAFF8C 0007 000A
+```
+
+Mask `F0`, R5 `00550054`, R9 `FFAAFF8C`, steps `0007` `000A`. That
+is the stand-in's lane-0-one-below line (`+ddr3_lane0=9` on center
+10), not the pass and not `AAAAAAAA`. Lane 0's edge is `000D`
+(`000A` plus 3) and the code loaded is one below its eye, so the eye
+is `000B`, two codes before the edge. Lane 1's edge is `000A` and
+`0007` is on its eye, three codes before that edge.
+
+`+ddr3_wlevel_eye` prints this line.
+
+## Edge minus 2 / edge minus 3
+
+One SRAM load of lane 0 at edge-2 and lane 1 at edge-3, TNS 0 on
+`pclk` and `cpu_clk`. The line repeats:
+
+```
+CH1390 00000000F0 DFFFDFFF 000003F9 A5A5A5A5 000003EF 00000000 1FFE1FE1 0007 000B
+```
+
+Steps `0007` `000B` are lane 1 at `000A-3` and lane 0 at `000D-2`.
+The sum is not the pass and not `00550054`. Fourteen pins are on the
+eye. DQ1 is one column early, and DQ13 carries the even word of its
+BC4 group onto both words. MT[1], MT[2], the alias word, and the
+sentinel still match, so the mask stays `F0`. `+ddr3_fetch_split`
+prints this line.
+
+## Lane 1 one code above
+
+One SRAM load with lane 0 backoff 1 and lane 1 backoff 4. Lane 0's
+edge came back `000C`, so code `000B` is still edge-1 of that edge.
+Lane 1's edge stayed `000A`, so backoff 4 is `0006`. The line repeats:
+
+```
+CH1394 00000000F0 AAFFAAFF 000003F9 A5A5A5A5 000003EF 00000000 550054E1 0006 000B
+```
+
+Mask `F0`, sentinel beats `A5A5A5A5`. That is lane 0 centered and
+lane 1 in the even-word alias, which `+ddr3_lane1=11` already prints
+(R5 `AAFFAAFF`, R9 `550054E1`). `0006` is one code below the center
+on this route.
+
+## Pass
+
+Lane 0 stays at backoff 1. Lane 1 is backoff 3, one code higher than
+`0006`. TNS is 0.000 on `pclk` and `cpu_clk`. The edges stayed
+`000C` and `000A`, so the steps are `0007` `000B`. The line repeats,
+and the PC moves through the delay loop (`0x106C`, `0x1074`,
+`0x1080`):
+
+```
+C.1080 FFFFFFFFFF 00000000 00000038 00031B62 00000039 00000003 FFFFFFE1 0007 000B
+```
+
+Calibration is `C`. The PC is not `0x1390`. The mask is
+`FFFFFFFFFF`. R5 is `00000000`. R9 is `FFFFFFE1`. `+ddr3_fetch_eye`
+is this line: period 3668, first edge 33550, mask `3FFFFFFFFFF`.
+
+The clip is `blink-measure/20261105-121417-mcp` from
+`measure_blink` on `http://127.0.0.1:8766/mcp`, `roi=primer20k`,
+`duration=20`, `warmup=2`, `/dev/video2`, 661 frames, 30 fps. The
+tool headline was `edge=0.32`. Raw red at (334, 108), threshold 100,
+starts with 11 low frames and then the complete on+off runs are
+47+46, 48+46, 48+46, 47+47, 47+46, 48+46. Those six periods are 93,
+94, 94, 94, 93, 94. Mean 93.667 frames, 0.320285 Hz. At 30 fps the
+locked length is 93.641 frames. The Nano 4K LED in the same clip is
+the 0.499 Hz blinker. L14 is the Dock.
+
+Root cause: the eye is not a DLL code. Steps 9 and 10 are the same
+even-word alias (`AAAAAAAA`). Both lanes at the write-level edge
+minus 3 leave lane 0 one code below (`00550054`, steps `0007`
+`000A`). Lane 0 at edge-2 with lane 1 still at edge-3 is the pin
+split (`DFFFDFFF`, steps `0007` `000B`), not the center. Lane 1 one
+code below the center is the whole-byte even alias (`AAFFAAFF`,
+steps `0006` `000B`). The center is lane 0 at edge-1 and lane 1 at
+edge-3. On this route those codes are `000B` and `0007`.
+
+Step 5 is not started. The Nano 4K was not loaded. Nothing was
+written to flash. The Dock is on this SRAM image.

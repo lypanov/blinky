@@ -24,14 +24,18 @@
 // change the step a bitstream writes. It says which programmed step is
 // the eye on that route.
 //
-// +ddr3_place_fetch is the stored-BL route. Its center is 9 unless
-// +ddr3_center is also passed. The loaded ddr3fetch bitstream forces
-// both lanes to 10, and the Dock repeats the offset-+1 line: R5
-// AAAAAAAA, R9 55555536, mask F0, sentinel beats A5A5A5A5. The
-// prologue is the same as the reader and the CPU never reaches the
-// stored BL, so those instructions do not move the writes. The eye
-// moved with the route. TNS 0 does not keep DLL step 10 on the DRAM
-// eye. Both lanes at 9 on this place are offset 0.
+// +ddr3_place_fetch is the stored-BL route with an absolute step.
+// Programmed 9 and programmed 10 both repeat the offset-+1 line:
+// R5 AAAAAAAA, R9 55555536, mask F0, sentinel beats A5A5A5A5.
+// +ddr3_wlevel_eye is both lanes at the write-level edge minus 3.
+// That is lane 0 one code below its eye and lane 1 on its eye:
+// R5 00550054, R9 FFAAFF8C, mask F0, steps 0007 000A.
+// +ddr3_fetch_split is lane 0 at edge-2 and lane 1 at edge-3.
+// Fourteen pins are centered. DQ1 is one column early and DQ13 is
+// in the even-word alias: R5 DFFFDFFF, R9 1FFE1FE1, mask F0,
+// steps 0007 000B. Lane 1 one code above the eye is +ddr3_lane1=11:
+// R5 AAFFAAFF, R9 550054E1, steps 0006 000B. +ddr3_fetch_eye is the
+// pass, both lanes centered.
 //
 // Forcing both lanes to 9 on the rebuilt reader place is not this
 // offset 0. The Dock read the sentinel as 0x2505A5A5 (DQ5, DQ7 and DQ15
@@ -123,6 +127,7 @@ module Ddr3UserModel (
   integer    center;       // programmed step the data eye is centered on
   integer    i;
   reg        pin_even_en;
+  reg        fetch_split;  // DQ1 one column early, DQ13 even-word alias
   reg [15:0] pin_even;     // bit 0 = DQ0 ... bit 15 = DQ15, even-word broadcast
   reg [15:0] odd_clear;    // same numbering; a 0 on the odd word's high half clears
 
@@ -273,6 +278,42 @@ module Ddr3UserModel (
     end
   endtask
 
+  // Edge-2 / edge-3 on the fetch route. DQ1 lands one column early.
+  // DQ13 takes the even word of the BC4 group on both words. Every
+  // other pin writes the addressed column. The sentinel bytes are
+  // equal across a group, so DQ13's alias does not move it.
+  task automatic apply_fetch_split;
+    input integer col;
+    input integer lane;
+    input [7:0] bytev;
+    integer bitn;
+    integer g;
+    integer partner;
+    reg val;
+    begin
+      if (col >= 0 && col < WORDS) begin
+        g = col >> 2;
+        partner = col ^ 2;
+        for (bitn = 0; bitn < 8; bitn = bitn + 1) begin
+          val = bytev[bitn];
+          if (lane == 0 && bitn == 1) begin
+            put_bit(col - 1, 0, 1, val);
+          end else if (lane == 1 && bitn == 5) begin
+            if ((col & 2) == 0) begin
+              put_bit(col, 1, 5, val);
+              put_bit(partner, 1, 5, val);
+              seen1[g] = 1'b1;
+            end else if (!seen1[g]) begin
+              put_bit(col, 1, 5, val);
+            end
+          end else begin
+            put_bit(col, lane, bitn, val);
+          end
+        end
+      end
+    end
+  endtask
+
   function [15:0] read_half;
     input integer col;
     integer c;
@@ -293,6 +334,7 @@ module Ddr3UserModel (
     corrupt = 1'b0;
     late = 1'b0;
     dout_pend = 1'b0;
+    fetch_split = 1'b0;
     hold_en = 1'b1;
     wloadn_en = 1'b1;
     write_skew = 1'b0;
@@ -328,7 +370,7 @@ module Ddr3UserModel (
     if ($test$plusargs("ddr3_dm_lane1"))
       dm_mode = 2'd3;
     begin : eye_init
-      integer s0, s1;
+      integer s0, s1, off0, off1;
       s0 = 10;
       s1 = 10;
       center = 10;
@@ -339,24 +381,33 @@ module Ddr3UserModel (
         s0 = 10;
       if (!$value$plusargs("ddr3_lane1=%d", s1))
         s1 = 10;
-      // Fetch route: the measured eye is one DLL step below the
-      // reader's. An explicit center still wins.
-      if (!$value$plusargs("ddr3_center=%d", center)) begin
-        if ($test$plusargs("ddr3_place_fetch"))
-          center = 9;
-        else
-          center = 10;
+      if (!$value$plusargs("ddr3_center=%d", center))
+        center = 10;
+      // Absolute codes 9 and 10 are the same miss. Edge-3 on both
+      // lanes leaves lane 0 one code low. Edge-2 / edge-3 is offset 0.
+      if ($test$plusargs("ddr3_wlevel_eye")) begin
+        off0 = -1;
+        off1 = 0;
+      end else if ($test$plusargs("ddr3_place_fetch") &&
+                   !$test$plusargs("ddr3_fetch_eye")) begin
+        off0 = 1;
+        off1 = 1;
+      end else begin
+        off0 = s0 - center;
+        off1 = s1 - center;
       end
+      eye_from_offset(off0, lane0_mode, lane0_sh);
+      eye_from_offset(off1, lane1_mode, lane1_sh);
+      if ($test$plusargs("ddr3_fetch_split"))
+        fetch_split = 1'b1;
       if ($value$plusargs("ddr3_pin_even=%h", pin_even))
         pin_even_en = 1'b1;
       if (!$value$plusargs("ddr3_odd_clear=%h", odd_clear))
         odd_clear = 16'h0;
-      eye_from_offset(s0 - center, lane0_mode, lane0_sh);
-      eye_from_offset(s1 - center, lane1_mode, lane1_sh);
       $display("DDR3 model hold=%0d wloadn=%0d dm=%0d center=%0d lane0=%0d(off %0d mode %0d sh %0d) lane1=%0d(off %0d mode %0d sh %0d) pin_even=%h odd_clear=%h corrupt=%0d late=%0d",
                hold_en, wloadn_en, dm_mode, center,
-               s0, s0 - center, lane0_mode, lane0_sh,
-               s1, s1 - center, lane1_mode, lane1_sh,
+               s0, off0, lane0_mode, lane0_sh,
+               s1, off1, lane1_mode, lane1_sh,
                pin_even_en ? pin_even : 16'h0, odd_clear,
                corrupt, late);
     end
@@ -446,6 +497,9 @@ module Ddr3UserModel (
             put_byte(col, 0, din[7:0]);
           end else if (dm_mode == 2'd3) begin
             put_byte(col, 1, din[15:8]);
+          end else if (fetch_split) begin
+            apply_fetch_split(col, 0, din[7:0]);
+            apply_fetch_split(col, 1, din[15:8]);
           end else if (pin_even_en) begin
             apply_masked(col, 0, din[7:0]);
             apply_masked(col, 1, din[15:8]);

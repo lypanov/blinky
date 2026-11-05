@@ -403,9 +403,9 @@ case "$BOARD" in
     mkdir -p "$ROOT/gowin/primer20k/impl"
     cd "$ROOT/gowin/primer20k"
     if [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" ]]; then
-      # The reader sweep is DDR3_READER. The stored-BL image forces both
-      # lanes to step 9, the eye measured on that route. The prologue
-      # and the ALU keep lane 1 on the write-level result.
+      # The reader sweep is DDR3_READER. The stored-BL image sets each
+      # lane from its write-level edge (lane 0 minus 1, lane 1 minus 3). The prologue and the ALU
+      # keep lane 1 on the write-level result.
       if [[ "$FPGA_IMAGE" == "ddr3fetch" ]]; then
         printf '%s\n' '`define DDR3_FETCH' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
       elif [[ "$FPGA_IMAGE" == "ddr3rsc" ]]; then

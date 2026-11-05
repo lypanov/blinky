@@ -44,9 +44,17 @@ module ddr3_controller
     // column comes back as the even one on the leading edge of the eye.
     // 10 is the ALU place and the reader place that passed.
     // LANE1_STEP=0 leaves lane 1 on the write-level result, which is
-    // the ALU place. The fetch route's eye is 9; that build passes 9.
+    // the ALU place. WLEVEL_BACKOFF, when non-zero, ignores those
+    // constants and loads each lane with its own write-level edge
+    // minus that many codes. WLEVEL_BACKOFF1 is lane 1's count;
+    // zero there uses WLEVEL_BACKOFF for both. On the ALU place
+    // lane 0's edge was 0x0D and its eye was 0x0A. On the fetch
+    // route lane 0's eye is one code before its edge and lane 1's
+    // eye is three codes before its edge.
     parameter [7:0] LANE0_STEP = 8'd10,
-    parameter [7:0] LANE1_STEP = 8'd0
+    parameter [7:0] LANE1_STEP = 8'd0,
+    parameter [7:0] WLEVEL_BACKOFF = 8'd0,
+    parameter [7:0] WLEVEL_BACKOFF1 = 8'd0
 )
 (
     // DDR3 side interface
@@ -246,9 +254,20 @@ always @(posedge pclk) begin
         wstep_run <= 8'd0;
         wstep1_run <= 8'd0;
     end else if (rcalib_done) begin
-        wstep_run  <= step_ov_en ? step0_ov : LANE0_STEP;
-        wstep1_run <= step_ov_en ? step1_ov :
-                      ((LANE1_STEP == 8'd0) ? wstep1 : LANE1_STEP);
+        if (step_ov_en) begin
+            wstep_run <= step0_ov;
+            wstep1_run <= step1_ov;
+        end else if (WLEVEL_BACKOFF != 8'd0) begin
+            // The leading edge is where write leveling stops. Each
+            // lane's data eye sits a fixed number of codes earlier.
+            wstep_run <= (wstep > WLEVEL_BACKOFF) ? (wstep - WLEVEL_BACKOFF) : 8'd0;
+            wstep1_run <= (wstep1 > ((WLEVEL_BACKOFF1 != 8'd0) ? WLEVEL_BACKOFF1 : WLEVEL_BACKOFF))
+                ? (wstep1 - ((WLEVEL_BACKOFF1 != 8'd0) ? WLEVEL_BACKOFF1 : WLEVEL_BACKOFF))
+                : 8'd0;
+        end else begin
+            wstep_run <= LANE0_STEP;
+            wstep1_run <= (LANE1_STEP == 8'd0) ? wstep1 : LANE1_STEP;
+        end
     end else begin
         wstep_run <= wstep;
         wstep1_run <= wstep1;
