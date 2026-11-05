@@ -182,4 +182,9 @@ Dock is back on the ALU image:
 C.106C 0FFFFFFF FFFFFFFF 0000000D 00700000 00000039 00000003 FFFFFFE1 000D 000A
 ```
 
-Step 5 is not started.
+Tip `878b767` failed on the Dock. The same column, beats, write
+address, R5, and R9 came back with the steps changed from `000A` to
+`0009`. The stand-in agent now owns finishing step 4, board and
+model together, until those two agree. This note is the record of
+both trials. The Dock stays on `ddr3fixup_n262144.fs`. No further
+fetch bitstream is loaded from here, and step 5 is not started.
