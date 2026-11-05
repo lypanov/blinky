@@ -23,7 +23,8 @@ Does not touch the FPGA, serial ports, or `openFPGALoader`.
 | `reset_camera_controls` | Restore driver defaults and clear saved settings |
 | `auto_adjust` | LED-priority exposure: compact unclipped red/orange blobs, manual WB (not mean luma) |
 | `detect_leds` | Clip → LED coordinates, colour, blinking vs steady, board assignment + annotated JPEG |
-| `measure_blink` | Record via `capture_video` (or analyze a clip it returned); edge **and** FFT, graphs, JSON |
+| `measure_blink` | Named board: headline Hz is that board's classified blinking LED. Other rois still use `analyze_blink.py` |
+| `check_all` | One clip, both boards' rates from the same detection `measure_blink` uses |
 
 Three capture tools stay separate:
 
@@ -39,8 +40,9 @@ Three capture tools stay separate:
 `capture_video`, camera held open). Pass `video=` to analyze a clip
 `capture_video` already returned instead of recording again.
 
-`capture_still` / `capture_burst` arguments: `device` (default `/dev/video0`),
-optional `resolution` (`640x480`), optional `warmup_frames` (default 8,
+`capture_still` / `capture_burst` arguments: `device` (default `auto`, which
+follows the Logitech `046d:0991` by USB id; an explicit `/dev/videoN` is used
+as given), optional `resolution` (`640x480`), optional `warmup_frames` (default 8,
 discard AE settle frames; `0` matches `webcam_still.sh`), optional
 `enhance` (default **`false`**). The returned still is the raw camera JPEG.
 Pass `enhance=true` only if you want optional software `ffmpeg` eq
@@ -53,7 +55,9 @@ and re-applied before each capture and when the service starts, so they persist
 across shots and restarts.
 
 On this machine the camera is a **Logitech QuickCam Pro for Notebooks**
-(`046d:0991`) at `/dev/video0`. Typical controls:
+(`046d:0991`). `device=auto` resolves it (after the HDMI stick was plugged in,
+the capture node is `/dev/video2`; `/dev/video0` is the UGREEN stick and has
+no `auto_exposure`). Typical controls:
 
 | Control | Range (this cam) | Driver default | Notes |
 |---|---|---|---|
@@ -92,26 +96,33 @@ time, and assigns boards from the **LED pattern** (not USB cords):
 Results (coordinates, RGB, hue, state, board) plus an annotated debug image
 are returned and cached in `~/.local/state/webcam-mcp/leds.json`.
 
-`measure_blink(duration=25, warmup=8, roi=auto)` records with `capture_video`
-(`lock_exposure=true`, clip length = warmup + duration + 2 s) then runs the
-same analyzer as `tools/measure_blink.sh` (the script is **kept**). It writes the same
-`result.json` + `brightness.png` + `roi.png` under `~/fpga/blink-measure/<stamp>-mcp/`
-and returns both detectors:
+`measure_blink(duration=10, warmup=0.5, roi=auto)` records with `capture_video`
+(`lock_exposure=true`, clip length = warmup + duration). `nano4k` and
+`primer20k` use the same detector as `detect_leds`. The headline
+`frequency_hz` is that board's classified blinking LED: the edge period when
+it agrees with the LED's own blink-band FFT, otherwise that FFT. The trace is
+the LED disk's chroma, so a slow drift in a padded box cannot become the
+headline. A board that is in frame with only steady LEDs returns status
+`board present but not blinking`. A missing board returns `<board> not in frame`.
+Both are results. `auto` / `full` / `top` / `bottom` / `x,y,w,h` still run
+`tools/analyze_blink.py` (the script is **kept**) and write `result.json` +
+`brightness.png` + `roi.png` under `~/fpga/blink-measure/<stamp>-mcp/`.
 
 | Field | Meaning |
 |---|---|
-| `edge_frequency_hz` | hysteresis threshold + long-baseline edge period |
-| `fft_frequency_hz` | rFFT peak (needed when edges undercount; historically **6.852 Hz** vs a low edge count at ~6.9 Hz) |
-| `trusted_method` | `edge`, `fft`, or `untrusted` (edge and FFT disagree — do not adopt FFT leakage from the other board) |
-| `frequency_hz` | the trusted value, or `null` when untrusted |
-| `predicted_blink3_hz` | 3.433 Hz for Blink3 N=262144 at 27 MHz |
+| `edge_frequency_hz` | rising-edge period of the blinking LED, inside the blink band |
+| `fft_frequency_hz` | that LED's blink-band rFFT peak |
+| `trusted_method` | `edge` when the two agree, else `fft` when the LED is blinking |
+| `frequency_hz` | the headline, or `null` when the board is steady or absent |
+| `source` | `blinking-led` for a named board |
+| `status` | `blinking`, `board present but not blinking`, or `<board> not in frame` |
+| `predicted_blink3_hz` | 3.433 Hz for Blink3 N=262144 at 27 MHz (informational) |
 
-`roi` is optional: `auto` (default), `full`, `top`, `bottom`, `nano4k`,
-`primer20k`, or `x,y,w,h`. `nano4k` / `primer20k` run `detect_leds` on the
-same clip and meter that board's **blinking** LED only (never a steady LED;
-ROI is clipped away from the other board). Missing blinker or edge/FFT
-disagreement is `untrusted`. `top` / `bottom` still split the frame in half
-as a fallback. The tool still meters **one** LED.
+`check_all(duration=10)` records one clip and returns both boards from that
+detection. Wall time is the recording plus about a second of analysis.
+
+A tool exception includes the Python traceback in the text the client sees
+(`Error executing tool NAME: …`).
 
 `tools/measure_blink.sh` is unchanged and still records a raw clip.
 
@@ -119,8 +130,8 @@ Camera access is serialised with an `flock` on `$XDG_RUNTIME_DIR/webcam-mcp.lock
 ffmpeg / `v4l2-ctl` are started and waited on per shot, so the V4L2 node is free
 afterwards and `tools/measure_blink.sh` can run in between.
 
-A later HDMI capture stick (UGREEN 15389, UVC) will show up from
-`list_cameras`; pass its `/dev/videoN` as `device`.
+The UGREEN 15389 HDMI stick shows up from `list_cameras` (`role=hdmi`). Pass
+its `/dev/videoN` when you want that picture. `device=auto` stays on the Logitech.
 
 ## Install (once)
 
@@ -145,6 +156,7 @@ Parser / exposure-loop / blink-arbitration tests (no camera, no mcp extra):
 
 ```sh
 python3 tools/webcam-mcp/test_controls.py
+python3 tools/webcam-mcp/test_device_resolve.py
 python3 tools/test_blink_trust.py
 python3 tools/test_led_detect.py
 python3 tools/analyze_blink.py --self-test   # needs system numpy/matplotlib/PIL + ffmpeg
@@ -164,8 +176,8 @@ Cursor on Bee: `~/.cursor/mcp.json` should contain (keep any other servers):
 
 ## How agents use it
 
-Call `list_cameras`, then `capture_still` with the Logitech (`/dev/video0`) or
-the HDMI stick. The still returned to the model is the **raw** frame. If it
+Call `list_cameras`, then `capture_still` with `device=auto` (Logitech) or an
+explicit `/dev/videoN` for the HDMI stick. The still returned to the model is the **raw** frame. If it
 looks washed out or too dark, call `get_camera_controls` and
 `set_camera_controls` (or `auto_adjust`). Timestamped `-raw.jpg` files are left
 in `~/fpga/captures/`; `-enhanced.jpg` is written only when `enhance=true`.
@@ -301,3 +313,46 @@ and raised gain 48→112 as the stills needed brighter cores, then held 112 / WB
 ![nano4k ~3.42 Hz](proof/09-reliability-nano4k-brightness.png)
 
 ![primer20k ~0.995 Hz](proof/09-reliability-primer20k-brightness.png)
+
+## Desk move (2026-11-04 21:00–21:24 CET)
+
+After the boards were rearranged, `/dev/video0` was the UGREEN HDMI stick
+(flat gray, 720×480) and the Logitech was `/dev/video2` (640×480 MJPEG).
+The 21:00 `measure_blink(roi=nano4k)` headline was **0.185 Hz**, the FFT of a
+37×37 box mean. The same clip's classified LED was **1.125 Hz**. Alex watched
+the 4K blink at about 1 Hz.
+
+`device=auto` now follows `046d:0991`. Named-board headlines come from that
+LED's chroma trace. `detect_leds`, `measure_blink`, and `check_all` share the
+detector. The 21:00 clip's first 240 frames are the regression in
+`tools/test_led_detect.py` (`HeadlineTests`): LED **1.125 Hz**, box FFT
+**0.185 Hz**. The gray `20261104-210052` clip has no LEDs. Re-running
+`measure_blink` on the 21:00 clip returns status `blinking` at 0.938 Hz
+(`source=blinking-led`). The empty clip returns `primer20k not in frame`.
+`auto_adjust` on `/dev/video0` returns the real `v4l2-ctl` error
+(`unknown control 'auto_exposure'`) plus the traceback.
+
+Both boards were already blinking, so neither SRAM image was reloaded.
+`auto_adjust` (6.2 s) settled on gain 48, exposure 305, WB 4000, saturation 64
+(5 blobs, red and orange, median peak 185). Three `check_all(duration=10)`
+calls on `/dev/video2`:
+
+| run | wall | record | analyze | n | primer20k | nano4k | fps |
+|---|---|---|---|---|---|---|---|
+| 1 | 13.09 s | 12.03 s | 1.05 s | 5 (2 blink, 3 steady) | 6.652 Hz edge, conf 1.0 | 0.965 Hz edge, conf 1.0 | 29.05 |
+| 2 | 12.74 s | 11.73 s | 1.01 s | 5 (2 blink, 3 steady) | 6.653 Hz edge, conf 1.0 | 0.969 Hz edge, conf 1.0 | 29.06 |
+| 3 | 12.61 s | 11.67 s | 0.93 s | 5 (2 blink, 3 steady) | 6.638 Hz edge, conf 1.0 | 0.965 Hz edge, conf 1.0 | 29.05 |
+
+Assignment stayed `upper=primer20k n=3` / `lower=nano4k n=2`. The 4K blinker
+is the red LED near (350, 242). The 20K blinker is the red LED near (455, 48);
+its other two LEDs are orange and steady. Edge and FFT agree on both blinkers.
+The 20K rate is the rate on the board (~6.65 Hz). JSON:
+`proof/10-desk-check.json`.
+
+![auto_adjust after the desk move](proof/10-desk-auto-after.jpg)
+
+![check_all run 3: 5 LEDs, 4K ~0.97 Hz, 20K ~6.64 Hz](proof/10-desk-check-annotated.jpg)
+
+![nano4k blinking LED ~0.965 Hz](proof/10-desk-nano4k.png)
+
+![primer20k blinking LED ~6.64 Hz](proof/10-desk-primer20k.png)

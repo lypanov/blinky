@@ -103,7 +103,10 @@ def iter_rgb_frames(path: str, width: int, height: int):
                 break
             yield np.frombuffer(buf, dtype=np.uint8).reshape((height, width, 3))
     finally:
-        proc.stdout.close()
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.stderr is not None:
+            proc.stderr.close()
         proc.wait()
 
 
@@ -259,6 +262,11 @@ def score_led_exposure(rgb: np.ndarray) -> dict[str, Any]:
             score -= 22.0
         if pr < 80:
             score -= 10.0
+        # Clipped cores bloom into the cables. Prefer a slightly dimmer gain.
+        if pr >= 250:
+            score -= 8.0
+        if float(blob["clip_frac"]) > 0.15:
+            score -= 10.0
         if blob["sat"] >= 0.18:
             hues.append(float(blob["hue"]))
         if blob["color"] in ("red", "orange"):
@@ -369,6 +377,125 @@ def classify_temporal(series: np.ndarray, fps: float) -> tuple[str, float | None
     if mean >= 10.0:
         return "steady", None, cv, snr
     return "unknown", None, cv, snr
+
+
+def _edge_frequency_hz(series: np.ndarray, fps: float) -> float | None:
+    """Rising-edge period of one LED trace. None when the swing is not a blink."""
+    values = np.asarray(series, dtype=np.float64)
+    if len(values) < 8 or fps <= 0:
+        return None
+    low = float(np.percentile(values, 10))
+    high = float(np.percentile(values, 90))
+    span = high - low
+    if span < 8.0:
+        return None
+    band = max(0.12 * span, 1e-3)
+    level = 0.5 * (low + high)
+    state = 1 if values[0] >= level else 0
+    rising: list[int] = []
+    for i, sample in enumerate(values):
+        if state == 0 and sample >= level + band:
+            state = 1
+            rising.append(i)
+        elif state == 1 and sample <= level - band:
+            state = 0
+    if len(rising) < 2:
+        return None
+    period = (rising[-1] - rising[0]) / (len(rising) - 1) / fps
+    if period <= 0:
+        return None
+    return 1.0 / period
+
+
+def measure_chroma_trace(series: np.ndarray, fps: float) -> dict[str, Any]:
+    """Headline rate for one LED, from its own chroma samples.
+
+    The FFT is limited to the blink band (about 0.85–8 Hz). A padded-box
+    mean can lock onto slow drift near 0.18 Hz and must not replace this.
+    """
+    values = np.asarray(series, dtype=np.float64)
+    mean = float(values.mean()) if len(values) else 0.0
+    std = float(values.std()) if len(values) else 0.0
+    ptp = float(np.ptp(values)) if len(values) else 0.0
+    cv = std / max(abs(mean), 1e-6)
+    fft_hz, snr = fft_peak_hz(values, fps)
+    edge_hz = _edge_frequency_hz(values, fps)
+    if edge_hz is not None and not (MIN_BLINK_HZ <= edge_hz <= MAX_BLINK_HZ):
+        edge_hz = None
+    if fft_hz is not None and not (MIN_BLINK_HZ <= fft_hz <= MAX_BLINK_HZ):
+        fft_hz = None
+    blink_shape = cv >= 0.15 and ptp >= 12.0
+    fft_ok = fft_hz is not None and snr >= 4.0 and blink_shape
+    edge_ok = edge_hz is not None and blink_shape and (
+        fft_hz is None or abs(edge_hz - fft_hz) / max(edge_hz, fft_hz) <= 0.12 or fft_ok
+    )
+    freq: float | None = None
+    method = "untrusted"
+    reason = "no blink on this LED"
+    if edge_ok and fft_ok:
+        rel = abs(edge_hz - fft_hz) / max(edge_hz, fft_hz)
+        if rel <= 0.12:
+            freq, method = edge_hz, "edge"
+            reason = "blinking LED edge period agrees with its FFT"
+        else:
+            # Keep the classified blink-band rate. Do not drop it because a
+            # different estimator (or a padded box) saw something else.
+            freq, method = fft_hz, "fft"
+            reason = (
+                f"blinking LED FFT {fft_hz:.3f} Hz "
+                f"(edge {edge_hz:.3f} Hz disagrees; box-mean peak is not used)"
+            )
+    elif fft_ok:
+        freq, method = fft_hz, "fft"
+        reason = "blinking LED FFT (edge detector found no in-band period)"
+    elif edge_ok:
+        freq, method = edge_hz, "edge"
+        reason = "blinking LED edge period"
+    if freq is None:
+        state = "steady" if mean >= 10.0 else "unknown"
+        conf = 0.12
+    else:
+        state = "blinking"
+        agree = 1.0
+        if edge_hz and fft_hz:
+            rel = abs(edge_hz - fft_hz) / max(edge_hz, fft_hz)
+            agree = 1.0 if rel <= 0.12 else 0.45
+        elif method == "fft":
+            agree = 0.7
+        snr_term = min(1.0, float(snr) / 8.0)
+        conf = float(max(0.0, min(1.0, 0.25 + 0.4 * agree + 0.35 * snr_term)))
+    return {
+        "state": state,
+        "frequency_hz": None if freq is None else round(float(freq), 3),
+        "edge_frequency_hz": None if edge_hz is None else round(float(edge_hz), 3),
+        "fft_frequency_hz": None if fft_hz is None else round(float(fft_hz), 3),
+        "fft_snr": round(float(snr), 2),
+        "trusted_method": method,
+        "trusted_reason": reason,
+        "confidence": round(conf, 3),
+        "cv": cv,
+        "snr": snr,
+        "source": "blinking-led",
+    }
+
+
+def peak_rgb(rgb: np.ndarray, x: float, y: float, radius: int = 3) -> tuple[float, float, float]:
+    """RGB of the highest-chroma pixel in a small disk.
+
+    The disk mean mixes in cable silk and bloom and can turn a red core orange.
+    """
+    h, w, _ = rgb.shape
+    x0 = max(0, int(round(x)) - radius)
+    x1 = min(w, int(round(x)) + radius + 1)
+    y0 = max(0, int(round(y)) - radius)
+    y1 = min(h, int(round(y)) + radius + 1)
+    patch = rgb[y0:y1, x0:x1].astype(np.float32)
+    if patch.size == 0:
+        return 0.0, 0.0, 0.0
+    r, g, b = patch[:, :, 0], patch[:, :, 1], patch[:, :, 2]
+    chroma = r - 0.5 * g - 0.5 * b
+    flat = int(np.argmax(chroma))
+    return float(r.flat[flat]), float(g.flat[flat]), float(b.flat[flat])
 
 
 def _agglomerative(points: list[tuple[float, float]], cutoff: float) -> list[list[int]]:
@@ -547,6 +674,12 @@ def _prune_board_members(members: list[dict[str, Any]], want: int) -> list[dict[
             if m is not primary and m.get("state") == "blinking":
                 m["state"] = "steady"
                 m["frequency_hz"] = None
+                m["edge_frequency_hz"] = None
+                m["fft_frequency_hz"] = None
+                m["trusted_method"] = "untrusted"
+                m["trusted_reason"] = "another LED on this board is the blinker"
+                m["confidence"] = 0.12
+                m.pop("trace", None)
     return out
 
 
@@ -578,6 +711,20 @@ def _board_record(name: str, members: list[dict[str, Any]]) -> dict[str, Any]:
     orientation = _orientation(members, cx, cy)
     board_roi = {"x": x0, "y": y0, "w": max(1, x1 - x0), "h": max(1, y1 - y0)}
     measure_roi = _padded_roi(target, BLINKER_PAD_PX) if target is not None else None
+    if target is None:
+        status = "board present but not blinking"
+        freq = edge = fft = None
+        method = "untrusted"
+        reason = status
+        conf = 0.0
+    else:
+        status = "blinking"
+        freq = target.get("frequency_hz")
+        edge = target.get("edge_frequency_hz")
+        fft = target.get("fft_frequency_hz")
+        method = target.get("trusted_method") or "fft"
+        reason = target.get("trusted_reason") or "blinking LED"
+        conf = target.get("confidence") or 0.0
     return {
         "name": name,
         "cx": round(cx, 1),
@@ -591,6 +738,15 @@ def _board_record(name: str, members: list[dict[str, Any]]) -> dict[str, Any]:
         "colors": sorted({m.get("color", "other") for m in members}),
         "orientation": orientation,
         "leds": members,
+        # Headline rate is the classified blinking LED, never a padded-box FFT.
+        "frequency_hz": freq,
+        "edge_frequency_hz": edge,
+        "fft_frequency_hz": fft,
+        "trusted_method": method,
+        "trusted_reason": reason,
+        "status": status,
+        "confidence": conf,
+        "source": "blinking-led",
     }
 
 
@@ -824,36 +980,44 @@ def analyze_frames(
             [sample_disk(frame, blob["x"], blob["y"])[3] for frame in frames],
             dtype=np.float32,
         )
-        state, hz, cv, snr = classify_temporal(series, fps)
-        # Re-sample colour from the brightest frame at this location.
+        measured = measure_chroma_trace(series, fps)
+        state = measured["state"]
+        # Colour from the core pixel on the brightest frame, not the disk mean.
         peak_frame = frames[int(np.argmax(series))]
-        sample = sample_disk(peak_frame, blob["x"], blob["y"], radius=3)
-        color = classify_led_color(float(sample[0]), float(sample[1]), float(sample[2]))
-        hue, sat, _v = rgb_to_hsv(float(sample[0]), float(sample[1]), float(sample[2]))
-        leds.append(
-            {
-                "id": i,
-                "x": round(float(blob["x"]), 1),
-                "y": round(float(blob["y"]), 1),
-                "x0": int(blob["x0"]),
-                "y0": int(blob["y0"]),
-                "w": int(blob["w"]),
-                "h": int(blob["h"]),
-                "area": int(blob["area"]),
-                "r": round(float(sample[0]), 1),
-                "g": round(float(sample[1]), 1),
-                "b": round(float(sample[2]), 1),
-                "hue": round(hue, 1),
-                "sat": round(sat, 3),
-                "color": color,
-                "state": state,
-                "frequency_hz": None if hz is None else round(float(hz), 3),
-                "cv": round(float(cv), 3),
-                "snr": round(float(snr), 2),
-                "std": round(float(blob.get("std") or 0.0), 1),
-                "mean_chroma": round(float(series.mean()), 2),
-            }
-        )
+        pr, pg, pb = peak_rgb(peak_frame, blob["x"], blob["y"], radius=3)
+        color = classify_led_color(pr, pg, pb)
+        hue, sat, _v = rgb_to_hsv(pr, pg, pb)
+        led = {
+            "id": i,
+            "x": round(float(blob["x"]), 1),
+            "y": round(float(blob["y"]), 1),
+            "x0": int(blob["x0"]),
+            "y0": int(blob["y0"]),
+            "w": int(blob["w"]),
+            "h": int(blob["h"]),
+            "area": int(blob["area"]),
+            "r": round(pr, 1),
+            "g": round(pg, 1),
+            "b": round(pb, 1),
+            "hue": round(hue, 1),
+            "sat": round(sat, 3),
+            "color": color,
+            "state": state,
+            "frequency_hz": measured["frequency_hz"],
+            "edge_frequency_hz": measured["edge_frequency_hz"],
+            "fft_frequency_hz": measured["fft_frequency_hz"],
+            "trusted_method": measured["trusted_method"],
+            "trusted_reason": measured["trusted_reason"],
+            "confidence": measured["confidence"],
+            "cv": round(float(measured["cv"]), 3),
+            "snr": round(float(measured["snr"]), 2),
+            "std": round(float(blob.get("std") or 0.0), 1),
+            "mean_chroma": round(float(series.mean()), 2),
+            "source": "blinking-led",
+        }
+        if state == "blinking":
+            led["trace"] = [round(float(v), 2) for v in series]
+        leds.append(led)
 
     h, w = frames[0].shape[:2]
     leds = _keep_likely_leds(leds, frame_wh=(w, h))
@@ -911,12 +1075,20 @@ def probe_video(path: Path) -> tuple[int, int, float, float | None]:
     return width, height, fps, duration
 
 
-def analyze_video_once(path: Path, max_frames: int = 180) -> tuple[dict[str, Any], np.ndarray]:
+def analyze_video_once(
+    path: Path, max_frames: int = 180, skip_s: float = 0.0
+) -> tuple[dict[str, Any], np.ndarray]:
     width, height, fps, duration = probe_video(path)
+    skip_n = max(0, int(round(skip_s * fps)))
     frames = []
-    for i, frame in enumerate(iter_rgb_frames(str(path), width, height)):
+    seen = 0
+    for frame in iter_rgb_frames(str(path), width, height):
+        if seen < skip_n:
+            seen += 1
+            continue
         frames.append(frame)
-        if i + 1 >= max_frames:
+        seen += 1
+        if len(frames) >= max_frames:
             break
     if duration and duration > 0 and len(frames) > 2:
         fps_file = (len(frames) - 1) / duration
@@ -943,6 +1115,40 @@ def _font(size: int = 12):
         if p.is_file():
             return ImageFont.truetype(str(p), size)
     return ImageFont.load_default()
+
+
+def write_trace_plot(series: list[float] | np.ndarray, fps: float, info: dict[str, Any], path: Path) -> None:
+    """Brightness-style plot of one LED chroma trace. PIL only."""
+    values = np.asarray(series, dtype=np.float64)
+    width, height = 960, 300
+    img = Image.new("RGB", (width, height), (18, 18, 20))
+    draw = ImageDraw.Draw(img)
+    font = _font(15)
+    if len(values) < 2:
+        draw.text((12, 12), "no samples", fill=(220, 220, 220), font=font)
+        img.save(path)
+        return
+    lo = float(values.min())
+    hi = float(values.max())
+    if hi - lo < 1e-3:
+        hi = lo + 1.0
+    pad_x, pad_y = 36, 28
+    pts = []
+    span = len(values) - 1
+    for i, sample in enumerate(values):
+        x = pad_x + (width - 2 * pad_x) * i / span
+        y = height - pad_y - (height - 2 * pad_y) * (float(sample) - lo) / (hi - lo)
+        pts.append((x, y))
+    draw.line(pts, fill=(220, 64, 64), width=2)
+    hz = info.get("frequency_hz")
+    hz_s = f"{hz:.3f} Hz" if isinstance(hz, (int, float)) else "no blink"
+    label = (
+        f"{info.get('board') or ''} {info.get('state') or ''} {hz_s} "
+        f"{info.get('trusted_method') or ''}  source=blinking-led"
+    )
+    draw.rectangle([0, 0, width, 22], fill=(0, 0, 0))
+    draw.text((8, 4), label.strip(), fill=(235, 235, 235), font=font)
+    img.save(path)
 
 
 def annotate(rgb: np.ndarray, result: dict[str, Any]) -> Image.Image:
@@ -1007,6 +1213,61 @@ def board_measure_roi(result: dict[str, Any], name: str) -> tuple[int, int, int,
     return int(roi["x"]), int(roi["y"]), int(roi["w"]), int(roi["h"])
 
 
+def board_measurement(result: dict[str, Any], name: str) -> dict[str, Any]:
+    """Headline for one board from the shared LED detection.
+
+    Missing board and a board whose LEDs are all steady are results, not errors.
+    """
+    key = name.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+    aliases = {
+        "nano4k": BOARD_NANO4K,
+        "tangnano4k": BOARD_NANO4K,
+        "4k": BOARD_NANO4K,
+        "primer20k": BOARD_PRIMER20K,
+        "20k": BOARD_PRIMER20K,
+        "primer": BOARD_PRIMER20K,
+    }
+    board_name = aliases.get(key, name)
+    board = (result.get("boards") or {}).get(board_name)
+    if not board:
+        present = sorted((result.get("boards") or {}).keys())
+        return {
+            "board": board_name,
+            "frequency_hz": None,
+            "edge_frequency_hz": None,
+            "fft_frequency_hz": None,
+            "trusted_method": "untrusted",
+            "trusted_reason": f"{board_name} not in frame",
+            "status": f"{board_name} not in frame",
+            "confidence": 0.0,
+            "source": "blinking-led",
+            "n_leds": 0,
+            "n_blinking": 0,
+            "boards_present": present,
+        }
+    status = board.get("status") or (
+        "blinking" if board.get("n_blinking") else "board present but not blinking"
+    )
+    return {
+        "board": board_name,
+        "frequency_hz": board.get("frequency_hz"),
+        "edge_frequency_hz": board.get("edge_frequency_hz"),
+        "fft_frequency_hz": board.get("fft_frequency_hz"),
+        "trusted_method": board.get("trusted_method"),
+        "trusted_reason": board.get("trusted_reason"),
+        "status": status,
+        "confidence": board.get("confidence"),
+        "source": "blinking-led",
+        "n_leds": board.get("n_leds"),
+        "n_blinking": board.get("n_blinking"),
+        "n_steady": board.get("n_steady"),
+        "colors": board.get("colors"),
+        "target_led_id": board.get("target_led_id"),
+        "measure_roi": board.get("measure_roi"),
+        "roi": board.get("roi"),
+    }
+
+
 def public_result(result: dict[str, Any]) -> dict[str, Any]:
     boards = {}
     for name, board in (result.get("boards") or {}).items():
@@ -1018,7 +1279,7 @@ def public_result(result: dict[str, Any]) -> dict[str, Any]:
         boards[name]["led_ids"] = [led["id"] for led in board.get("leds", [])]
     leds = []
     for led in result.get("leds") or []:
-        leds.append({k: v for k, v in led.items() if k not in {"x0", "y0"}})
+        leds.append({k: v for k, v in led.items() if k not in {"x0", "y0", "trace"}})
         leds[-1]["x0"] = led["x0"]
         leds[-1]["y0"] = led["y0"]
     return {
@@ -1040,6 +1301,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--annotate", help="write annotated JPEG")
     ap.add_argument("--json", help="write JSON result")
     ap.add_argument("--max-frames", type=int, default=180)
+    ap.add_argument("--skip-s", type=float, default=0.0, help="discard this many seconds at the start")
+    ap.add_argument("--plot-dir", help="write one chroma plot per blinking LED")
     args = ap.parse_args(argv)
     if args.jpeg:
         metrics = score_jpeg(Path(args.jpeg))
@@ -1066,7 +1329,18 @@ def main(argv: list[str] | None = None) -> int:
         print(text)
         return 0
     if args.video:
-        result, still = analyze_video_once(Path(args.video), max_frames=args.max_frames)
+        result, still = analyze_video_once(
+            Path(args.video), max_frames=args.max_frames, skip_s=args.skip_s
+        )
+        if args.plot_dir:
+            plot_dir = Path(args.plot_dir)
+            plot_dir.mkdir(parents=True, exist_ok=True)
+            for led in result.get("leds") or []:
+                trace = led.get("trace")
+                if led.get("state") != "blinking" or not trace:
+                    continue
+                board = led.get("board") or f"led{led['id']}"
+                write_trace_plot(trace, float(result.get("fps") or 30.0), led, plot_dir / f"{board}.png")
         pub = public_result(result)
         if args.annotate:
             annotate(still, result).save(args.annotate, quality=92)

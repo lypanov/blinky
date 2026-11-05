@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import functools
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+import traceback
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +27,7 @@ from typing import Any
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Image
+from mcp.server.mcpserver.exceptions import ToolError
 
 from controls import (
     TARGET_MEAN,
@@ -42,12 +45,19 @@ from controls import (
 _TOOLS_DIR = Path(__file__).resolve().parent.parent
 if str(_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(_TOOLS_DIR))
-from blink_trust import named_board, parse_roi_arg  # noqa: E402
+from blink_trust import named_board, parse_roi_arg, predicted_blink3  # noqa: E402
+
+_MCP_DIR = Path(__file__).resolve().parent
+if str(_MCP_DIR) not in sys.path:
+    sys.path.insert(0, str(_MCP_DIR))
+from device_resolve import env_default_device, logitech_video_device, resolve_device_name  # noqa: E402
 
 HOST_DEFAULT = "127.0.0.1"
 PORT_DEFAULT = 8766
 CAPTURE_DIR = Path(os.environ.get("WEBCAM_MCP_CAPTURE_DIR", Path.home() / "fpga" / "captures"))
-DEFAULT_DEVICE = os.environ.get("WEBCAM_MCP_DEVICE", "/dev/video0")
+# "auto" follows the Logitech 046d:0991. /dev/video0 is often the HDMI stick
+# after a USB reorder and has no auto_exposure control.
+DEFAULT_DEVICE = env_default_device()
 DEFAULT_SIZE = "640x480"
 LOCK_TIMEOUT_S = 120.0
 FFMPEG_TIMEOUT_S = 25.0
@@ -74,12 +84,13 @@ LED_PROFILE = {
     "exposure_dynamic_framerate": 0,
 }
 LED_GAIN_EXP = [
+    (16, 300),
+    (24, 300),
+    (32, 300),
     (48, 300),
     (64, 300),
-    (80, 300),
     (40, 300),
-    (96, 300),
-    (32, 300),
+    (80, 300),
     (112, 300),
 ]
 # gain 16 is only tried when cores are already too bright (see auto_adjust).
@@ -96,20 +107,20 @@ mcp = MCPServer(
     "webcam",
     instructions=(
         "Take still JPEGs from V4L2 cameras on this machine (Bee) and adjust "
-        "the Logitech QuickCam Pro for Notebooks (046d:0991, /dev/video0) with "
-        "real v4l2-ctl controls. capture_still returns the raw camera JPEG by "
-        "default; pass enhance=true only for an optional mild software eq. "
-        "If a frame looks washed out or too dark, call get_camera_controls, "
-        "then set_camera_controls (brightness/contrast/gain/auto_exposure/"
-        "exposure/white_balance) or auto_adjust. auto_adjust exposes for LED "
-        "blobs (colour, compactness, no bloom) — not mean luma — and sets "
-        "manual white balance/saturation so orange vs red is visible. "
-        "detect_leds records a short clip, classifies each LED as blinking or "
-        "steady, and assigns boards from geometry+colour (nano4k = two LEDs, "
-        "primer20k = three, orange vs red). measure_blink(roi=nano4k|primer20k) "
-        "uses those detected positions. roi may also be auto, top, bottom, or "
-        "x,y,w,h. Does not touch the FPGA or serial ports. Stills/clips go "
-        "under ~/fpga/captures/; blink runs under ~/fpga/blink-measure/."
+        "the Logitech QuickCam Pro for Notebooks (046d:0991). device='auto' "
+        "(the default) follows that camera by USB id — /dev/video0 may be the "
+        "HDMI stick after a replug and must not be assumed. capture_still "
+        "returns the raw camera JPEG by default; pass enhance=true only for an "
+        "optional mild software eq. If a frame looks washed out or too dark, "
+        "call get_camera_controls, then set_camera_controls or auto_adjust. "
+        "auto_adjust exposes for LED blobs (colour, compactness, no bloom). "
+        "detect_leds and measure_blink share one LED detector: blinking vs "
+        "steady, orange vs red, boards from the LED pattern (20K = three, "
+        "4K = two), never USB cords or fixed coordinates. The headline blink "
+        "rate is that blinking LED's own trace, not a padded-box FFT. "
+        "check_all records one clip and returns both boards. A board that is "
+        "in frame but dark is 'board present but not blinking', not an error. "
+        "Does not touch the FPGA or serial ports."
     ),
 )
 
@@ -149,6 +160,31 @@ def parse_device(device: str) -> str:
     if not Path(device).exists():
         raise FileNotFoundError(f"{device} does not exist. Call list_cameras.")
     return device
+
+
+def resolve_device(device: str | None) -> str:
+    """Default and 'auto' track the Logitech. An explicit node is used as given."""
+    return parse_device(resolve_device_name(device if device is not None else DEFAULT_DEVICE))
+
+
+def expose_errors(fn):
+    """Return the real traceback to the MCP client.
+
+    Any other exception is rewritten by the SDK as 'Error executing tool
+    <name>' and the traceback stays in the journal. ToolError text is delivered
+    to the caller.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ToolError:
+            raise
+        except Exception as exc:
+            raise ToolError(f"{exc}\n\n{traceback.format_exc()}") from exc
+
+    return wrapper
 
 
 def parse_size(resolution: str | None) -> tuple[int, int]:
@@ -314,8 +350,37 @@ def enhance_still(src: Path, dst: Path, vf: str) -> None:
         raise RuntimeError(f"ffmpeg wrote no enhanced image to {dst}")
 
 
+def _migrate_logitech_profile(device: str) -> None:
+    """Copy a saved QuickCam profile onto the node it enumerates as now.
+
+    Settings used to be stored under /dev/video0. After the HDMI stick took
+    that node, the webcam (now /dev/video2) would otherwise boot at driver
+    defaults and bloom the LEDs.
+    """
+    saved = load_saved_controls()
+    current = saved.get(device)
+    if isinstance(current, dict) and "auto_exposure" in current and isinstance(current.get("gain"), int):
+        return
+    donor = None
+    for vals in saved.values():
+        if isinstance(vals, dict) and "auto_exposure" in vals and isinstance(vals.get("gain"), int):
+            donor = dict(vals)
+            break
+    if donor:
+        save_device_controls(device, donor)
+
+
 def prepare_device(device: str) -> dict[str, int]:
     """Re-apply persisted v4l2 settings so they survive close/reopen and restarts."""
+    try:
+        names = {c["name"] for c in list_device_controls(device)}
+    except RuntimeError:
+        return {}
+    if "auto_exposure" in names:
+        try:
+            _migrate_logitech_profile(device)
+        except OSError:
+            pass
     try:
         return apply_saved_controls(device)
     except RuntimeError:
@@ -368,17 +433,32 @@ def merge_persist(device: str, applied: dict[str, int]) -> dict[str, int]:
 
 
 @mcp.tool()
+@expose_errors
 def list_cameras() -> list[dict[str, str]]:
     """List V4L2 /dev/videoN devices and their kernel names.
 
-    Does not open the camera. The Logitech QuickCam is usually /dev/video0
-    (a matching /dev/video1 is often a metadata node and will fail capture).
-    A later HDMI capture stick will appear as another named UVC device.
+    Does not open the camera. device='auto' selects the Logitech QuickCam
+    (046d:0991) by USB id. A second node with the same name is metadata.
+    The UGREEN HDMI stick is a different device and has no auto_exposure.
     """
-    return list_v4l_cameras()
+    logitech = logitech_video_device()
+    cameras = []
+    for cam in list_v4l_cameras():
+        name = cam.get("name") or ""
+        if logitech and cam["device"] == logitech:
+            role = "logitech"
+        elif "046d:0991" in name:
+            role = "logitech-metadata"
+        elif "UGREEN" in name or "15389" in name:
+            role = "hdmi"
+        else:
+            role = "other"
+        cameras.append({**cam, "role": role})
+    return cameras
 
 
 @mcp.tool()
+@expose_errors
 def get_camera_controls(device: str = DEFAULT_DEVICE) -> dict[str, Any]:
     """List current V4L2 controls, ranges, and driver defaults.
 
@@ -387,13 +467,14 @@ def get_camera_controls(device: str = DEFAULT_DEVICE) -> dict[str, Any]:
     (alias: white_balance), plus the other User/Camera controls this Logitech
     exposes. Inactive flags mean the auto counterpart is on.
     """
-    device = parse_device(device)
+    device = resolve_device(device)
     with camera_lock():
         prepare_device(device)
         return snapshot_controls(device)
 
 
 @mcp.tool()
+@expose_errors
 def set_camera_controls(
     device: str = DEFAULT_DEVICE,
     brightness: int | None = None,
@@ -418,7 +499,7 @@ def set_camera_controls(
     3=Aperture Priority. persist=true (default) writes ~/.local/state/webcam-mcp/
     so the next capture and service restart re-apply the same values.
     """
-    device = parse_device(device)
+    device = resolve_device(device)
     requested = {
         "brightness": brightness,
         "contrast": contrast,
@@ -450,13 +531,14 @@ def set_camera_controls(
 
 
 @mcp.tool()
+@expose_errors
 def reset_camera_controls(device: str = DEFAULT_DEVICE, persist: bool = True) -> dict[str, Any]:
     """Restore driver defaults for every control, then forget saved settings.
 
     On this Logitech that is typically brightness=128, contrast=32, gain=0,
     auto_exposure=3 (Aperture Priority), white_balance_automatic=1.
     """
-    device = parse_device(device)
+    device = resolve_device(device)
     with camera_lock():
         known = list_device_controls(device)
         defaults = driver_defaults(known)
@@ -474,6 +556,7 @@ def reset_camera_controls(device: str = DEFAULT_DEVICE, persist: bool = True) ->
 
 
 @mcp.tool()
+@expose_errors
 def capture_still(
     device: str = DEFAULT_DEVICE,
     resolution: str | None = None,
@@ -490,7 +573,7 @@ def capture_still(
     finishes. warmup_frames discards the first N frames (auto-exposure);
     0 matches tools/webcam_still.sh. Camera v4l2 settings persist across shots.
     """
-    device = parse_device(device)
+    device = resolve_device(device)
     width, height = parse_size(resolution)
     if warmup_frames < 0 or warmup_frames > 60:
         raise ValueError("warmup_frames must be 0..60")
@@ -504,6 +587,7 @@ def capture_still(
 
 
 @mcp.tool()
+@expose_errors
 def capture_burst(
     n: int = 3,
     interval_s: float = 0.5,
@@ -520,7 +604,7 @@ def capture_burst(
     n JPEGs are taken at interval_s. Each shot writes -raw.jpg; -enhanced.jpg
     only when enhance=true. The `path` field is the file returned to the model.
     """
-    device = parse_device(device)
+    device = resolve_device(device)
     width, height = parse_size(resolution)
     if n < 1 or n > 30:
         raise ValueError("n must be 1..30")
@@ -543,6 +627,7 @@ def capture_burst(
 
 
 @mcp.tool()
+@expose_errors
 def capture_video(
     duration: float = 10.0,
     device: str = DEFAULT_DEVICE,
@@ -558,7 +643,7 @@ def capture_video(
     current controls. measure_blink uses this recorder (or pass the returned
     path as measure_blink(video=...)).
     """
-    device = parse_device(device)
+    device = resolve_device(device)
     width, height = parse_size(resolution)
     if duration < 1 or duration > 90:
         raise ValueError("duration must be 1..90 seconds")
@@ -619,7 +704,15 @@ def resolve_detected_roi(board: str, detection: dict[str, Any]) -> str | None:
     return f"{int(roi['x'])},{int(roi['y'])},{int(roi['w'])},{int(roi['h'])}"
 
 
-def run_led_detect_video(video: Path, annotated: Path, json_path: Path) -> dict[str, Any]:
+def run_led_detect_video(
+    video: Path,
+    annotated: Path,
+    json_path: Path,
+    *,
+    max_frames: int = 240,
+    skip_s: float = 0.0,
+    plot_dir: Path | None = None,
+) -> dict[str, Any]:
     if not LED_DETECT_SCRIPT.is_file():
         raise RuntimeError(f"missing {LED_DETECT_SCRIPT}")
     annotated.parent.mkdir(parents=True, exist_ok=True)
@@ -630,8 +723,12 @@ def run_led_detect_video(video: Path, annotated: Path, json_path: Path) -> dict[
         "--video", str(video),
         "--annotate", str(annotated),
         "--json", str(json_path),
-        "--max-frames", "240",
+        "--max-frames", str(max_frames),
+        "--skip-s", str(skip_s),
     ]
+    if plot_dir is not None:
+        plot_dir.mkdir(parents=True, exist_ok=True)
+        cmd.extend(["--plot-dir", str(plot_dir)])
     try:
         proc = subprocess.run(
             cmd, check=True, capture_output=True, text=True, timeout=90.0
@@ -661,6 +758,7 @@ def _knob_snapshot(values: dict[str, int]) -> dict[str, int]:
 
 
 @mcp.tool()
+@expose_errors
 def auto_adjust(
     device: str = DEFAULT_DEVICE,
     resolution: str | None = None,
@@ -677,7 +775,7 @@ def auto_adjust(
     knobs. Returns before and after JPEGs.
     """
     del target_mean
-    device = parse_device(device)
+    device = resolve_device(device)
     width, height = parse_size(resolution)
     if warmup_frames < 0 or warmup_frames > 60:
         raise ValueError("warmup_frames must be 0..60")
@@ -855,6 +953,7 @@ def auto_adjust(
 
 
 @mcp.tool()
+@expose_errors
 def detect_leds(
     duration: float = 4.0,
     device: str = DEFAULT_DEVICE,
@@ -869,7 +968,7 @@ def detect_leds(
     (coordinates, colour, state, board) plus an annotated debug image.
     measure_blink(roi=nano4k|primer20k) uses the detected measure ROI.
     """
-    device = parse_device(device)
+    device = resolve_device(device)
     width, height = parse_size(resolution)
     if duration < 1 or duration > 20:
         raise ValueError("duration must be 1..20 seconds")
@@ -1101,6 +1200,18 @@ def analyze_blink_clip(
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("analyze_blink.py timed out") from exc
     except subprocess.CalledProcessError as exc:
+        json_path = outdir / "result.json"
+        # Exit 2 is "no blink", and result.json is still written. That is a
+        # measurement, not a crash — including a dark board.
+        if exc.returncode == 2 and json_path.is_file():
+            result = json.loads(json_path.read_text(encoding="utf-8"))
+            result.setdefault("warnings", [])
+            note = "no blink frequency detected"
+            if note not in result["warnings"]:
+                result["warnings"].append(note)
+            if result.get("frequency_hz") is None and not result.get("status"):
+                result["status"] = "no blink frequency detected"
+            return result
         detail = (exc.stderr or exc.stdout or "").strip() or str(exc)
         raise RuntimeError(f"analyze_blink.py failed: {detail}") from exc
     json_path = outdir / "result.json"
@@ -1109,32 +1220,133 @@ def analyze_blink_clip(
     return json.loads(proc.stdout)
 
 
+def _measurement_from_detection(board_name: str, detection: dict[str, Any]) -> dict[str, Any]:
+    """Read the shared detector's headline. Does not re-meter a padded box."""
+    board = (detection.get("boards") or {}).get(board_name)
+    if not board:
+        present = sorted((detection.get("boards") or {}).keys())
+        return {
+            "board": board_name,
+            "frequency_hz": None,
+            "edge_frequency_hz": None,
+            "fft_frequency_hz": None,
+            "trusted_method": "untrusted",
+            "trusted_reason": f"{board_name} not in frame",
+            "status": f"{board_name} not in frame",
+            "confidence": 0.0,
+            "source": "blinking-led",
+            "n_leds": 0,
+            "n_blinking": 0,
+            "boards_present": present,
+            "assign_reason": detection.get("assign_reason"),
+        }
+    status = board.get("status") or (
+        "blinking" if board.get("n_blinking") else "board present but not blinking"
+    )
+    return {
+        "board": board_name,
+        "frequency_hz": board.get("frequency_hz"),
+        "edge_frequency_hz": board.get("edge_frequency_hz"),
+        "fft_frequency_hz": board.get("fft_frequency_hz"),
+        "trusted_method": board.get("trusted_method") or "untrusted",
+        "trusted_reason": board.get("trusted_reason") or status,
+        "status": status,
+        "confidence": board.get("confidence") if board.get("confidence") is not None else 0.0,
+        "source": "blinking-led",
+        "n_leds": board.get("n_leds"),
+        "n_blinking": board.get("n_blinking"),
+        "n_steady": board.get("n_steady"),
+        "colors": board.get("colors"),
+        "target_led_id": board.get("target_led_id"),
+        "measure_roi": board.get("measure_roi"),
+        "roi": board.get("measure_roi") or board.get("roi"),
+        "assign_reason": detection.get("assign_reason"),
+    }
+
+
+def _summarize_blink(result: dict[str, Any], *, board: str | None, roi: str | None, clip: Path, rec, detection, annotated, timings: dict[str, float]) -> tuple[str, list]:
+    pred = predicted_blink3()["frequency_hz"]
+    freq = result.get("frequency_hz")
+    err = None
+    if isinstance(freq, (int, float)) and pred:
+        err = round(100.0 * (float(freq) - float(pred)) / float(pred), 2)
+    summary = {
+        "frequency_hz": freq,
+        "edge_frequency_hz": result.get("edge_frequency_hz"),
+        "fft_frequency_hz": result.get("fft_frequency_hz"),
+        "trusted_method": result.get("trusted_method"),
+        "trusted_reason": result.get("trusted_reason"),
+        "status": result.get("status"),
+        "confidence": result.get("confidence"),
+        "source": result.get("source") or "blinking-led",
+        "predicted_blink3_hz": pred,
+        "error_pct_vs_blink3": err,
+        "roi": result.get("roi"),
+        "roi_requested": roi,
+        "board": board,
+        "n_leds": result.get("n_leds"),
+        "n_blinking": result.get("n_blinking"),
+        "n_steady": result.get("n_steady"),
+        "colors": result.get("colors"),
+        "leds": None if detection is None else {
+            "assign_reason": detection.get("assign_reason"),
+            "boards": detection.get("boards"),
+            "leds": detection.get("leds"),
+            "annotated": str(annotated) if annotated else None,
+        },
+        "fps": (detection or {}).get("fps") or result.get("fps"),
+        "warnings": result.get("warnings"),
+        "paths": result.get("paths"),
+        "video": str(clip),
+        "capture": rec,
+        "timings_s": timings,
+    }
+    status = result.get("status") or result.get("trusted_method")
+    text = (
+        f"measure_blink status={status} {freq} Hz "
+        f"method={result.get('trusted_method')} source={summary['source']} "
+        f"board={board} edge={result.get('edge_frequency_hz')} "
+        f"fft={result.get('fft_frequency_hz')}\n"
+        + json.dumps(summary, indent=2)
+    )
+    plot = Path((result.get("paths") or {}).get("plot") or "")
+    roi_png = Path((result.get("paths") or {}).get("roi_frame") or "")
+    out: list = [text]
+    if annotated is not None and annotated.is_file():
+        out.append(Image(path=annotated))
+    if plot.is_file():
+        out.append(Image(path=plot))
+    if roi_png.is_file():
+        out.append(Image(path=roi_png))
+    return text, out
+
+
 @mcp.tool()
+@expose_errors
 def measure_blink(
-    duration: float = 25.0,
-    warmup: float = 8.0,
+    duration: float = 10.0,
+    warmup: float = 0.5,
     roi: str | None = None,
     device: str = DEFAULT_DEVICE,
     resolution: str | None = None,
     fps: int = 30,
     video: str | None = None,
 ) -> list:
-    """Measure blink rate from capture_video (edge/threshold AND FFT).
+    """Measure blink rate. Named boards use the shared LED detector.
 
-    Records with the same continuous ffmpeg v4l2 session as capture_video
-    (camera held open, AE frozen like tools/measure_blink.sh — not a burst of
-    stills). Or pass video= to a clip path capture_video already returned.
-    Returns both frequencies, which method is trusted (edge when it agrees
-    with FFT; untrusted when they disagree — FFT leakage from the other
-    board is not silently adopted). JSON path, and brightness.png + roi.png.
-    duration/warmup are seconds (defaults 25 / 8). roi: auto, full, top,
-    bottom, nano4k, primer20k, or x,y,w,h. nano4k/primer20k run LED
-    detection on the clip and meter that board's blinking LED only (never a
-    steady LED; ROI is clipped away from the other board). Falls back to
-    top/bottom halves only if the board itself is missing. Does not program
-    the FPGA. tools/measure_blink.sh still exists.
+    nano4k / primer20k: the headline Hz is the classified blinking LED's own
+    chroma trace (edge period when it agrees with that LED's blink-band FFT).
+    A padded-box mean is not measured; it can lock onto slow drift (~0.18 Hz)
+    while the LED itself is ~1 Hz. If the board is in frame but no LED is
+    blinking, the result is status 'board present but not blinking' — not an
+    exception. If the board is missing, status is '<board> not in frame'.
+
+    roi auto / full / top / bottom / x,y,w,h still runs tools/analyze_blink.py
+    (the script is kept). duration/warmup default to 10 / 0.5 seconds so one
+    board is one short clip. Does not program the FPGA.
     """
-    device = parse_device(device)
+    started = time.perf_counter()
+    device = resolve_device(device)
     width, height = parse_size(resolution)
     if duration < 2 or duration > 60:
         raise ValueError("duration must be 2..60 seconds")
@@ -1148,10 +1360,12 @@ def measure_blink(
     outdir = BLINK_DIR / f"{stamp}-mcp"
     outdir.mkdir(parents=True, exist_ok=True)
     rec: dict[str, Any] | None = None
+    record_s = 0.0
     if video:
         clip = parse_video_path(video)
     else:
         dest = outdir / "clip.mkv"
+        t_rec = time.perf_counter()
         with camera_lock():
             prepare_device(device)
             rec = record_continuous_clip(
@@ -1160,89 +1374,151 @@ def measure_blink(
                 width,
                 height,
                 fps,
-                warmup + duration + 2.0,
+                warmup + duration,
                 lock_exposure=True,
             )
+        record_s = time.perf_counter() - t_rec
         clip = Path(rec["path"])
     detection: dict[str, Any] | None = None
-    analyze_roi = roi
     annotated: Path | None = None
-    result: dict[str, Any] | None = None
+    t_an = time.perf_counter()
     if board:
         annotated = outdir / "leds-annotated.jpg"
         det_json = outdir / "leds.json"
-        detection = run_led_detect_video(clip, annotated, det_json)
+        detection = run_led_detect_video(
+            clip,
+            annotated,
+            det_json,
+            max_frames=480,
+            skip_s=warmup,
+            plot_dir=outdir,
+        )
         save_led_cache(detection)
-        xywh = resolve_detected_roi(board, detection)
-        if xywh:
-            analyze_roi = xywh
-        elif (detection.get("boards") or {}).get(board):
-            result = {
-                "frequency_hz": None,
-                "edge_frequency_hz": None,
-                "fft_frequency_hz": None,
-                "trusted_method": "untrusted",
-                "trusted_reason": f"no blinking LED found on {board}",
-                "confidence": 0.0,
-                "warnings": [f"no blinking LED found on {board}; not metering a steady LED"],
-                "paths": {},
-            }
-    delivered = None if rec is None else rec.get("delivered_fps")
-    if result is None:
-        result = analyze_blink_clip(clip, outdir, warmup, analyze_roi, fps=delivered)
-    plot = Path(result.get("paths", {}).get("plot") or (outdir / "brightness.png"))
-    roi_png = Path(result.get("paths", {}).get("roi_frame") or (outdir / "roi.png"))
-    edge = result.get("edge_frequency_hz")
-    fft = result.get("fft_frequency_hz")
-    trusted = result.get("trusted_method")
-    freq = result.get("frequency_hz")
-    pred = (result.get("predicted_blink3") or {}).get("frequency_hz")
-    summary = {
-        "frequency_hz": freq,
-        "edge_frequency_hz": edge,
-        "fft_frequency_hz": fft,
-        "fft_snr": result.get("fft_snr"),
-        "trusted_method": trusted,
-        "trusted_reason": result.get("trusted_reason"),
-        "confidence": result.get("confidence"),
-        "predicted_blink3_hz": pred,
-        "error_pct_vs_blink3": result.get("error_pct_vs_blink3"),
-        "roi": result.get("roi"),
-        "roi_requested": roi,
-        "board": board,
-        "detected_roi": analyze_roi if board else None,
-        "leds": None if detection is None else {
-            "assign_reason": detection.get("assign_reason"),
-            "boards": detection.get("boards"),
-            "leds": detection.get("leds"),
-            "annotated": str(annotated) if annotated else None,
-        },
-        "duration_s": result.get("duration_s"),
-        "fps": result.get("fps"),
-        "warnings": result.get("warnings"),
-        "paths": result.get("paths"),
-        "video": str(clip),
-        "capture": rec,
+        result = _measurement_from_detection(board, detection)
+        plot = outdir / f"{board}.png"
+        result["paths"] = {
+            "json": str(outdir / "result.json"),
+            "plot": str(plot),
+            "annotated": str(annotated),
+        }
+        (outdir / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    else:
+        delivered = None if rec is None else rec.get("delivered_fps")
+        result = analyze_blink_clip(clip, outdir, warmup, roi, fps=delivered)
+        if result.get("frequency_hz") is None and not result.get("status"):
+            result["status"] = "no blink frequency detected"
+    analyze_s = time.perf_counter() - t_an
+    timings = {
+        "record_s": round(record_s, 3),
+        "analyze_s": round(analyze_s, 3),
+        "total_s": round(time.perf_counter() - started, 3),
     }
-    text = (
-        f"measure_blink trusted={trusted} {freq} Hz "
-        f"(edge={edge} fft={fft}) predicted_blink3={pred} Hz "
-        f"board={board} roi={analyze_roi}\n"
-        + json.dumps(summary, indent=2)
+    _text, out = _summarize_blink(
+        result,
+        board=board,
+        roi=roi,
+        clip=clip,
+        rec=rec,
+        detection=detection,
+        annotated=annotated,
+        timings=timings,
     )
+    return out
+
+
+@mcp.tool()
+@expose_errors
+def check_all(
+    duration: float = 10.0,
+    device: str = DEFAULT_DEVICE,
+    resolution: str | None = None,
+    fps: int = 30,
+) -> list:
+    """One clip, both boards, from the same LED detection measure_blink uses.
+
+    Records once (exposure locked), finds every LED, and returns each board's
+    rate from its classified blinking LED. A steady board is reported as
+    'board present but not blinking'. Wall time is the recording plus one
+    analysis, not two separate measure_blink calls. Does not program the FPGA.
+    """
+    started = time.perf_counter()
+    device = resolve_device(device)
+    width, height = parse_size(resolution)
+    if duration < 4 or duration > 30:
+        raise ValueError("duration must be 4..30 seconds")
+    if fps < 5 or fps > 60:
+        raise ValueError("fps must be 5..60")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    outdir = BLINK_DIR / f"{stamp}-check"
+    outdir.mkdir(parents=True, exist_ok=True)
+    dest = outdir / "clip.mkv"
+    t_rec = time.perf_counter()
+    with camera_lock():
+        prepare_device(device)
+        rec = record_continuous_clip(
+            device, dest, width, height, fps, duration + 0.4, lock_exposure=True
+        )
+    record_s = time.perf_counter() - t_rec
+    annotated = outdir / "annotated.jpg"
+    det_json = outdir / "leds.json"
+    t_an = time.perf_counter()
+    detection = run_led_detect_video(
+        Path(rec["path"]),
+        annotated,
+        det_json,
+        max_frames=480,
+        skip_s=0.3,
+        plot_dir=outdir,
+    )
+    save_led_cache(detection)
+    analyze_s = time.perf_counter() - t_an
+    boards_out = {
+        name: _measurement_from_detection(name, detection)
+        for name in ("primer20k", "nano4k")
+    }
+    leds = detection.get("leds") or []
+    n_blink = sum(1 for led in leds if led.get("state") == "blinking")
+    n_steady = sum(1 for led in leds if led.get("state") == "steady")
+    timings = {
+        "record_s": round(record_s, 3),
+        "analyze_s": round(analyze_s, 3),
+        "total_s": round(time.perf_counter() - started, 3),
+    }
+    summary = {
+        "n_leds": len(leds),
+        "n_blinking": n_blink,
+        "n_steady": n_steady,
+        "assign_reason": detection.get("assign_reason"),
+        "fps": detection.get("fps"),
+        "boards": boards_out,
+        "leds": leds,
+        "timings_s": timings,
+        "capture": rec,
+        "annotated": str(annotated),
+        "video": rec["path"],
+        "source": "blinking-led",
+        "device": device,
+    }
+    (outdir / "check.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    parts = [f"check_all {timings['total_s']:.2f}s n_leds={len(leds)} blink={n_blink} steady={n_steady}"]
+    for name in ("primer20k", "nano4k"):
+        item = boards_out[name]
+        parts.append(f"{name}={item.get('frequency_hz')} Hz ({item.get('status')})")
+    text = " ".join(parts) + "\n" + json.dumps(summary, indent=2)
     out: list = [text]
-    if annotated is not None and annotated.is_file():
+    if annotated.is_file():
         out.append(Image(path=annotated))
-    if plot.is_file():
-        out.append(Image(path=plot))
-    if roi_png.is_file():
-        out.append(Image(path=roi_png))
+    for name in ("primer20k", "nano4k"):
+        plot = outdir / f"{name}.png"
+        if plot.is_file():
+            out.append(Image(path=plot))
     return out
 
 
 def _warmup_saved_controls() -> None:
-    device = os.environ.get("WEBCAM_MCP_DEVICE", DEFAULT_DEVICE)
-    if not DEVICE_RE.match(device) or not Path(device).exists():
+    try:
+        device = resolve_device(os.environ.get("WEBCAM_MCP_DEVICE", DEFAULT_DEVICE))
+    except (RuntimeError, ValueError, FileNotFoundError, OSError):
         return
     try:
         with camera_lock():
