@@ -49,6 +49,7 @@ class CPUMinimalWrapper(
     bridge.io.cpuWriteData := cpu.io.memWriteData
     bridge.io.cpuWrite := cpu.io.memWrite
     bridge.io.cpuRead := cpu.io.memRead
+    bridge.io.cpuByte := cpu.io.memByte
     cpu.io.memReadData := bridge.io.cpuReadData
     cpu.io.memStall := bridge.io.memStall
     if (useRealGowin) {
