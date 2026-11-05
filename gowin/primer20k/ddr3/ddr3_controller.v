@@ -42,9 +42,9 @@ module ddr3_controller
 `endif
     // Absolute write delay loaded after read calibration. Lane 0's odd
     // column comes back as the even one on the leading edge of the eye.
-    // 10 is the ALU place. The reader place's eye is 9; that build passes
-    // LANE0_STEP=9 and LANE1_STEP=9. LANE1_STEP=0 leaves lane 1 on the
-    // write-level result, which is the ALU place.
+    // 10 is the ALU place and the reader place that passed.
+    // LANE1_STEP=0 leaves lane 1 on the write-level result, which is
+    // the ALU place. The fetch route's eye is 9; that build passes 9.
     parameter [7:0] LANE0_STEP = 8'd10,
     parameter [7:0] LANE1_STEP = 8'd0
 )
