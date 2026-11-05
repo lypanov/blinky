@@ -477,3 +477,20 @@ one-column miss already in `sim/run_ddr3_standin.sh`. A line from
 this sweep will not match. If a cold prologue at one pair still
 prints one of these sums, that single UART is a target. The mixed
 table is not.
+
+## Cold prologue at step 10 (stop)
+
+Both lanes were programmed to step 10 after a controller reset.
+`DDR3_nRESET` falls with that reset, so this prologue did not read
+the previous image's bytes. The step was loaded while the CPU was
+still reset. The line repeats:
+
+```
+CH1390 00000000F0 DFAADFAA 000003F9 25A5A5A5 000003EF 00000000 20532036 000A 000A
+```
+
+R5 is `DFAADFAA`, not `FFFFFFFF`, `AAAAAAAA`, or `55555554`. Mask
+`F0` is the four single-word checks. R9 is `20532036`. The CPU is in
+the prologue hold. No further pair was run. No webcam. The locked
+rate was not changed. The Dock was put back on
+`ddr3fixup_n262144.fs`. Steps 4–8 were not started.
