@@ -1,0 +1,37 @@
+{
+  "board": "nano4k",
+  "frequency_hz": 0.5,
+  "edge_frequency_hz": 0.5,
+  "fft_frequency_hz": 0.5,
+  "trusted_method": "edge",
+  "trusted_reason": "blinking LED edge period is regular",
+  "status": "blinking",
+  "confidence": 1.0,
+  "source": "blinking-led",
+  "n_leds": 2,
+  "n_blinking": 1,
+  "n_steady": 1,
+  "colors": [
+    "red"
+  ],
+  "target_led_id": 0,
+  "measure_roi": {
+    "x": 220,
+    "y": 252,
+    "w": 44,
+    "h": 38
+  },
+  "roi": {
+    "x": 220,
+    "y": 252,
+    "w": 44,
+    "h": 38
+  },
+  "assign_reason": "upper=primer20k n=2 orange=0 lower=nano4k n=2 orange=0 cy=139/272",
+  "snr": 238.45,
+  "paths": {
+    "json": "/home/lypanov/fpga/blink-measure/20261105-034055-mcp/result.json",
+    "plot": "/home/lypanov/fpga/blink-measure/20261105-034055-mcp/nano4k.png",
+    "annotated": "/home/lypanov/fpga/blink-measure/20261105-034055-mcp/leds-annotated.jpg"
+  }
+}
