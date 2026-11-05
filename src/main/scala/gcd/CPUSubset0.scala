@@ -901,20 +901,22 @@ object CPUSubset0 {
     val pdchain = fpgaImage == "pdchain"
     val moddesc = fpgaImage == "moddesc"
     val files = fpgaImage == "files"
-    val hyper = fpgaImage == "hyperram" || fixup || rsc || fetchbl || pdchain || moddesc || files
+    val modules = fpgaImage == "modules"
+    val hyper = fpgaImage == "hyperram" || fixup || rsc || fetchbl || pdchain || moddesc || files || modules
     // 20 matches sim/build_fixup_imem.py. 32 matches sim/build_rsc_imem.py.
     // 34 matches sim/build_fetchbl_imem.py (those 32, plus the stored BL
     // and the link register). 37 matches sim/build_pdchain_imem.py.
     // 40 matches sim/build_moddesc_imem.py (those 37, plus the module
     // table, the procedure variable, and the BLR link).
-    // 40 matches sim/build_files_imem.py. The file compares reuse the
-    // step-6 link slot, so the tail does not grow. Extra tail bits
-    // missed timing and were not loaded.
+    // 40 matches sim/build_files_imem.py and sim/build_modules_imem.py.
+    // The file compares reuse the step-6 link slot, and Init's reserve
+    // compare is XOR-ed into that same store. Extra tail bits missed
+    // timing and were not loaded.
     // A mismatch leaves the LED dark, because a slot that is never stored
     // stays clear.
-    val extra = if (files) 40 else if (moddesc) 40 else if (pdchain) 37 else if (fetchbl) 34 else if (rsc) 32 else if (fixup) 20 else 0
+    val extra = if (modules || files || moddesc) 40 else if (pdchain) 37 else if (fetchbl) 34 else if (rsc) 32 else if (fixup) 20 else 0
     val (programInstructions, customMemoryImage) = fpgaImage match {
-      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" | "files" =>
+      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" | "files" | "modules" =>
         val imemArg = sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
         val imemFile = new File(imemArg)
         val imemPath =
@@ -927,7 +929,8 @@ object CPUSubset0 {
           )
         }
         val imageName =
-          if (files) "step-7 Files + HyperRAM"
+          if (modules) "step-8 Modules + HyperRAM"
+          else if (files) "step-7 Files + HyperRAM"
           else if (moddesc) "step-6 ModDesc + HyperRAM"
           else if (pdchain) "step-5 P/D chain + HyperRAM"
           else if (fetchbl) "step-4 stored BL + HyperRAM"
@@ -959,7 +962,7 @@ object CPUSubset0 {
         requireMemCheck = hyper,
         extraChecks = extra,
         fetchStored = fetchbl,
-        chainFix = pdchain || moddesc || files
+        chainFix = pdchain || moddesc || files || modules
       ),
       firtoolOpts = firtoolOpts
     )
@@ -973,7 +976,7 @@ object CPUSubset0 {
         memBackend = if (hyper) "hyperram" else "blockram",
         extraChecks = extra,
         fetchStored = fetchbl,
-        chainFix = pdchain || moddesc || files
+        chainFix = pdchain || moddesc || files || modules
       ),
       firtoolOpts = firtoolOpts
     )
@@ -987,7 +990,7 @@ object CPUSubset0 {
         memBackend = if (hyper) "hyperram" else "blockram",
         extraChecks = extra,
         fetchStored = fetchbl,
-        chainFix = pdchain || moddesc || files
+        chainFix = pdchain || moddesc || files || modules
       ),
       firtoolOpts = firtoolOpts
     )
