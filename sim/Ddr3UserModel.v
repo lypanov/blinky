@@ -37,6 +37,16 @@
 // sums and the sentinel together. This model still has only the whole
 // column. Offset 0 means every pin landed on the addressed column.
 //
+// The later step sweep (both lanes 6..16, then lane 1 held at its
+// write-level result 0x0A and at 9 and 0x0B) is not a set of offsets
+// either. Both lanes at step 10 are two of its rows, and those rows
+// disagree (R5 0C0D0D9D mask 70, and R5 54F854F7 mask F0). The sweep
+// leaves the array in place, so a miss keeps the previous trial's
+// bytes. Fresh-array and kept-array checks of a column shift, a
+// per-beat grab, a one-column pin slip, a BC4 beat remix, and a
+// per-byte bit map do not produce 54F854F7, AFF7AFF7, or 0C0D0D9D.
+// There is no plusarg for that table.
+//
 //   * offset 0 (programmed == center): the beat lands on the column.
 //   * offset +1: one step above the eye, toward the write-level edge.
 //     The even word of a BC4 group is written into both words, and the
