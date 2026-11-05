@@ -78,10 +78,13 @@ neither FPGA was programmed.
 
 ### Passing eye
 
-Step 10 is the passing write delay on both lanes. That is the forced
-`wstep_run` of the word images. Lane 1 defaults to 10 as well, which
-is "lane 1 matched". `HOLD` is on, and the read's last cycle reloads
-the write delay (`WLOADN`).
+`+ddr3_center` is the programmed step the data eye is centered on.
+The default is 10, which is the ALU place: the controller forces lane
+0's `wstep_run` to 10, and lane 1's write-level result landed on that
+same step. `HOLD` is on, and the read's last cycle reloads the write
+delay (`WLOADN`). The reader bitstream's place is not this one. Its
+center is 9, so the same force of 10 is one step above the eye. That
+case is `+ddr3_center=9`, below.
 
 | image | first edge | period | R5 | R9 | mask |
 | --- | --- | --- | --- | --- | --- |
@@ -107,8 +110,9 @@ with a wrong DM or a one-lane write as well. The cases below fail it.
 
 | plusarg | command-port effect |
 | --- | --- |
-| (none) | step 10, both lanes, `HOLD`, `WLOADN`, one BC4 beat |
-| `+ddr3_lane0=N` `+ddr3_lane1=N` | write delay for that lane. 10 lands on the addressed column. 9 is one beat early. 11 is one beat late. Any other N stores that lane's byte `N-10` columns away |
+| (none) | center 10, both lanes programmed to 10, `HOLD`, `WLOADN`, one BC4 beat. This is the ALU place |
+| `+ddr3_center=N` | programmed step the data eye is centered on. The reader place measured on the Dock is 9. The step register is a separate plusarg |
+| `+ddr3_lane0=N` `+ddr3_lane1=N` | programmed write delay for that lane. Offset `N - center` selects the beat. 0 lands on the addressed column. +1 is the even-word alias. -1 lets the odd word overwrite the group. Any other offset stores that lane's byte that many columns away |
 | `+ddr3_nohold` | the read FIFO is not reset |
 | `+ddr3_nowload` | no `WLOADN` reload after `HOLD` |
 | `+ddr3_dm_all` | `din` is written to all four beats of the group |
@@ -130,10 +134,12 @@ scanner overwrites R5, so these R5 values are checked on `ddr3rsc`.
 
 | case | PC | mask | R5 | R9 |
 | --- | --- | --- | --- | --- |
-| `+ddr3_lane0=9 +ddr3_lane1=9` | prologue hold | `F0` | `AAAAAAAA` | `55555536` |
-| `+ddr3_lane1=9` | prologue hold | `F0` | `AAFFAAFF` | `550054E1` |
-| `+ddr3_lane0=9` | prologue hold | `F0` | `FFAAFFAA` | `00550036` |
-| `+ddr3_lane0=11 +ddr3_lane1=11` | prologue hold | `F0` | `55555554` | `AAAAAA8C` |
+| `+ddr3_center=9` | prologue hold | `F0` | `AAAAAAAA` | `55555536` |
+| `+ddr3_center=9 +ddr3_lane0=9` | prologue hold | `F0` | `AAFFAAFF` | `550054E1` |
+| `+ddr3_lane0=11 +ddr3_lane1=11` | prologue hold | `F0` | `AAAAAAAA` | `55555536` |
+| `+ddr3_lane0=9 +ddr3_lane1=9` | prologue hold | `F0` | `55555554` | `AAAAAA8C` |
+| `+ddr3_lane1=9` | prologue hold | `F0` | `550054FF` | `AAFFAAE1` |
+| `+ddr3_lane0=9` | prologue hold | `F0` | `00550054` | `FFAAFF8C` |
 | `+ddr3_nohold` | prologue hold | `A0` | `AAAAAAAA` | `55555536` |
 | `+ddr3_nowload` | `0x1B44` | `FFFFFFF` | `FFFFFFBF` | `FFFFFFE1` |
 | `+ddr3_corrupt` | prologue hold | `0` | `0` | `0` |
@@ -142,28 +148,26 @@ scanner overwrites R5, so these R5 values are checked on `ddr3rsc`.
 | `+ddr3_dm_lane1` | prologue hold | `0` | `FF00FF00` | `E11EE100` |
 | `--break-slot 30` | `0x1B44` | `BFFFFFFFFF` | `0` | `FFFFFFE1` |
 
-Step 9 writes the even word of a BC4 group into both words of the
-group on that lane, and does not let the odd word replace it. An odd
-column then reads back the even column, which is the pattern sum
-`AAAAAAAA` and the complement sum `55555536`. An odd column that was
-stored on its own is kept: MT[1] at `0x14`, MT[2] at `0x18`, the
-alias word `0x11111111` at `0x114`, and the sentinel at `0x7F0`.
-Those four checks still pass, so the mask is `F0`. Lane 1 alone at
-step 9 leaves lane 0's pattern bytes at `FF` and lane 1's at `AA`
-(`AAFFAAFF`, complement `550054E1`, mask still `F0`).
+One step above the eye writes the even word of a BC4 group into both
+words of the group on that lane, and does not let the odd word
+replace it. An odd column then reads back the even column, which is
+the pattern sum `AAAAAAAA` and the complement sum `55555536`. An odd
+column that was stored on its own is kept: MT[1] at `0x14`, MT[2] at
+`0x18`, the alias word `0x11111111` at `0x114`, and the sentinel at
+`0x7F0`. Those four checks still pass, so the mask is `F0`. On the
+ALU place that step is programmed 11. On the reader place it is the
+forced step 10 (`+ddr3_center=9`).
 
-The UART row "lane 0 forced to 9, lane 1 left calibrated, R5
-`AAFFAAFF`" is this model's `+ddr3_lane1=9` with lane 0 left at 10.
-On that placement the board's good eye for lane 0 had moved to step
-9, and step 10 was the bad one. The model keeps step 10 as the good
-eye for both lanes, which is the eye the passing word images used.
-It does not copy that placement's step numbers, and it does not move
-the locked rate.
+`+ddr3_center=9 +ddr3_lane0=9` is the sweep that forced lane 0 to 9
+and left lane 1 where the place put it. Lane 0 is back in the eye
+(its bytes sum to `FF`) and lane 1 stays on the alias (`AA`), so R5
+is `AAFFAAFF` and R9 is `550054E1`. The mask is still `F0`.
 
-Step 11 writes the odd word over both words of the group. Both lanes
-at 11 give R5 `55555554` and R9 `AAAAAA8C` with mask `F0`. That is
-the other whole-beat edge. It is not the UART value `AAABB34B` from
-lane 0 forced to 11.
+One step below the eye writes the odd word over both words of the
+group. On the ALU place that is programmed step 9: R5 `55555554`,
+R9 `AAAAAA8C`, mask `F0`. The UART value `AAABB34B` from lane 0
+forced to 11 on the reader place is two steps above that place's
+eye. It is not this whole-beat result.
 
 `+ddr3_nohold` is a read alias. The writes land, and a column with
 `addr[1]` set returns the even column. The sums match, but the
@@ -180,9 +184,10 @@ CPU sits in the reader hold at `0x1B44` with the top 12 mask bits
 clear. R5 there is `FFFFFFBF`, the reader's own accumulator, not
 the prologue sum. The refresh pair does not clear the skew.
 
-Any other step stores that lane's byte `step-10` columns away.
-`+ddr3_lane1=12` leaves the `0x11` at column `0x30` and puts the
-`0x22` at `0x32`. The parked UART residuals `65FFFFFF` /
+Any other offset stores that lane's byte that many columns away.
+`+ddr3_lane1=12` on the default center leaves the `0x11` at column
+`0x30` and puts the `0x22` at `0x32`. The parked UART residuals
+`65FFFFFF` /
 `A9FFFFE1`, `AAABB34B`, `20AA38AA`, and `9AFF9AFF` are not
 reproduced. Those were sub-beat DLL eyes from one placement. The
 command-port model does not invent them.
@@ -239,6 +244,39 @@ CH1390 00000000F0 AAAAAAAA 000003F9 A5A5A5A5 000003EF 00000000 55555536 000D 000
 | raw wstep | | `000D` |
 
 The board at the model's passing step shows the signature the model
-only emits for both lanes at step 9. The reader never started. No
-webcam. The locked rate was not changed. The Dock was put back on
-`ddr3fixup_n262144.fs`. Steps 4–8 were not started.
+at `9f370e6` only emitted for both lanes at step 9. The reader never
+started. No webcam. The locked rate was not changed. The Dock was put
+back on `ddr3fixup_n262144.fs`. Steps 4–8 were not started.
+
+## Reader place
+
+The miss is which programmed step the data eye sits on, not a second
+write to `wstep_run`. The controller still forces lane 0 to 10 after
+read calibration and leaves lane 1 on the write-level result. On the
+ALU place that force is the eye: the accepted bitstream at
+`wstep_run` `000A` returns R5 `FFFFFFFF`. Write leveling there
+reported raw `wstep` `000C`. On the reader place leveling reported
+`000D`, one step higher, and the data eye moved the other way. Lane 0
+programmed to 9 came back correct on that place, and lane 0 left at
+the forced 10 aliased. Lane 1, which the RTL does not force, aliased
+with it. UART does not carry `wstep1`. The sums put lane 1 in the
+same beat as the forced step 10.
+
+`+ddr3_center` is that data eye. Default 10 is the ALU place, and the
+prologue, ALU, and reader images still pass there, at the same first
+edges and the same period. `+ddr3_center=9` is the reader bitstream
+as placed, with both lanes left at the beat step 10 names:
+
+| | `+ddr3_center=9` | Dock, `wstep_run` `000A` |
+| --- | --- | --- |
+| PC | prologue hold `0x1390`/`0x1394` | `0x1390` |
+| mask | `F0` | `00000000F0` |
+| R5 | `AAAAAAAA` | `AAAAAAAA` |
+| R9 | `55555536` | `55555536` |
+
+`+ddr3_center=9 +ddr3_lane0=9` is the sweep: lane 0 back in the eye,
+lane 1 still aliased, R5 `AAFFAAFF`, R9 `550054E1`, mask `F0`. One
+step above the eye is the even-word broadcast. On the ALU place that
+programmed step is 11. One step below is the odd-word overwrite. The
+locked rate was not changed. The board was not loaded for this model
+change.

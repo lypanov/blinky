@@ -18,20 +18,23 @@
 // has already merged a byte store into din. Both lanes have to agree on
 // the same beat or the merged byte does not come back.
 //
-// Write delay, named as the controller's WSTEP. 10 is the passing eye
-// for that lane (the forced wstep_run). The other lane defaults to 10
-// as well, which is "lane 1 matched".
+// Write delay is the controller's WSTEP, compared with +ddr3_center.
+// The controller forces lane 0 to step 10 after read calibration and
+// leaves lane 1 on its write-level result. On the ALU place that force
+// is the data eye, so the default center is 10 and lane 1 defaults to
+// the same step. On the reader place the data eye is programmed step 9:
+// the same force of 10 is one step above the eye. +ddr3_center=9 is that
+// place. It does not change the step the bitstream writes.
 //
-//   * step 10: the beat lands on the addressed column.
-//   * step 9: one beat early. The first word of a BC4 group is written
-//     into both words of the group, and the second word does not replace
-//     it. An odd column then reads back the even column on that lane.
-//     Both lanes at 9 is the odd-column pattern sum AAAAAAAA with the
-//     single-word checks still matching (mask F0). Lane 1 alone at 9
-//     leaves lane 0's sum bytes at FF and lane 1's at AA (AAFFAAFF).
-//   * step 11: one beat late. The second word of the group overwrites
-//     both words on that lane.
-//   * any other step: that lane's byte is stored (step-10) columns away.
+//   * offset 0 (programmed == center): the beat lands on the column.
+//   * offset +1: one step above the eye, toward the write-level edge.
+//     The even word of a BC4 group is written into both words, and the
+//     odd word does not replace it. An odd column then reads back the
+//     even column on that lane. Both lanes there is the pattern sum
+//     AAAAAAAA, and the single-word checks still match (mask F0).
+//   * offset -1: one step below the eye. The odd word overwrites both
+//     words of the group on that lane.
+//   * any other offset: that lane's byte is stored that many columns away.
 //
 // +ddr3_nohold turns off the read-FIFO reset. A column with addr[1] set
 // returns the even column, even when the write landed on the odd one.
@@ -77,29 +80,32 @@ module Ddr3UserModel (
   reg        wloadn_en;
   reg        write_skew;   // a read stopped the write clock and nothing reloaded it
   reg [1:0]  dm_mode;      // 0 one beat, 1 all four beats, 2 lane0 only, 3 lane1 only
-  integer    lane0_mode;   // 0 good, 1 early, 2 late, 3 shift
+  integer    lane0_mode;   // 0 good, 1 one above, 2 one below, 3 shift
   integer    lane1_mode;
   integer    lane0_sh;
   integer    lane1_sh;
+  integer    center;       // programmed step the data eye is centered on
   integer    i;
 
-  task automatic eye_from_step;
-    input integer step;
+  task automatic eye_from_offset;
+    input integer off;
     output integer mode;
     output integer sh;
     begin
-      if (step == 10) begin
+      if (off == 0) begin
         mode = 0;
         sh = 0;
-      end else if (step == 9) begin
+      end else if (off == 1) begin
+        // One step above the eye: even word fills the BC4 group.
         mode = 1;
         sh = 0;
-      end else if (step == 11) begin
+      end else if (off == -1) begin
+        // One step below the eye: odd word overwrites the group.
         mode = 2;
         sh = 0;
       end else begin
         mode = 3;
-        sh = step - 10;
+        sh = off;
       end
     end
   endtask
@@ -135,7 +141,7 @@ module Ddr3UserModel (
         if (mode == 0) begin
           put_byte(col, lane, bytev);
         end else if (mode == 1) begin
-          // Early eye: the even word fills both words; the odd word does not.
+          // One step above the eye: the even word fills both words.
           if ((col & 2) == 0) begin
             put_byte(col, lane, bytev);
             put_byte(partner, lane, bytev);
@@ -149,7 +155,7 @@ module Ddr3UserModel (
               put_byte(col, lane, bytev);
           end
         end else if (mode == 2) begin
-          // Late eye: the odd word overwrites both words of the group.
+          // One step below the eye: the odd word overwrites both words.
           put_byte(col, lane, bytev);
           if ((col & 2) != 0)
             put_byte(partner, lane, bytev);
@@ -219,14 +225,20 @@ module Ddr3UserModel (
       integer s0, s1;
       s0 = 10;
       s1 = 10;
+      center = 10;
       if (!$value$plusargs("ddr3_lane0=%d", s0))
         s0 = 10;
       if (!$value$plusargs("ddr3_lane1=%d", s1))
         s1 = 10;
-      eye_from_step(s0, lane0_mode, lane0_sh);
-      eye_from_step(s1, lane1_mode, lane1_sh);
-      $display("DDR3 model hold=%0d wloadn=%0d dm=%0d lane0=%0d(mode %0d sh %0d) lane1=%0d(mode %0d sh %0d) corrupt=%0d late=%0d",
-               hold_en, wloadn_en, dm_mode, s0, lane0_mode, lane0_sh, s1, lane1_mode, lane1_sh, corrupt, late);
+      if (!$value$plusargs("ddr3_center=%d", center))
+        center = 10;
+      eye_from_offset(s0 - center, lane0_mode, lane0_sh);
+      eye_from_offset(s1 - center, lane1_mode, lane1_sh);
+      $display("DDR3 model hold=%0d wloadn=%0d dm=%0d center=%0d lane0=%0d(off %0d mode %0d sh %0d) lane1=%0d(off %0d mode %0d sh %0d) corrupt=%0d late=%0d",
+               hold_en, wloadn_en, dm_mode, center,
+               s0, s0 - center, lane0_mode, lane0_sh,
+               s1, s1 - center, lane1_mode, lane1_sh,
+               corrupt, late);
     end
   end
 
