@@ -239,22 +239,24 @@ int main(int argc, char** argv) {
   const bool shift1 = has(argc, argv, "+ddr3_lane1=12");
   const bool corrupt = has(argc, argv, "+ddr3_corrupt");
   const bool place_fetch = has(argc, argv, "+ddr3_place_fetch");
-  const bool wlevel_eye = has(argc, argv, "+ddr3_wlevel_eye");
   const bool fetch_eye = has(argc, argv, "+ddr3_fetch_eye");
   const int center = plus_int(argc, argv, "ddr3_center", 10);
-  // Fetch route: absolute 9 and 10 are both one above the eye.
-  // Both lanes at edge-3 leaves lane 0 one below. fetch_eye is offset 0.
-  int off0 = plus_int(argc, argv, "ddr3_lane0", 10) - center;
-  int off1 = plus_int(argc, argv, "ddr3_lane1", 10) - center;
-  if (wlevel_eye) {
-    off0 = -1;
-    off1 = 0;
-  } else if (fetch_eye) {
-    off0 = 0;
-    off1 = 0;
-  } else if (place_fetch) {
-    off0 = 1;
-    off1 = 1;
+  const int s0 = plus_int(argc, argv, "ddr3_lane0", 10);
+  const int s1 = plus_int(argc, argv, "ddr3_lane1", 10);
+  // The Dock image's centers are lane 0 = 11 and lane 1 = 7.
+  // Absolute 9 and 10 on the earlier image are both offset +1.
+  // The lane numbers are read in both cases.
+  int c0 = center;
+  int c1 = center;
+  if (fetch_eye) {
+    c0 = 11;
+    c1 = 7;
+  }
+  int off0 = s0 - c0;
+  int off1 = s1 - c1;
+  if (place_fetch && !fetch_eye) {
+    off0 = (s0 == 9 || s0 == 10) ? 1 : (s0 - 10);
+    off1 = (s1 == 9 || s1 == 10) ? 1 : (s1 - 10);
   }
 
   if (pin_set) {
@@ -331,6 +333,14 @@ int main(int argc, char** argv) {
   } else if (off0 == -1 && off1 == 0) {
     write_pair();
     check_pair(0x2255, 0x4477, 0x6655, 0x8877);
+    byte_walk(false);
+  } else if (off0 == -2 && off1 == -2) {
+    // place_fetch reads the step. Code 8 is two below center 10.
+    // It is not the offset-+1 line that codes 9 and 10 share.
+    write_pair();
+    check_pair(0x6655, 0x8877, 0x0000, 0x0000);
+    expect_eq("shifted even", read_col(0x1FE), 0x2211);
+    expect_eq("shifted odd", read_col(0x1FF), 0x4433);
     byte_walk(false);
   } else if (off0 == 0 && off1 == 0) {
     write_pair();
