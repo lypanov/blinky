@@ -11,6 +11,7 @@
 #   FPGA_IMAGE=hyperram tools/gowin_build.sh     # Nano 4K HyperRAM data port + Blink3
 #   FPGA_IMAGE=fixup tools/gowin_build.sh        # HyperRAM plus the step-2 ALU prologue
 #   FPGA_IMAGE=rsc tools/gowin_build.sh          # HyperRAM plus LDB/STB and the .rsc reader
+#   FPGA_IMAGE=fetchbl tools/gowin_build.sh      # HyperRAM plus one BL fetched back from a store
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,6 +30,9 @@ if [[ "$FPGA_IMAGE" == "fixup" && -z "${BLINK3_IMEM:-}" ]]; then
 fi
 if [[ "$FPGA_IMAGE" == "rsc" && -z "${BLINK3_IMEM:-}" ]]; then
   BLINK3_IMEM="$ROOT/sim/visualizer/imem/rsc.words"
+fi
+if [[ "$FPGA_IMAGE" == "fetchbl" && -z "${BLINK3_IMEM:-}" ]]; then
+  BLINK3_IMEM="$ROOT/sim/visualizer/imem/fetchbl.words"
 fi
 BLINK3_IMEM="${BLINK3_IMEM:-$ROOT/sim/visualizer/imem/blink3.words}"
 export FPGA_IMAGE BLINK3_IMEM
@@ -56,13 +60,22 @@ mhi_hex() {
   python3 -c "print(f'{(0x60000000 | (int($1) >> 16)):08x}')"
 }
 
-if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" ]]; then
+if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" ]]; then
   if [[ "$BOARD" != "nano4k" && "$BOARD" != "tangnano4k" ]]; then
     echo "error: HyperRAM images load the Tang Nano 4K only (BOARD=$BOARD)" >&2
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "rsc" ]]; then
+if [[ "$FPGA_IMAGE" == "fetchbl" ]]; then
+  echo "==> Fetch-BL IMEM (stored BL at 0x1F00, maxIterations=$BLINK3_MAXITER)"
+  python3 "$ROOT/sim/build_fetchbl_imem.py" \
+    --max-iter "$BLINK3_MAXITER" \
+    --pad 2048 \
+    --out "$BLINK3_IMEM"
+  EXPECT_MHI="$(mhi_hex "$BLINK3_MAXITER")"
+  GOWIN_OUT_NAME="fetchbl_n${BLINK3_MAXITER}"
+  GOWIN_TCL="$ROOT/gowin/gowin_build_hyperram.tcl"
+elif [[ "$FPGA_IMAGE" == "rsc" ]]; then
   echo "==> RSC IMEM (HyperRAM prologue, ALU, byte reader at 0x1800, maxIterations=$BLINK3_MAXITER)"
   python3 "$ROOT/sim/build_rsc_imem.py" \
     --max-iter "$BLINK3_MAXITER" \
@@ -130,7 +143,7 @@ else
   exit 1
 fi
 
-if [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" ]]; then
+if [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" ]]; then
   echo "==> Checking Blink3 trampoline / BL Toggle encodings"
   for word in f7000409 f7000410 f7ffffdc; do
     if grep -qi "$word" "$IMEM_HEX"; then
@@ -142,7 +155,7 @@ if [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" 
   done
 fi
 
-if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" ]]; then
+if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" ]]; then
   echo "==> Checking prologue entry MOV R0, 0x1200"
   if grep -qi '40001200' "$IMEM_HEX"; then
     echo "    found 40001200"
@@ -151,7 +164,7 @@ if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" =
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" ]]; then
+if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" ]]; then
   echo "==> Checking sign-extended MOV R1, -1"
   if grep -qi '5100ffff' "$IMEM_HEX"; then
     echo "    found 5100ffff"
@@ -160,7 +173,7 @@ if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" ]]; then
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "rsc" ]]; then
+if [[ "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" ]]; then
   echo "==> Checking LDB R1, [R3] and STB R1, [R3]"
   for word in 91300000 b1300000; do
     if grep -qi "$word" "$IMEM_HEX"; then
@@ -170,6 +183,23 @@ if [[ "$FPGA_IMAGE" == "rsc" ]]; then
       exit 1
     fi
   done
+fi
+if [[ "$FPGA_IMAGE" == "fetchbl" ]]; then
+  echo "==> Checking MHI of the BL prefix and the ROM hold at 0x1F00"
+  if grep -qi '6400f700' "$IMEM_HEX"; then
+    echo "    found 6400f700"
+  else
+    echo "error: 6400f700 not in $IMEM_HEX (FixP prefix missing)" >&2
+    exit 1
+  fi
+  # Word index 0x1F00/4 is line 1985. It must be the hold ADD, not the BL.
+  hold="$(sed -n '1985p' "$IMEM_HEX")"
+  if [[ "$hold" == "41180001" ]]; then
+    echo "    ROM 0x1F00 is the hold ($hold)"
+  else
+    echo "error: ROM 0x1F00 is $hold, expected the hold ADD 41180001" >&2
+    exit 1
+  fi
 fi
 
 echo "==> Gowin_SP instances (expect 2)"

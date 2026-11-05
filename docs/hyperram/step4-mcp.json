@@ -1,0 +1,264 @@
+{
+  "frequency_hz": 0.5,
+  "edge_frequency_hz": 0.5,
+  "fft_frequency_hz": 0.5,
+  "trusted_method": "edge",
+  "trusted_reason": "blinking LED edge period is regular",
+  "status": "blinking",
+  "confidence": 1.0,
+  "source": "blinking-led",
+  "predicted_blink3_hz": 3.4332275390625,
+  "error_pct_vs_blink3": -85.44,
+  "roi": {
+    "x": 221,
+    "y": 252,
+    "w": 45,
+    "h": 40
+  },
+  "roi_requested": "nano4k",
+  "board": "nano4k",
+  "n_leds": 2,
+  "n_blinking": 1,
+  "n_steady": 1,
+  "colors": [
+    "red"
+  ],
+  "leds": {
+    "assign_reason": "upper=primer20k n=2 orange=1 lower=nano4k n=2 orange=0 cy=131/272",
+    "boards": {
+      "primer20k": {
+        "name": "primer20k",
+        "cx": 329.2,
+        "cy": 130.9,
+        "roi": {
+          "x": 307,
+          "y": 94,
+          "w": 53,
+          "h": 65
+        },
+        "measure_roi": null,
+        "target_led_id": null,
+        "n_leds": 2,
+        "n_blinking": 0,
+        "n_steady": 2,
+        "colors": [
+          "orange",
+          "red"
+        ],
+        "orientation": {
+          "blinking_vs_centroid": [],
+          "steady_vs_centroid": [
+            "above",
+            "below"
+          ],
+          "span_x": 16.7,
+          "span_y": 26.9
+        },
+        "frequency_hz": null,
+        "edge_frequency_hz": null,
+        "fft_frequency_hz": null,
+        "trusted_method": "untrusted",
+        "trusted_reason": "board present but not blinking",
+        "status": "board present but not blinking",
+        "confidence": 0.0,
+        "source": "blinking-led",
+        "led_ids": [
+          1,
+          4
+        ]
+      },
+      "nano4k": {
+        "name": "nano4k",
+        "cx": 270.9,
+        "cy": 272.2,
+        "roi": {
+          "x": 221,
+          "y": 252,
+          "w": 93,
+          "h": 40
+        },
+        "measure_roi": {
+          "x": 221,
+          "y": 252,
+          "w": 45,
+          "h": 40
+        },
+        "target_led_id": 0,
+        "n_leds": 2,
+        "n_blinking": 1,
+        "n_steady": 1,
+        "colors": [
+          "red"
+        ],
+        "orientation": {
+          "blinking_vs_centroid": [
+            "left"
+          ],
+          "steady_vs_centroid": [
+            "right"
+          ],
+          "span_x": 49.8,
+          "span_y": 2.5
+        },
+        "frequency_hz": 0.5,
+        "edge_frequency_hz": 0.5,
+        "fft_frequency_hz": 0.5,
+        "trusted_method": "edge",
+        "trusted_reason": "blinking LED edge period is regular",
+        "status": "blinking",
+        "confidence": 1.0,
+        "source": "blinking-led",
+        "led_ids": [
+          0,
+          2
+        ]
+      }
+    },
+    "leds": [
+      {
+        "id": 0,
+        "x": 246.0,
+        "y": 271.0,
+        "w": 21,
+        "h": 16,
+        "area": 191,
+        "r": 231.0,
+        "g": 0.0,
+        "b": 0.0,
+        "hue": 0.0,
+        "sat": 1.0,
+        "color": "red",
+        "state": "blinking",
+        "frequency_hz": 0.5,
+        "edge_frequency_hz": 0.5,
+        "fft_frequency_hz": 0.5,
+        "trusted_method": "edge",
+        "trusted_reason": "blinking LED edge period is regular",
+        "confidence": 1.0,
+        "cv": 0.979,
+        "snr": 255.85,
+        "std": 115.2,
+        "mean_chroma": 68.2,
+        "source": "blinking-led",
+        "board": "nano4k",
+        "x0": 233,
+        "y0": 264
+      },
+      {
+        "id": 1,
+        "x": 337.6,
+        "y": 117.4,
+        "w": 24,
+        "h": 28,
+        "area": 378,
+        "r": 252.0,
+        "g": 29.0,
+        "b": 69.0,
+        "hue": 349.2,
+        "sat": 0.885,
+        "color": "red",
+        "state": "steady",
+        "frequency_hz": null,
+        "edge_frequency_hz": null,
+        "fft_frequency_hz": 2.188,
+        "trusted_method": "untrusted",
+        "trusted_reason": "no blink on this LED",
+        "confidence": 0.12,
+        "cv": 0.009,
+        "snr": 3.04,
+        "std": 0.0,
+        "mean_chroma": 94.83,
+        "source": "blinking-led",
+        "board": "primer20k",
+        "x0": 324,
+        "y0": 106
+      },
+      {
+        "id": 2,
+        "x": 295.8,
+        "y": 273.5,
+        "w": 10,
+        "h": 6,
+        "area": 32,
+        "r": 255.0,
+        "g": 4.0,
+        "b": 8.0,
+        "hue": 359.0,
+        "sat": 0.984,
+        "color": "red",
+        "state": "steady",
+        "frequency_hz": null,
+        "edge_frequency_hz": null,
+        "fft_frequency_hz": 0.5,
+        "trusted_method": "untrusted",
+        "trusted_reason": "no blink on this LED",
+        "confidence": 0.12,
+        "cv": 0.011,
+        "snr": 8.13,
+        "std": 0.0,
+        "mean_chroma": 75.29,
+        "source": "blinking-led",
+        "board": "nano4k",
+        "x0": 292,
+        "y0": 272
+      },
+      {
+        "id": 4,
+        "x": 320.9,
+        "y": 144.3,
+        "w": 4,
+        "h": 4,
+        "area": 9,
+        "r": 224.0,
+        "g": 137.0,
+        "b": 139.0,
+        "hue": 358.6,
+        "sat": 0.388,
+        "color": "orange",
+        "state": "steady",
+        "frequency_hz": null,
+        "edge_frequency_hz": null,
+        "fft_frequency_hz": 5.25,
+        "trusted_method": "untrusted",
+        "trusted_reason": "no blink on this LED",
+        "confidence": 0.12,
+        "cv": 0.02,
+        "snr": 3.05,
+        "std": 0.0,
+        "mean_chroma": 32.91,
+        "source": "blinking-led",
+        "board": "primer20k",
+        "x0": 319,
+        "y0": 143
+      }
+    ],
+    "annotated": "/home/lypanov/fpga/blink-measure/20261105-014837-mcp/leds-annotated.jpg"
+  },
+  "fps": 30.0,
+  "warnings": null,
+  "paths": {
+    "json": "/home/lypanov/fpga/blink-measure/20261105-014837-mcp/result.json",
+    "plot": "/home/lypanov/fpga/blink-measure/20261105-014837-mcp/nano4k.png",
+    "annotated": "/home/lypanov/fpga/blink-measure/20261105-014837-mcp/leds-annotated.jpg"
+  },
+  "video": "/home/lypanov/fpga/blink-measure/20261105-014837-mcp/clip.mkv",
+  "capture": {
+    "path": "/home/lypanov/fpga/blink-measure/20261105-014837-mcp/clip.mkv",
+    "log": "/home/lypanov/fpga/blink-measure/20261105-014837-mcp/clip.log",
+    "device": "/dev/video2",
+    "duration_s": 22.0,
+    "wall_s": 23.069,
+    "fps": 30,
+    "delivered_fps": 30.045,
+    "n_frames": 661,
+    "width": 640,
+    "height": 480,
+    "lock_exposure": true,
+    "bytes": 5530619
+  },
+  "timings_s": {
+    "record_s": 23.727,
+    "analyze_s": 1.401,
+    "total_s": 25.127
+  }
+}

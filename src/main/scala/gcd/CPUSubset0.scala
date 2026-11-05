@@ -17,6 +17,11 @@ class InstrRom(depth: Int, addrBits: Int, hexPath: String) extends BlackBox {
     val clk = Input(Clock())
     val addr = Input(UInt(addrBits.W))
     val data = Output(UInt(32.W))
+    // One-cycle load of the output register from a word that was read back
+    // out of HyperRAM. The decoder still sees this register. While overlayEn
+    // is low the read is the same posedge ROM read as before.
+    val overlayEn = Input(Bool())
+    val overlayData = Input(UInt(32.W))
   })
   private val romFile = new File("generated/InstrRom.v")
   romFile.getParentFile.mkdirs()
@@ -25,11 +30,18 @@ class InstrRom(depth: Int, addrBits: Int, hexPath: String) extends BlackBox {
     s"""module InstrRom(
        |  input clk,
        |  input [${addrBits - 1}:0] addr,
-       |  output reg [31:0] data
+       |  output reg [31:0] data,
+       |  input overlayEn,
+       |  input [31:0] overlayData
        |);
        |  reg [31:0] mem [0:${depth - 1}];
        |  initial $$readmemh("${hexPath}", mem);
-       |  always @(posedge clk) data <= mem[addr];
+       |  always @(posedge clk) begin
+       |    if (overlayEn)
+       |      data <= overlayData;
+       |    else
+       |      data <= mem[addr];
+       |  end
        |endmodule
        |""".stripMargin)
   romWriter.close()
@@ -39,7 +51,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
                  customMemoryImage: Option[Seq[String]] = None,
                  waitForStores: Boolean = false,
                  requireMemCheck: Boolean = false,
-                 extraChecks: Int = 0) extends Module {
+                 extraChecks: Int = 0,
+                 fetchStored: Boolean = false) extends Module {
   val io = IO(new Bundle {
     val r0 = Output(UInt(32.W))  // Output register R0 for testing
     val r1 = Output(UInt(32.W))  // Output register R1 for testing
@@ -164,6 +177,51 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   instructionRom.io.clk := clock
   instructionRom.io.addr := fetchWord
   val instruction = instructionRom.io.data
+
+  // Step 4. One PC (0x1F00) executes the word HyperRAM returns for that
+  // address, not the ROM word. The ROM word there is a hold. The fetch
+  // stalls, captures the load, and on the next clock the ROM's output
+  // register is loaded from that word. Every other PC keeps the ROM path.
+  val fetching = RegInit(false.B)
+  val inject = RegInit(false.B)
+  val doneFetch = RegInit(false.B)
+  val fetchedWord = Reg(UInt(32.W))
+  val patchPC = 0x1F00.U
+  val atPatch = pc === patchPC
+  val stallFetch = WireDefault(false.B)
+  val nextFetching = WireDefault(fetching)
+  val nextInject = WireDefault(inject)
+  val nextDone = WireDefault(doneFetch)
+  val nextWord = WireDefault(fetchedWord)
+  val startFetch = WireDefault(false.B)
+  if (fetchStored) {
+    stallFetch := atPatch && !doneFetch
+    when (stallFetch) {
+      when (!fetching && !inject) {
+        startFetch := true.B
+        nextFetching := true.B
+      } .elsewhen (fetching && !io.memStall) {
+        nextWord := io.memReadData
+        nextFetching := false.B
+        nextInject := true.B
+      } .elsewhen (inject) {
+        nextInject := false.B
+        nextDone := true.B
+      }
+    } .elsewhen (!atPatch) {
+      nextFetching := false.B
+      nextInject := false.B
+      nextDone := false.B
+    }
+    instructionRom.io.overlayEn := inject
+  } else {
+    instructionRom.io.overlayEn := false.B
+  }
+  instructionRom.io.overlayData := fetchedWord
+  fetching := nextFetching
+  inject := nextInject
+  doneFetch := nextDone
+  fetchedWord := nextWord
   
   // Instruction decode
   val format = instruction(31, 28)
@@ -224,7 +282,14 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // A pending load completes when memStall is low. Block RAM ties memStall
   // to 0, so this is still the original one-cycle load. Extra stall cycles
   // re-fetch the next instruction and do not execute it.
-  when (memoryAccessPending) {
+  when (stallFetch) {
+    // The ROM word at this PC is a hold. Do not execute it. The state
+    // machine above owns the HyperRAM read. pcNext stays on this PC.
+    when (startFetch) {
+      io.memAddr := patchPC
+      io.memRead := true.B
+    }
+  } .elsewhen (memoryAccessPending) {
     when (!io.memStall) {
       when (memoryIsLoad) {
         // RISC5 inbus1: LDB zero-extends the lane adr[1:0] selects.
@@ -359,10 +424,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
             if (extraChecks > 0) {
               val aluDelta = effectiveAddr - 0x800.U
               when (aluDelta < (extraChecks * 4).U) {
-                // Slot 31 is address 0x87C. 31+8 memory slots is 39, so the
-                // add has to keep the carry. A wrapping add would arm the
-                // wrong bit and a correct reader would stay dark.
-                val slot = aluDelta(6, 2) +& memSlots.U
+                // Bit 7 of the byte offset is slot 32 (address 0x880). A
+                // 5-bit index would wrap that store onto slot 0.
+                val slot = aluDelta(8, 2) +& memSlots.U
                 mask := mask | (1.U(totalChecks.W) << slot)
               }
             }
@@ -655,13 +719,15 @@ object CPUSubset0 {
     val fpgaImage = sys.env.getOrElse("FPGA_IMAGE", "blink3")
     val fixup = fpgaImage == "fixup"
     val rsc = fpgaImage == "rsc"
-    val hyper = fpgaImage == "hyperram" || fixup || rsc
-    // 20 matches sim/build_fixup_imem.py. 32 matches sim/build_rsc_imem.py
-    // (those 20, plus 12 byte and header compares). A mismatch leaves the
-    // LED dark, because a slot that is never stored stays clear.
-    val extra = if (rsc) 32 else if (fixup) 20 else 0
+    val fetchbl = fpgaImage == "fetchbl"
+    val hyper = fpgaImage == "hyperram" || fixup || rsc || fetchbl
+    // 20 matches sim/build_fixup_imem.py. 32 matches sim/build_rsc_imem.py.
+    // 34 matches sim/build_fetchbl_imem.py (those 32, plus the stored BL
+    // and the link register). A mismatch leaves the LED dark, because a
+    // slot that is never stored stays clear.
+    val extra = if (fetchbl) 34 else if (rsc) 32 else if (fixup) 20 else 0
     val (programInstructions, customMemoryImage) = fpgaImage match {
-      case "blink3" | "hyperram" | "fixup" | "rsc" =>
+      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" =>
         val imemArg = sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
         val imemFile = new File(imemArg)
         val imemPath =
@@ -674,7 +740,8 @@ object CPUSubset0 {
           )
         }
         val imageName =
-          if (rsc) "step-3 byte/.rsc reader + HyperRAM"
+          if (fetchbl) "step-4 stored BL + HyperRAM"
+          else if (rsc) "step-3 byte/.rsc reader + HyperRAM"
           else if (fixup) "fixup ALU + HyperRAM"
           else if (hyper) "HyperRAM prologue + Blink3"
           else "Blink3"
@@ -700,7 +767,8 @@ object CPUSubset0 {
         customMemoryImage = customMemoryImage,
         waitForStores = hyper,
         requireMemCheck = hyper,
-        extraChecks = extra
+        extraChecks = extra,
+        fetchStored = fetchbl
       ),
       firtoolOpts = firtoolOpts
     )
@@ -712,7 +780,8 @@ object CPUSubset0 {
         programInstructions = programInstructions,
         customMemoryImage = customMemoryImage,
         memBackend = if (hyper) "hyperram" else "blockram",
-        extraChecks = extra
+        extraChecks = extra,
+        fetchStored = fetchbl
       ),
       firtoolOpts = firtoolOpts
     )
@@ -724,7 +793,8 @@ object CPUSubset0 {
         programInstructions = programInstructions,
         customMemoryImage = customMemoryImage,
         memBackend = if (hyper) "hyperram" else "blockram",
-        extraChecks = extra
+        extraChecks = extra,
+        fetchStored = fetchbl
       ),
       firtoolOpts = firtoolOpts
     )
