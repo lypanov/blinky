@@ -34,14 +34,17 @@ if ! iverilog -g2012 -s tb_ddr3_phy -o "$OUT" \
   exit 1
 fi
 
-if ! stdbuf -oL -eL vvp "$OUT" >"$LOG" 2>&1; then
+# Private sparse-memory files. The model defaults to /tmp/%m, and a
+# second bench would share those files.
+mkdir -p /tmp/ddr3-phy-model
+if ! stdbuf -oL -eL vvp "$OUT" +model_data+/tmp/ddr3-phy-model >"$LOG" 2>&1; then
   echo "FAIL vvp" >&2
   tail -40 "$LOG" >&2
   exit 1
 fi
 
 # Show the bench lines. The Micron model stays in the log.
-grep -E '^(CALIB|READ |FAIL |PHY_|Entering |Write leveling|wstep=|All initialization)' "$LOG" || true
+grep -E '^(CALIB|READ |FAIL |PHY_|MEM |CMD |HIT |ALIAS |Entering |Write leveling|wstep=|All initialization)' "$LOG" || true
 
 fail=0
 if ! grep -q '^PHY_SCORE pass$' "$LOG"; then
