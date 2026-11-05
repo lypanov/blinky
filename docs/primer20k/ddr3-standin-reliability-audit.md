@@ -25,7 +25,7 @@ program the Dock was not running, or a program that had not been loaded.
 | Warm sweep (`351112b`) | `54F854F7`, `AFF7AFF7`, `0C0D0D9D`, and the same step 10 twice with two sums | Left unnamed. The array on the board kept the previous trial. This part of the record is honest. |
 | Cold step 10, first place (`f02ba4b`) | `DFAADFAA` / R9 `20532036` | `+ddr3_pin_even=20FF +ddr3_odd_clear=2`. While that mask is set, the step plusargs are ignored. |
 | Cold step 10, the place that passed (`09fd686`) | mask `FFFFFFFFFF`, R5 `00000000`, R9 `FFFFFFE1`, steps `000A` `000A` | Default center 10, both lanes 10, written down before the load. This is the one prediction that matched. |
-| Fetch, both lanes 10, then both lanes 9 (`878b767`, `05a8c61`) | `AAAAAAAA` both times, steps `000A` then `0009` | `+ddr3_place_fetch` forced offset +1 and ignored the lane numbers. The script's pass was both lanes at 9. The Dock at 9 was the same alias. |
+| Fetch, both lanes 10, then both lanes 9 (`878b767`, `05a8c61`) | `AAAAAAAA` both times, steps `000A` then `0009` | `+ddr3_place_fetch` set the center to 9, so lanes at 10 are offset +1 and lanes at 9 are the script's pass. The Dock at 9 was the same alias. Forcing offset +1 and ignoring the lane numbers came later, at `0cd9710`. |
 | Fetch pass image (`0cd9710`) | steps `0007` `000B`, R5 `00000000`, full mask, blink | `+ddr3_fetch_eye` with the lanes left at 10. In that Verilog the flag does not set a center. It only skips the place-fetch override. Center stays 10, so the green run is the ALU eye. `+ddr3_wlevel_eye` hardcoded offsets −1 and 0 and did not read the lane plusargs. |
 | Same image, flag fixed (`4dfd5d8`) | same UART, no reload | `+ddr3_fetch_eye` now sets centers 11 and 7, and the pass case passes both lane numbers. That matches the program already on the Dock. The model still has no write-level input. |
 | P/D chain, backoff 1 and 3 (`df7b130`) | steps `0007` `000B`, R5 `AAAAAAAA`, R9 `55555536`, mask `F0`, hold `0x1394` | `+ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7` is a pass. `+ddr3_place_fetch` at those lanes is R5 `FFAAFFAA`. |
@@ -164,6 +164,9 @@ every later step.
   from the steps in the image being built.
 - Treating a plusarg as modeled when the Verilog only uses it to
   disable another plusarg, as `+ddr3_fetch_eye` did at `0cd9710`.
+  `sim/tb_ddr3_eye.cpp` at that tip forced offset 0 for the flag.
+  The CPU witness calls `Ddr3UserModel.v`, which did not. The two
+  have to implement the same plusargs.
 - Adding an image-named center (`place_fetch`, `fetch_eye`, `pd_eye`)
   after the UART and moving the green blink onto steps that have not
   been loaded.
