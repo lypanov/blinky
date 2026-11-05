@@ -389,6 +389,12 @@ module blinky_top_ddr3 (
           || cpu_pc[15:0] == 16'h1C20 || cpu_pc[15:0] == 16'h1C24
           || cpu_pc[15:0] == 16'h1CD8 || cpu_pc[15:0] == 16'h1CDC)
       hold_seen <= 1'b1;
+`elsif DDR3_PD
+    // Reader spins, and the chain compare spin. The chain prologue
+    // at 0x1C00 is real code, not a hold.
+    else if (cpu_pc[15:0] == 16'h1B44 || cpu_pc[15:0] == 16'h1B48
+          || cpu_pc[15:0] == 16'h1D8C || cpu_pc[15:0] == 16'h1D90)
+      hold_seen <= 1'b1;
 `endif
   end
   reg [1:0] hold_sync = 2'b00;
@@ -465,6 +471,9 @@ module blinky_top_ddr3 (
     hex16({8'h00, wstep1_run}), " ",
 `elsif DDR3_FETCH
     // Stored-BL image: programmed lane 1, then programmed lane 0.
+    hex16({8'h00, wstep1_run}), " ",
+`elsif DDR3_PD
+    // P/D-chain image: programmed lane 1, then programmed lane 0.
     hex16({8'h00, wstep1_run}), " ",
 `else
     hex16({8'h00, unused_wstep}), " ",
@@ -664,6 +673,11 @@ module blinky_top_ddr3 (
   // Backoff 1 and backoff 3. On the build on the Dock the edges
   // were 000C and 000A, so the steps are 000B and 0007. 0006 is
   // not this image. An earlier build's lane 0 edge was 000D.
+  localparam [7:0] WLEVEL_BACKOFF = 8'd1;
+  localparam [7:0] WLEVEL_BACKOFF1 = 8'd3;
+`elsif DDR3_PD
+  // Same backoff as the accepted stored-BL image. A new place can
+  // move the write-level edge. Code 26 is not a step for this image.
   localparam [7:0] WLEVEL_BACKOFF = 8'd1;
   localparam [7:0] WLEVEL_BACKOFF1 = 8'd3;
 `else

@@ -19,7 +19,10 @@ class CPUSimTop(
     hyperFirstValid: Int = 12,
     extraChecks: Int = 0,
     fetchStored: Boolean = false,
-    chainFix: Boolean = false
+    chainFix: Boolean = false,
+    // When set, the DDR3 command port is an IO. The Micron ddr3.v bench
+    // drives it. The command-port stand-in is not instantiated.
+    externalPhy: Boolean = false
 ) extends Module {
   val hyper = memBackend == "hyperram"
   val ddr3 = memBackend == "ddr3"
@@ -31,11 +34,15 @@ class CPUSimTop(
     val r1 = Output(UInt(32.W))
     val r2 = Output(UInt(32.W))
     val r3 = Output(UInt(32.W))
+    val r5 = Output(UInt(32.W))
+    val r9 = Output(UInt(32.W))
+    val mask = Output(UInt(40.W))
     val memAddr = Output(UInt(32.W))
     val memWriteData = Output(UInt(32.W))
     val memWrite = Output(Bool())
     val memRead = Output(Bool())
   })
+  val phy = if (ddr3 && externalPhy) Some(IO(new Ddr3UserBundle)) else None
 
   val cpuClock = if (ddr3) {
     val half = Module(new CpuClock)
@@ -75,7 +82,7 @@ class CPUSimTop(
     bridge.io.hr.init_calib := model.io.init_calib
   } else if (ddr3) {
     val bridge = Module(new Ddr3Bridge)
-    val model = Module(new Ddr3UserModel)
+    val model = if (externalPhy) None else Some(Module(new Ddr3UserModel))
     val sync = withClock(cpuClock) { Module(new Ddr3CpuPortSync) }
     sync.io.inAddr := cpu.io.memAddr
     sync.io.inWriteData := cpu.io.memWriteData
@@ -92,17 +99,31 @@ class CPUSimTop(
     align.io.req := cpu.io.memRead || cpu.io.memWrite
     align.io.bridgeStall := bridge.io.memStall
     cpu.io.memStall := align.io.stall
-    model.io.clk := clock
-    model.io.rst_n := ~reset.asBool
-    model.io.rd := bridge.io.ddr.rd
-    model.io.wr := bridge.io.ddr.wr
-    model.io.refresh := bridge.io.ddr.refresh
-    model.io.addr := bridge.io.ddr.addr
-    model.io.din := bridge.io.ddr.din
-    bridge.io.ddr.dout := model.io.dout
-    bridge.io.ddr.data_ready := model.io.data_ready
-    bridge.io.ddr.busy := model.io.busy
-    bridge.io.ddr.calib := model.io.calib
+    if (externalPhy) {
+      val port = phy.get
+      port.rd := bridge.io.ddr.rd
+      port.wr := bridge.io.ddr.wr
+      port.refresh := bridge.io.ddr.refresh
+      port.addr := bridge.io.ddr.addr
+      port.din := bridge.io.ddr.din
+      bridge.io.ddr.dout := port.dout
+      bridge.io.ddr.data_ready := port.data_ready
+      bridge.io.ddr.busy := port.busy
+      bridge.io.ddr.calib := port.calib
+    } else {
+      val standin = model.get
+      standin.io.clk := clock
+      standin.io.rst_n := ~reset.asBool
+      standin.io.rd := bridge.io.ddr.rd
+      standin.io.wr := bridge.io.ddr.wr
+      standin.io.refresh := bridge.io.ddr.refresh
+      standin.io.addr := bridge.io.ddr.addr
+      standin.io.din := bridge.io.ddr.din
+      bridge.io.ddr.dout := standin.io.dout
+      bridge.io.ddr.data_ready := standin.io.data_ready
+      bridge.io.ddr.busy := standin.io.busy
+      bridge.io.ddr.calib := standin.io.calib
+    }
   } else {
     val memoryController = Module(new MemoryController(useRealGowin = false))
     memoryController.io.cpuAddr := cpu.io.memAddr
@@ -120,6 +141,9 @@ class CPUSimTop(
   io.r1 := cpu.io.r1
   io.r2 := cpu.io.r2
   io.r3 := cpu.io.r3
+  io.r5 := cpu.io.r5
+  io.r9 := cpu.io.r9
+  io.mask := cpu.io.dbgMask
   io.memAddr := cpu.io.memAddr
   io.memWriteData := cpu.io.memWriteData
   io.memWrite := cpu.io.memWrite
@@ -170,28 +194,33 @@ object CPUSimTop {
           s"$targetDir/CPUSimTopBlink3.v",
           "blink3"
         )
-      case "ddr3" | "ddr3fixup" | "ddr3rsc" | "ddr3fetch" =>
-        val extra = if (image == "ddr3fetch") 34 else if (image == "ddr3rsc") 32 else if (image == "ddr3fixup") 20 else 0
+      case "ddr3" | "ddr3fixup" | "ddr3rsc" | "ddr3fetch" | "ddr3pd" =>
+        val extra = if (image == "ddr3pd") 37 else if (image == "ddr3fetch") 34 else if (image == "ddr3rsc") 32 else if (image == "ddr3fixup") 20 else 0
         val fetchStored = image == "ddr3fetch" && sys.env.getOrElse("FETCH_STORED", "1") != "0"
+        val chainFix = image == "ddr3pd"
+        val externalPhy = sys.env.getOrElse("DDR3_PHY", "") == "micron"
         val imemPath = new File(
           projectRoot,
           sys.env.getOrElse(
             "BLINK3_IMEM",
-            if (image == "ddr3fetch") "sim/visualizer/imem/ddr3fetch.words"
+            if (image == "ddr3pd") "sim/visualizer/imem/ddr3pd.words"
+            else if (image == "ddr3fetch") "sim/visualizer/imem/ddr3fetch.words"
             else if (image == "ddr3rsc") "sim/visualizer/imem/ddr3rsc.words"
             else if (image == "ddr3fixup") "sim/visualizer/imem/ddr3fixup.words"
             else "sim/visualizer/imem/ddr3.words"
           )
         ).getAbsolutePath
         val words = loadInstructionsFromFile(imemPath)
-        println(s"CPUSimTop: $image IMEM ${words.length} words extraChecks=$extra fetchStored=$fetchStored from $imemPath")
+        println(s"CPUSimTop: $image IMEM ${words.length} words extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix externalPhy=$externalPhy from $imemPath")
         (
           () => new CPUSimTop(
             Seq.empty,
             customMemoryImage = Some(words),
             memBackend = "ddr3",
             extraChecks = extra,
-            fetchStored = fetchStored
+            fetchStored = fetchStored,
+            chainFix = chainFix,
+            externalPhy = externalPhy
           ),
           s"$targetDir/CPUSimTopDdr3.v",
           image
