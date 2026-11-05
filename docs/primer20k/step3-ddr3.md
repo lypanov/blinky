@@ -280,3 +280,54 @@ step above the eye is the even-word broadcast. On the ALU place that
 programmed step is 11. One step below is the odd-word overwrite. The
 locked rate was not changed. The board was not loaded for this model
 change.
+
+## Programmed step for the reader place
+
+The reader build (`DDR3_READER`) loads both lanes with absolute step
+9 after read calibration. Write leveling still searches on the live
+step; the force is the same point as the lane-0 force of 10, which
+is `rcalib_done`. Lane 1 is left on the write-level result for the
+prologue and the ALU. Those bitstreams are not rebuilt.
+
+`+ddr3_center=9 +ddr3_lane0=9 +ddr3_lane1=9` is that bitstream on the
+reader place. N=5 first edge 32902, period 3668. N=32 first edge
+48454, period 19220. R5 `00000000`, R9 `FFFFFFE1`, mask
+`FFFFFFFFFF`. The line is still `576*N+788`. N=262144 is 150995732
+controller clocks per edge, 0.640747 Hz, full blink 0.320373 Hz,
+93.641 frames at 30 fps. Locked before the SRAM load. A corrupt
+read or one wrong header byte leaves the pin dark. UART on a pass
+shows `wstep_run` `0009`, no `H`, and a PC in the Blink3 loop.
+`AAFFAAFF` would mean lane 1 did not land on the eye. `AAAAAAAA`
+with `wstep_run` `0009` would mean this place's center is no longer 9.
+
+## Fidelity check of the step-9 bitstream (stop)
+
+The reader netlist was rebuilt with `LANE0_STEP=9` and `LANE1_STEP=9`
+(synthesis printed those parameters). Setup and hold TNS were 0 on
+`pclk` and `cpu_clk`. The delay word was `60000004`. SRAM load was
+bus 003 device 078. After the boot line every UART line was:
+
+```
+CH1390 0000000050 AFF0B9CF 000003F9 A5A52505 000003EF 00007F60 450FEFF1 000D 0009
+```
+
+| | `+ddr3_center=9 +ddr3_lane0=9 +ddr3_lane1=9` | Dock |
+| --- | --- | --- |
+| PC | Blink3 loop | `0x1390` prologue hold |
+| mask | `FFFFFFFFFF` | `0000000050` |
+| R5 | `00000000` | `AFF0B9CF` |
+| R9 | `FFFFFFE1` | `450FEFF1` |
+| `wstep_run` | 9 | `0009` |
+| raw wstep | | `000D` |
+
+The force of 9 is in the bitstream: `wstep_run` is `0009`, and raw
+leveling is still `000D`, the same edge the previous reader place
+reported. The UART is not the pass, and it is not either miss the
+stand-in already emits for this center (`AAAAAAAA` / `F0` /
+`55555536` with both lanes at 10, or `AAFFAAFF` / `F0` / `550054E1`
+with only lane 0 at 9). Mask bit 4 (MT[1]) and bit 6 (the alias word)
+are the only prologue checks that stored zero. The sentinel beat
+sampled by the CPU is `2505`, with `A5A5` in the other beat. No
+plusarg in `sim/run_ddr3_standin.sh` prints R5 `AFF0B9CF` or R9
+`450FEFF1`. No webcam. The locked rate was not changed. The Dock was
+put back on `ddr3fixup_n262144.fs`. Steps 4–8 were not started.

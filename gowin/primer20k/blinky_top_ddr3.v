@@ -1,3 +1,4 @@
+`include "ddr3_eye.vh"
 // Primer 20K Dock wrapper. Fetch stays in block RAM. Loads and stores
 // go through the DDR3 controller that already initializes the H5TQ1G63
 // on this board. The CPU and the bridge run on pclk (387 MHz / 4).
@@ -22,6 +23,12 @@
 //   full blink = 0.320373 Hz, 93.641 frames at 30 fps
 // A corrupt read, or one wrong header byte, leaves the pin dark.
 // Locked before the SRAM load.
+//
+// DDR3_READER programs both write lanes to step 9 after read
+// calibration. That is the data eye of the reader place. The ALU
+// place stays on the default: lane 0 at step 10, lane 1 on the
+// write-level result. The delay loop is unchanged, so the rate above
+// is the reader prediction with +ddr3_center=9 and both lanes at 9.
 
 module blinky_top_ddr3 (
   input  Clock,
@@ -499,8 +506,16 @@ module blinky_top_ddr3 (
   );
 `endif
 
+`ifdef DDR3_READER
+  localparam [7:0] LANE0_STEP = 8'd9;
+  localparam [7:0] LANE1_STEP = 8'd9;
+`else
+  localparam [7:0] LANE0_STEP = 8'd10;
+  localparam [7:0] LANE1_STEP = 8'd0;
+`endif
   ddr3_controller #(
-    .ROW_WIDTH(13), .COL_WIDTH(10), .BANK_WIDTH(3)
+    .ROW_WIDTH(13), .COL_WIDTH(10), .BANK_WIDTH(3),
+    .LANE0_STEP(LANE0_STEP), .LANE1_STEP(LANE1_STEP)
   ) u_ddr3 (
     .DDR3_DQ      (DDR3_DQ),
     .DDR3_DQS     (DDR3_DQS),
