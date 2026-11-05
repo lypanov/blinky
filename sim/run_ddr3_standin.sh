@@ -42,7 +42,8 @@ EYE=sim/obj_dir/ddr3_eye/ddr3_eye
 run "$EYE"
 run "$EYE" +ddr3_center=9
 run "$EYE" +ddr3_center=9 +ddr3_lane0=9
-# Reader place with both lanes programmed onto the eye.
+# Programmed step equal to the center: every pin on the addressed column.
+# The LANE0_STEP=9 LANE1_STEP=9 Dock sample is not this hit.
 run "$EYE" +ddr3_center=9 +ddr3_lane0=9 +ddr3_lane1=9
 run "$EYE" +ddr3_lane0=9 +ddr3_lane1=9
 run "$EYE" +ddr3_lane1=9
@@ -124,7 +125,10 @@ CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
 CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
   --r5 aaffaaff --r9 550054e1 --mask f0 \
   +ddr3_center=9 +ddr3_lane0=9
-# Same place, both lanes programmed to the eye. This is the reader bitstream.
+# Programmed step equal to the center. Same whole-pin hit as the ALU
+# place: every DQ pin on the addressed column. Not the reader bitstream
+# that forces both lanes to 9. That Dock line is R5 AFF0B9CF / R9
+# 450FEFF1 / mask 50, and no column rule here produces it.
 CPU ddr3rsc --cycles 80000 --edges 2 --period 3668 --first 32902 \
   --r5 00000000 --r9 ffffffe1 --mask ffffffffff \
   +ddr3_center=9 +ddr3_lane0=9 +ddr3_lane1=9
@@ -163,6 +167,7 @@ CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
 write_hex sim/obj_dir/ddr3rsc_n32.words
 CPU ddr3rsc --cycles 120000 --edges 2 --period 19220 --first 48454 \
   --r9 ffffffe1 --mask ffffffffff
+# Same whole-pin hit at N=32. Not the step-9 Dock sample.
 CPU ddr3rsc --cycles 120000 --edges 2 --period 19220 --first 48454 \
   --r9 ffffffe1 --mask ffffffffff \
   +ddr3_center=9 +ddr3_lane0=9 +ddr3_lane1=9
