@@ -127,11 +127,13 @@ false green, and they agree on the later refit.
 
 This tip can print the P/D Dock alias.
 `+ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=7` and the same flag with
-lane 1 at 6 both expect R5 `AAAAAAAA`, R9 `55555536`, mask `F0`,
-hold `0x1390`. Both board loads were that plateau. The fetch image
-was loaded back and still passes. Step 5 stays with the stand-in
-until a loaded pair passes, or until a conclusion is sourced from
-the RTL rather than from the next integer below the bin.
+lane 1 at 6 both expect R5 `AAAAAAAA`, R9 `55555536`, mask `F0`.
+The Dock banner is `CH1394`. `--pc 1390` accepts any PC in
+`[0x1390, 0x1398)`, so that banner and `CH1390` both pass the same
+row. Both board loads were that plateau. The fetch image was loaded
+back and still passes. Step 5 stays with the stand-in until a loaded
+pair passes, or until a conclusion is sourced from the RTL rather
+than from the next integer below the bin.
 
 The flag has no offset 0. Lane 0 at 11 is forced to offset +1, which
 is the only code `step - 11` would have called 0. Lane 1 at 6 and at
@@ -159,13 +161,119 @@ the same backoff was the alias at edges `000C` and `000A`. Backoff
 rebuild so its programmed step stayed `000B`.
 
 The working tree on `cursor/ddr3-pdchain-e003`, not in `89fd0ae`,
-already names the next guess: centers 10 and 5, backoff 3 and 5,
-programmed steps `000A` and `0005` if the edges stay `000D` and
-`000A`. That is one code below a bin that was the alias at two
-adjacent codes. Both lanes at 10 and both lanes at 9 were that same
-guess on the fetch route, and the lower code was still `AAAAAAAA`.
-It is not a pass the Dock has run, and it is not an RTL difference
-between the images that were loaded.
+names the next guess in every copy of the story. Centers are 10 and
+5. `WLEVEL_BACKOFF` / `WLEVEL_BACKOFF1` are 3 and 5, which program
+steps `000A` and `0005` if the edges stay `000D` and `000A`. The eye
+harness has a row for that pair, and the CPU blink rows pass
+`+ddr3_pd_eye +ddr3_lane0=10 +ddr3_lane1=5` and expect the delay-loop
+pass. The top of `docs/primer20k/step5-ddr3.md` calls that pair the
+eye. The Dock section of the same file still says the constants were
+put back to backoff 1 and 3, no further step was loaded, and the
+fetch image is on the Dock. Lane 1 at 6 and at 7 were both the alias.
+One code below a two-code bin is the step-9 guess: both lanes at 10
+and both lanes at 9 were `AAAAAAAA`.
+
+## What the stand-in actually does
+
+`sim/Ddr3UserModel.v` is a user-port model. It stores two bytes per
+column, presents `dout` nine clocks after a read pulse, and drops
+`busy` on the tenth. A write or a refresh drops `busy` on the sixth.
+DM, the read-FIFO hold, and the WLOADN reload are separate plusargs
+(`+ddr3_dm_all`, `+ddr3_dm_lane0`, `+ddr3_dm_lane1`, `+ddr3_nohold`,
+`+ddr3_nowload`). Those change the command port. They do not depend
+on a UART. That part can be trusted the way the HyperRAM model is
+trusted: a CPU bug in the stores, the mask, or the period shows up
+before a load.
+
+The PHY is not in the model. The header says so. Alignment is
+`eye_from_offset` on `programmed step - center`:
+
+| offset | what the byte does |
+|---|---|
+| 0 | lands on the addressed column |
+| +1 | the even word of the BC4 group fills both words; the odd word does not replace it |
+| −1 | the odd word overwrites both words |
+| anything else | the byte is stored that many columns away |
+
+`+ddr3_pin_even` replaces that path. While the mask is set, the lane
+numbers are not applied. `+ddr3_fetch_split` is the same kind of
+replacement for one earlier UART (`DFFFDFFF`). A whole-column shift
+and a per-pin mask cannot both be the reason a later line matches.
+
+## Three copies, one story
+
+A green `sim/run_ddr3_standin.sh` means three files agree with each
+other.
+
+1. `Ddr3UserModel.v` computes the offset and shifts the bytes.
+2. `sim/tb_ddr3_eye.cpp` computes the offset again, picks the expected
+   halfwords from that number, and checks the Verilog. The eye binary's
+   top is the model, so this does run the shift. The expected pattern
+   is chosen by the C++ offset, not by a stored UART. Editing both
+   formulas in one change makes `eye pass` follow.
+3. `sim/tb_ddr3_cpu.cpp` checks R5, R9, the mask, and the PC against
+   constants in the script. The script's author picks the plusargs and
+   the expected registers in the same edit. `run` records a failure and
+   keeps going. The last line is `stand-in matches` whenever every
+   process exited 0.
+
+Nothing in that chain reads `WLEVEL_BACKOFF` from
+`gowin/primer20k/blinky_top_ddr3.v`, and nothing compares the lane
+plusargs with `wstep - WLEVEL_BACKOFF`. The controller comment already
+says the stand-in does not read the edge.
+
+`--pc` is a window of eight bytes: the check passes when
+`pc` is in `[expect, expect+8)`. `CH1390` and `CH1394` are different
+banners on the Dock. Step 4 printed both, with different R5 values.
+The P/D alias rows pass `--pc 1390`, and the Dock banner is `CH1394`,
+which sits inside that window. The script cannot reject a hold the
+UART has already distinguished.
+
+## Dock facts that stay closed
+
+These lines were loaded. A later plusarg may replay one of them. It
+may not move the green blink onto a pair that is not in this list.
+
+| Image | Steps (lane 1, lane 0) | Result |
+|---|---|---|
+| ALU | `000A` `000A` | pass, mask `FFFFFFFFFF`, R5 `00000000` |
+| Reader | `000A` `000A` | `AAAAAAAA`, mask `F0` |
+| Reader, both lanes forced to 9 | `0009` `0009` | `AFF0B9CF`, mask `50`. No plusarg produces it. |
+| Cold step 10 | `000A` `000A` | `DFAADFAA`. The pin mask describes this one line and ignores the step. |
+| Fetch, both lanes 10, then both lanes 9 | `000A` `000A`, then `0009` `0009` | `AAAAAAAA` both times |
+| Fetch pass | `0007` `000B` | pass. Edges `000A` and `000C`, backoff 1 and 3. |
+| Same fetch bitstream, reloaded | `0007` `000C` | pass. Lane 0's edge moved to `000D`. The column followed the edge. |
+| P/D, backoff 1 and 3 | `0007` `000B` | `AAAAAAAA`, mask `F0`, banner `CH1394`. Same steps as the fetch pass, other column. |
+| P/D, backoff 2 and 4 | `0006` `000B` | `AAAAAAAA` again. Lane 0's edge moved to `000D`, so its step stayed `000B`. |
+
+The pair `000A` `0005` is not in that list. `+ddr3_fetch_eye` with
+lanes 12 and 7 is the image on the Dock now, and under the centers
+from `4dfd5d8` it is offset +1 on lane 0.
+
+## What 4K-level means here
+
+On the Nano 4K, `FIRST_VALID` was fitted once. The header of
+`sim/HyperRamUserModel.v` says 12 predicted about 0.520 Hz before the
+load, and 13 is the value locked after the board measured about
+0.500 Hz. Steps 2 through 8 say the parameter stays 13 and the model
+was not edited. A wrong fixup is a dark hold at a known PC. The
+period formula did not grow a new name per image.
+
+The DDR3 command-port timing can be held to that standard now. The
+column cannot, until the route is an input the model has before the
+UART. Until then a trustworthy script has all of the following:
+
+- The invocation that is allowed to print `stand-in matches` uses the
+  backoff constants of the image about to be built, and it says the
+  column is the last accepted place, not a new center.
+- A replay of an old UART is a separate section and cannot turn the
+  summary green by itself.
+- `tb_ddr3_eye.cpp` and `Ddr3UserModel.v` share one offset function.
+  A second copy that is edited in the same commit is not a check.
+- `--pc` names the banner on the wire. A window that covers both
+  `CH1390` and `CH1394` does not.
+- A pair that has not been loaded does not appear as offset 0 in the
+  eye harness, the CPU rows, or the step note.
 
 ## What the 4K path did that this does not
 
@@ -222,6 +330,9 @@ every later step.
   the steps the UART prints. That check is what rejected `0cd9710`.
   The image on the Dock right now prints `0007` `000C` and passes.
   `+ddr3_fetch_eye` at those steps holds with R5 `FFAAFFAA`.
+- Treating `--pc 1390` as the Dock banner. The window is eight bytes,
+  and `CH1394` passes it. Step 4 already printed those two banners
+  with different sums.
 
 ## Fixes, before another Modules step trusts the sim
 
