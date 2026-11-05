@@ -22,6 +22,7 @@ class CPUSimTop(
     chainFix: Boolean = false
 ) extends Module {
   val hyper = memBackend == "hyperram"
+  val ddr3 = memBackend == "ddr3"
   val io = IO(new Bundle {
     val led = Output(Bool())
     val pc = Output(UInt(32.W))
@@ -36,15 +37,20 @@ class CPUSimTop(
     val memRead = Output(Bool())
   })
 
-  val cpu = Module(new CPUSubset0(
+  val cpuClock = if (ddr3) {
+    val half = Module(new CpuClock)
+    half.io.clk_in := clock
+    half.io.clk_out
+  } else clock
+  val cpu = withClock(cpuClock) { Module(new CPUSubset0(
     programInstructions,
     customMemoryImage = customMemoryImage,
-    waitForStores = hyper,
-    requireMemCheck = hyper,
+    waitForStores = hyper || ddr3,
+    requireMemCheck = hyper || ddr3,
     extraChecks = extraChecks,
     fetchStored = fetchStored,
     chainFix = chainFix
-  ))
+  )) }
   if (hyper) {
     val bridge = Module(new HyperRamBridge)
     val model = Module(new HyperRamUserModel(hyperFirstValid))
@@ -67,6 +73,36 @@ class CPUSimTop(
     bridge.io.hr.rd_data := model.io.rd_data
     bridge.io.hr.rd_data_valid := model.io.rd_data_valid
     bridge.io.hr.init_calib := model.io.init_calib
+  } else if (ddr3) {
+    val bridge = Module(new Ddr3Bridge)
+    val model = Module(new Ddr3UserModel)
+    val sync = withClock(cpuClock) { Module(new Ddr3CpuPortSync) }
+    sync.io.inAddr := cpu.io.memAddr
+    sync.io.inWriteData := cpu.io.memWriteData
+    sync.io.inWrite := cpu.io.memWrite
+    sync.io.inRead := cpu.io.memRead
+    sync.io.inByte := cpu.io.memByte
+    bridge.io.cpuAddr := sync.io.addr
+    bridge.io.cpuWriteData := sync.io.writeData
+    bridge.io.cpuWrite := sync.io.write
+    bridge.io.cpuRead := sync.io.read
+    bridge.io.cpuByte := sync.io.byte
+    cpu.io.memReadData := bridge.io.cpuReadData
+    val align = withClock(cpuClock) { Module(new Ddr3StallAlign) }
+    align.io.req := cpu.io.memRead || cpu.io.memWrite
+    align.io.bridgeStall := bridge.io.memStall
+    cpu.io.memStall := align.io.stall
+    model.io.clk := clock
+    model.io.rst_n := ~reset.asBool
+    model.io.rd := bridge.io.ddr.rd
+    model.io.wr := bridge.io.ddr.wr
+    model.io.refresh := bridge.io.ddr.refresh
+    model.io.addr := bridge.io.ddr.addr
+    model.io.din := bridge.io.ddr.din
+    bridge.io.ddr.dout := model.io.dout
+    bridge.io.ddr.data_ready := model.io.data_ready
+    bridge.io.ddr.busy := model.io.busy
+    bridge.io.ddr.calib := model.io.calib
   } else {
     val memoryController = Module(new MemoryController(useRealGowin = false))
     memoryController.io.cpuAddr := cpu.io.memAddr
@@ -133,6 +169,22 @@ object CPUSimTop {
           () => new CPUSimTop(Seq.empty, customMemoryImage = Some(words)),
           s"$targetDir/CPUSimTopBlink3.v",
           "blink3"
+        )
+      case "ddr3" =>
+        val imemPath = new File(
+          projectRoot,
+          sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/ddr3.words")
+        ).getAbsolutePath
+        val words = loadInstructionsFromFile(imemPath)
+        println(s"CPUSimTop: ddr3 IMEM ${words.length} words from $imemPath")
+        (
+          () => new CPUSimTop(
+            Seq.empty,
+            customMemoryImage = Some(words),
+            memBackend = "ddr3"
+          ),
+          s"$targetDir/CPUSimTopDdr3.v",
+          "ddr3"
         )
       case "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" | "files" | "modules" =>
         val imemPath = new File(
