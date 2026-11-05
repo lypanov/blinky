@@ -11,6 +11,19 @@
 // Undefine this to use DDR3-1066
 `define DDR3_800
 
+// `ifdef SIM shortcuts. They exist so Icarus can finish. They are
+// not the silicon path, and a test that only watches `dout` under
+// SIM is not a Dock result.
+// - `dout` is dq_in[4]. DDR3_800 silicon uses dq_in[0].
+// - dllstep is forced to 25 and dlllock is forced high. The DLL
+//   primitive does not run.
+// - The reset and CKE waits are 1 and 19 pclk ticks. ZQ stays at
+//   512 pclk: the Micron model rejects later commands otherwise.
+// - Write leveling starts at 8'h18 instead of 0.
+// - Read calibration starts at rclkpos 1, rclksel 6, and commits
+//   on rburst. It does not compare dq_in.
+// - WLEVEL_COUNT and RCALIB_COUNT are 2.
+
 module ddr3_controller
 #(
     // Main clock frequency, 75Mhz~100Mhz (DDR3 nominal clock 300Mhz~400Mhz)
@@ -158,7 +171,8 @@ assign DDR3_nCS = 1'b0;
 
 assign dout128 = {dq_in[0], dq_in[1], dq_in[2], dq_in[3], dq_in[4], dq_in[5], dq_in[6], dq_in[7]};
 `ifdef SIM
-assign dout = dq_in[4];     // somehow in simulation data is here
+// SIM shortcut. DDR3_800 silicon uses dq_in[0], below.
+assign dout = dq_in[4];
 `else
     `ifdef DDR3_800
         assign dout = dq_in[0];
@@ -309,6 +323,7 @@ always @(posedge pclk) begin
         {RST_WAIT, 5'bxxxxx} : if (tick) begin
             resetn_delay <= 1'b1;
 `ifdef SIM
+            // SIM shortcut. Silicon waits 500 us.
             tick_counter <= 17'd19;
 `else
             tick_counter <= 500 * USEC + 20;
@@ -350,7 +365,9 @@ always @(posedge pclk) begin
             {nRAS[0], nCAS[0], nWE[0]} <= CMD_ZQCL;
             A[0][10] <= 1'b1;         // long ZQ calibration
 `ifdef SIM
-            tick_counter <= 16'd2;      // 1024 nCK (256 clk), set to 2 for simulation
+            // Not shortened. tZQinit is 512 nCK and the Micron model
+            // rejects the next ACT if this wait is the old 2 ticks.
+            tick_counter <= 16'd512 + 16'd2;
 `else
             tick_counter <= 16'd512 + 2;
 `endif
@@ -527,7 +544,8 @@ always @(posedge pclk) begin
             wlevel_cnt <= 0;
 `ifdef SIM
     `ifdef DDR3_800
-            wstep <= 8'h18;     // quick start write leveling for simulation
+            // SIM shortcut. Silicon starts the search at 0.
+            wstep <= 8'h18;
             wstep1 <= 8'h18;
     `else
             wstep <= 8'h12;
@@ -550,10 +568,16 @@ always @(posedge pclk) begin
             dqs_out[0:7] <= 8'b0;
             dqs_oen[0:3] <= 4'b0;
 
-            if (~DDR3_DQ[0] || ~DDR3_DQ[8]) begin
-                if (~DDR3_DQ[0])
+            // X or Z is not a high. On the board DQ is 0 or 1, so
+            // this is the same test. An undriven sim DQ used to
+            // fall through (~X is X, and an if on X does not fire)
+            // and write leveling reported done.
+            $display("WL sample dq0=%b dq8=%b wstep=%0d wstep1=%0d",
+                     DDR3_DQ[0], DDR3_DQ[8], wstep, wstep1);
+            if (DDR3_DQ[0] !== 1'b1 || DDR3_DQ[8] !== 1'b1) begin
+                if (DDR3_DQ[0] !== 1'b1)
                     wstep <= wstep + 1'd1;
-                if (~DDR3_DQ[8])
+                if (DDR3_DQ[8] !== 1'b1)
                     wstep1 <= wstep1 + 1'd1;
                 wlevel_cnt <= 0;
                 cycle <= FIVEB'(WLMRD/4-1);    // loop
@@ -590,8 +614,8 @@ always @(posedge pclk) begin
             BA[0] <= 0; A[0] <= 0;
             rcalib_cnt <= 0;
 `ifdef SIM
-            // in simulation the final rclkpos=2, rclksel=0 for DDR3-800
-            //                         rclkpos=1, rclksel=1 for DDR3-1066
+            // SIM shortcut. A starting guess, not a measured eye.
+            // The search still commits on rburst, not on dq_in.
     `ifdef DDR3_800
             rclkpos <= 2'd1; rclksel <= 3'd6;
     `else
@@ -642,7 +666,8 @@ always @(posedge pclk) begin
        {nRAS[2], nCAS[2], nWE[2]} <= CMD_NOP;
        {nRAS[3], nCAS[3], nWE[3]} <= CMD_NOP;
 `ifdef SIM
-        tick_counter <= 16'd1;          // initial 500us delay, 140ns in simulation
+        // SIM shortcut. Silicon waits 60000 pclk before releasing reset.
+        tick_counter <= 16'd1;
 `else
         tick_counter <= 16'd60_000;     // initial 500us delay
 `endif
@@ -686,7 +711,7 @@ end
 wire [7:0] dllstep;
 
 `ifdef SIM
-// DLL simulation takes too long to lock (33600 cycles). So let's cheat.
+// SIM shortcut. The DLL primitive takes 33600 cycles to lock.
 assign dllstep = 8'd25;
 assign dlllock = 1'b1;
 `else
@@ -705,12 +730,16 @@ wire [2:0] dqs_waddr[1:0], dqs_raddr[1:0];
 wire clk_dqsr[1:0];
 wire clk_dqsw[1:0];
 wire clk_dqsw270[1:0];
+// genvar is declared outside the for-loop. Icarus treats
+// `for (genvar i = ...)` as a variable and then rejects the
+// loop index on a primitive output port.
+genvar i0, i1, i2, i3, i4;
 generate
     // ck is fclk delayed 90 degrees with PLL
     // DQSR90 is DQSIN delayed DLLSTEP.
     // DQSW0 is fclk delayed WSTEP
     // DQSW270 is fclk delayed WSTEP+DLLSTEP+180-degrees.
-    for (genvar i0 = 0; i0 < 2; i0++) begin : gen_dqs_controller
+    for (i0 = 0; i0 < 2; i0 = i0 + 1) begin : gen_dqs_controller
         DQS #(
             .DQS_MODE("X4"), .HWL("false")       // HWL is related to WL&RL
             // .DQS_MODE("X4"), .HWL("true")   
@@ -728,7 +757,7 @@ endgenerate
 // 2*CK speed in/out for data(DQ), data strobe(DQS) and data mask(DM)
 wire [15:0] dq_buf, dq_buf_oen;        // I/O buffer internal use
 generate
-    for (genvar i1 = 0; i1 < 16; i1++) begin : gen_dq
+    for (i1 = 0; i1 < 16; i1 = i1 + 1) begin : gen_dq
         OSER8_MEM #(.TCLK_SOURCE("DQSW270")) oser_dq(
             .D0(dq_out[0][i1]), .D1(dq_out[1][i1]), .D2(dq_out[2][i1]), .D3(dq_out[3][i1]), 
             .D4(dq_out[4][i1]), .D5(dq_out[5][i1]), .D6(dq_out[6][i1]), .D7(dq_out[7][i1]), 
@@ -752,7 +781,7 @@ endgenerate
 wire [1:0] dqs_buf, dqs_buf_oen;
 wire [1:0] dqs_buf_delayed;
 generate
-    for (genvar i2 = 0; i2 < 2; i2++) begin : gen_dqs
+    for (i2 = 0; i2 < 2; i2 = i2 + 1) begin : gen_dqs
         // DQS is output using the DQSW0
         OSER8_MEM oser_dqs(
              .D0(dqs_out[0]), .D1(dqs_out[1]), .D2(dqs_out[2]), .D3(dqs_out[3]), 
@@ -791,7 +820,7 @@ OSER8 oser_nwe(
 
 // Address lines (CK speed)
 generate
-    for (genvar i3 = 0; i3 < ROW_WIDTH; i3++) begin: gen_a
+    for (i3 = 0; i3 < ROW_WIDTH; i3 = i3 + 1) begin: gen_a
         OSER8 oser_a(
             .D0(A[0][i3]), .D1(A[0][i3]), .D2(A[1][i3]), .D3(A[1][i3]), 
             .D4(A[2][i3]), .D5(A[2][i3]), .D6(A[3][i3]), .D7(A[3][i3]), 
@@ -802,7 +831,7 @@ endgenerate
 
 // BA lines (CK speed)
 generate
-    for (genvar i4 = 0; i4 < 3; i4++) begin: gen_ba
+    for (i4 = 0; i4 < 3; i4 = i4 + 1) begin: gen_ba
         OSER8 oser_ba(
             .D0(BA[0][i4]), .D1(BA[0][i4]), .D2(BA[1][i4]), .D3(BA[1][i4]), 
             .D4(BA[2][i4]), .D5(BA[2][i4]), .D6(BA[3][i4]), .D7(BA[3][i4]), 
