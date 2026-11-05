@@ -43,7 +43,9 @@ run "$EYE"
 run "$EYE" +ddr3_center=9
 run "$EYE" +ddr3_center=9 +ddr3_lane0=9
 # Programmed step equal to the center: every pin on the addressed column.
-# The LANE0_STEP=9 LANE1_STEP=9 Dock sample is not this hit.
+# The LANE0_STEP=9 LANE1_STEP=9 Dock sample is not this hit, and neither
+# is the step-sweep table (54F854F7 / AFF7AFF7 / 0C0D0D9D). Both lanes at
+# step 10 are two rows of that table and they disagree.
 run "$EYE" +ddr3_center=9 +ddr3_lane0=9 +ddr3_lane1=9
 run "$EYE" +ddr3_lane0=9 +ddr3_lane1=9
 run "$EYE" +ddr3_lane1=9
