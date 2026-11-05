@@ -920,7 +920,8 @@ object CPUSubset0 {
     val ddr3fixup = fpgaImage == "ddr3fixup"
     val ddr3rsc = fpgaImage == "ddr3rsc"
     val ddr3fetch = fpgaImage == "ddr3fetch"
-    val ddr3 = fpgaImage == "ddr3" || ddr3fixup || ddr3rsc || ddr3fetch
+    val ddr3pd = fpgaImage == "ddr3pd"
+    val ddr3 = fpgaImage == "ddr3" || ddr3fixup || ddr3rsc || ddr3fetch || ddr3pd
     val hyper = fpgaImage == "hyperram" || fixup || rsc || fetchbl || pdchain || moddesc || files || modules
     // 20 matches sim/build_fixup_imem.py. 32 matches sim/build_rsc_imem.py.
     // 34 matches sim/build_fetchbl_imem.py (those 32, plus the stored BL
@@ -933,9 +934,9 @@ object CPUSubset0 {
     // timing and were not loaded.
     // A mismatch leaves the LED dark, because a slot that is never stored
     // stays clear.
-    val extra = if (modules || files || moddesc) 40 else if (pdchain) 37 else if (fetchbl || ddr3fetch) 34 else if (rsc || ddr3rsc) 32 else if (fixup || ddr3fixup) 20 else 0
+    val extra = if (modules || files || moddesc) 40 else if (pdchain || ddr3pd) 37 else if (fetchbl || ddr3fetch) 34 else if (rsc || ddr3rsc) 32 else if (fixup || ddr3fixup) 20 else 0
     val (programInstructions, customMemoryImage) = fpgaImage match {
-      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" | "files" | "modules" | "ddr3" | "ddr3fixup" | "ddr3rsc" | "ddr3fetch" =>
+      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" | "files" | "modules" | "ddr3" | "ddr3fixup" | "ddr3rsc" | "ddr3fetch" | "ddr3pd" =>
         val imemArg = sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
         val imemFile = new File(imemArg)
         val imemPath =
@@ -948,7 +949,8 @@ object CPUSubset0 {
           )
         }
         val imageName =
-          if (ddr3fetch) "Primer 20K DDR3 stored BL"
+          if (ddr3pd) "Primer 20K DDR3 P/D chain"
+          else if (ddr3fetch) "Primer 20K DDR3 stored BL"
           else if (ddr3rsc) "Primer 20K DDR3 byte/.rsc reader"
           else if (ddr3fixup) "Primer 20K DDR3 fixup ALU"
           else if (ddr3) "Primer 20K DDR3 data port + Blink3"
@@ -985,7 +987,7 @@ object CPUSubset0 {
         requireMemCheck = hyper || ddr3,
         extraChecks = extra,
         fetchStored = fetchbl || ddr3fetch,
-        chainFix = pdchain || moddesc || files || modules
+        chainFix = pdchain || ddr3pd || moddesc || files || modules
       ),
       firtoolOpts = firtoolOpts
     )
@@ -999,7 +1001,7 @@ object CPUSubset0 {
         memBackend = if (ddr3) "ddr3" else if (hyper) "hyperram" else "blockram",
         extraChecks = extra,
         fetchStored = fetchbl || ddr3fetch,
-        chainFix = pdchain || moddesc || files || modules
+        chainFix = pdchain || ddr3pd || moddesc || files || modules
       ),
       firtoolOpts = firtoolOpts
     )
@@ -1013,7 +1015,7 @@ object CPUSubset0 {
         memBackend = if (ddr3) "ddr3" else if (hyper) "hyperram" else "blockram",
         extraChecks = extra,
         fetchStored = fetchbl || ddr3fetch,
-        chainFix = pdchain || moddesc || files || modules
+        chainFix = pdchain || ddr3pd || moddesc || files || modules
       ),
       firtoolOpts = firtoolOpts
     )

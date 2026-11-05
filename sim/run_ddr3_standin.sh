@@ -292,6 +292,56 @@ run sim/obj_dir/ddr3_cpu_ddr3fetch_rom/ddr3_cpu --cycles 80000 --edges 0 \
   --pc 1f00 --r5 00000000 --r9 ffffffe1 --mask 1ffffffffff \
   +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
 
+# P/D chain on the same DDR3 port. The eye is the accepted fetch pair.
+# The chain runs outside the delay loop, so the period stays 576*N+788.
+# First edge is 38626 at N=5 (5076 cycles after the stored-BL image).
+# Bare +ddr3_fetch_eye leaves the lanes at 10 and holds in the prologue.
+python3 sim/build_pdchain_imem.py --mov-iter 5 --pad 2048 \
+  --out sim/obj_dir/ddr3pd_n5.words
+python3 sim/build_pdchain_imem.py --mov-iter 8 --pad 2048 \
+  --out sim/obj_dir/ddr3pd_n8.words
+python3 sim/build_pdchain_imem.py --mov-iter 32 --pad 2048 \
+  --out sim/obj_dir/ddr3pd_n32.words
+python3 sim/build_pdchain_imem.py --mov-iter 5 --pad 2048 --break-slot 32 \
+  --out sim/obj_dir/ddr3pd_b32.words
+elaborate ddr3pd sim/obj_dir/ddr3pd_n5.words
+write_hex sim/obj_dir/ddr3pd_n5.words
+CPU ddr3pd --cycles 80000 --edges 0 --pc 1390 \
+  --r5 00544054 --r9 00a9c18c --mask 30 \
+  +ddr3_fetch_eye
+CPU ddr3pd --cycles 120000 --edges 2 --period 3668 --first 38626 \
+  --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff \
+  +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
+write_hex sim/obj_dir/ddr3pd_n8.words
+CPU ddr3pd --cycles 100000 --edges 2 --period 5396 --first 40354 \
+  --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff \
+  +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
+write_hex sim/obj_dir/ddr3pd_n32.words
+CPU ddr3pd --cycles 160000 --edges 2 --period 19220 --first 54178 \
+  --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff \
+  +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
+write_hex sim/obj_dir/ddr3pd_b32.words
+CPU ddr3pd --cycles 80000 --edges 0 --pc 1d8c \
+  --r5 00000000 --r9 00000008 --mask 1effffffffff \
+  +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
+write_hex sim/obj_dir/ddr3pd_n5.words
+say "elaborate ddr3pd CHAIN_FIX=0"
+if ! CHAIN_FIX=0 SIM_IMAGE=ddr3pd \
+    BLINK3_IMEM=sim/obj_dir/ddr3pd_n5.words \
+    mill chisel-blinky.runMain gcd.CPUSimTop; then
+  echo "FAIL elaborate ddr3pd CHAIN_FIX=0" >&2
+  exit 1
+fi
+build ddr3pd-rom verilator "${VFLAGS[@]}" -DPRINTF_COND=0 \
+  --top-module CPUSimTop --Mdir sim/obj_dir/ddr3_cpu_ddr3pd_rom -o ddr3_cpu \
+  -CFLAGS "-std=c++17 -O2" \
+  generated/CPUSimTopDdr3.v generated/InstrRom.v \
+  sim/CpuClock.v sim/Ddr3UserModel.v sim/tb_ddr3_cpu.cpp
+write_hex sim/obj_dir/ddr3pd_n5.words
+run sim/obj_dir/ddr3_cpu_ddr3pd_rom/ddr3_cpu --cycles 80000 --edges 0 \
+  --pc 1d8c --r5 fffffff4 --r9 00000008 --mask ffffffffff \
+  +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
+
 if [[ "$FAIL" -ne 0 ]]; then
   echo "stand-in mismatches" >&2
   exit 1

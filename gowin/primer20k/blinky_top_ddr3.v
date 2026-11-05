@@ -30,7 +30,8 @@
 // This image loads lane 0 with its write-level edge minus 1 and
 // lane 1 with its edge minus 3. On the build on the Dock those
 // codes are 000B and 0007. The edge moved between builds, so the
-// stand-in takes the programmed steps and not the edge. The ALU
+// stand-in takes the programmed steps and not the edge. DDR3_PD
+// uses that same backoff. The ALU
 // place stays on lane 0 at step 10 and lane 1 on the write-level
 // result. The delay loop is unchanged.
 
@@ -389,6 +390,12 @@ module blinky_top_ddr3 (
           || cpu_pc[15:0] == 16'h1C20 || cpu_pc[15:0] == 16'h1C24
           || cpu_pc[15:0] == 16'h1CD8 || cpu_pc[15:0] == 16'h1CDC)
       hold_seen <= 1'b1;
+`elsif DDR3_PD
+    // Reader spins, and the chain compare spin. The chain prologue
+    // at 0x1C00 is real code, not a hold.
+    else if (cpu_pc[15:0] == 16'h1B44 || cpu_pc[15:0] == 16'h1B48
+          || cpu_pc[15:0] == 16'h1D8C || cpu_pc[15:0] == 16'h1D90)
+      hold_seen <= 1'b1;
 `endif
   end
   reg [1:0] hold_sync = 2'b00;
@@ -465,6 +472,9 @@ module blinky_top_ddr3 (
     hex16({8'h00, wstep1_run}), " ",
 `elsif DDR3_FETCH
     // Stored-BL image: programmed lane 1, then programmed lane 0.
+    hex16({8'h00, wstep1_run}), " ",
+`elsif DDR3_PD
+    // P/D-chain image: programmed lane 1, then programmed lane 0.
     hex16({8'h00, wstep1_run}), " ",
 `else
     hex16({8'h00, unused_wstep}), " ",
@@ -664,6 +674,11 @@ module blinky_top_ddr3 (
   // Backoff 1 and backoff 3. On the build on the Dock the edges
   // were 000C and 000A, so the steps are 000B and 0007. 0006 is
   // not this image. An earlier build's lane 0 edge was 000D.
+  localparam [7:0] WLEVEL_BACKOFF = 8'd1;
+  localparam [7:0] WLEVEL_BACKOFF1 = 8'd3;
+`elsif DDR3_PD
+  // Same backoff as the accepted stored-BL image. A new place can
+  // move the write-level edge; the stand-in does not name that edge.
   localparam [7:0] WLEVEL_BACKOFF = 8'd1;
   localparam [7:0] WLEVEL_BACKOFF1 = 8'd3;
 `else
