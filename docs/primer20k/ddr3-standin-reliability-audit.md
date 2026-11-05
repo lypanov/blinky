@@ -363,7 +363,8 @@ controller. Do not switch to it. Do not retune this design to CL11.
 
 ## Modules take
 
-For bc-5a35e67c. The Dock was not opened for this note.
+For The FPGA Lab. Not sent to the sim agent. The Dock was not opened
+for this note.
 
 The part on the core is a 1Gb x16 DDR3 at SSTL15, A13 unused. Do not
 write H5TQ1G63EFR-PBC into a model parameter until a schematic, a
