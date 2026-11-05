@@ -123,6 +123,50 @@ false green, and they agree on the later refit.
   again. The load that followed stayed on the alias, and `89fd0ae`
   then took the eye out of the flag.
 
+## Tip `89fd0ae`
+
+This tip can print the P/D Dock alias.
+`+ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=7` and the same flag with
+lane 1 at 6 both expect R5 `AAAAAAAA`, R9 `55555536`, mask `F0`,
+hold `0x1390`. Both board loads were that plateau. The fetch image
+was loaded back and still passes. Step 5 stays with the stand-in
+until a loaded pair passes, or until a conclusion is sourced from
+the RTL rather than from the next integer below the bin.
+
+The flag has no offset 0. Lane 0 at 11 is forced to offset +1, which
+is the only code `step - 11` would have called 0. Lane 1 at 6 and at
+7 are both forced to +1, and 7 is the only code `step - 7` would have
+called 0. No pair under `+ddr3_pd_eye` is the column. That part of
+the tip matches the two UARTs.
+
+`stand-in matches` still prints. The blink rows under `ddr3pd` pass
+no `+ddr3_pd_eye` and no lane plusargs, so they are default lanes 10
+and 10. The script's own comment says those steps are not a Dock
+pair. A green run of that script is the software check at the old
+center, plus a replay of two misses.
+
+The committed `DDR3_PD` image does not explain the column from a
+parameter the stand-in failed to read. At `89fd0ae` its backoff is
+1 and 3, the same as `DDR3_FETCH`. The controller has no `DDR3_PD`
+branch. The UART hold is the memory prologue at `0x1394`, which runs
+before the P/D chain, and that prologue is the same stores as the
+fetch image. What the two images do not share is the placed route of
+the larger CPU. Fetch with backoff 1 and 3 passes, and when lane 0's
+edge moved from `000C` to `000D` the programmed step moved from
+`000B` to `000C` and the column stayed the pass. The P/D build with
+the same backoff was the alias at edges `000C` and `000A`. Backoff
+2 and 4 was still the alias, and lane 0's edge moved with the
+rebuild so its programmed step stayed `000B`.
+
+The working tree on `cursor/ddr3-pdchain-e003`, not in `89fd0ae`,
+already names the next guess: centers 10 and 5, backoff 3 and 5,
+programmed steps `000A` and `0005` if the edges stay `000D` and
+`000A`. That is one code below a bin that was the alias at two
+adjacent codes. Both lanes at 10 and both lanes at 9 were that same
+guess on the fetch route, and the lower code was still `AAAAAAAA`.
+It is not a pass the Dock has run, and it is not an RTL difference
+between the images that were loaded.
+
 ## What the 4K path did that this does not
 
 `sim/HyperRamUserModel.v` stores the bytes it is given and returns those
@@ -172,7 +216,8 @@ every later step.
   been loaded.
 - Loading that inferred center as the next bitstream and calling the
   script a prediction. Both lanes at 9 were that prediction. The Dock
-  still printed `AAAAAAAA`.
+  still printed `AAAAAAAA`. Backoff 3 and 5, for steps `000A` and
+  `0005`, is the same guess under `ddr3pd`.
 - Modules accepting `stand-in matches` without running the witness at
   the steps the UART prints. That check is what rejected `0cd9710`.
   The image on the Dock right now prints `0007` `000C` and passes.
