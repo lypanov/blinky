@@ -494,3 +494,21 @@ R5 is `DFAADFAA`, not `FFFFFFFF`, `AAAAAAAA`, or `55555554`. Mask
 the prologue hold. No further pair was run. No webcam. The locked
 rate was not changed. The Dock was put back on
 `ddr3fixup_n262144.fs`. Steps 4–8 were not started.
+
+The same programmed step is not one column shift on every pin. Lane 0
+is the even-word alias already named by `+ddr3_center=9`. Lane 1 is
+on the addressed column except DQ5, which aliases with lane 0. On the
+high half of an odd column, a 0 on DQ1 still clears the bit that
+alias left. The stand-in prints this line with
+
+```
++ddr3_pin_even=20FF +ddr3_odd_clear=2
+```
+
+`20FF` sets DQ0–DQ7 and DQ13 (lane 1's DQ5). `odd_clear` bit 1 is DQ1,
+and it applies only to that high half. The step plusargs are not used
+while the pin mask is set, so `+ddr3_center=9` still prints the
+whole-column `AAAAAAAA` / `55555536` line. The CPU beat of the
+sentinel stays `A5A5`. The Dock's next burst beat is `25A5`; the
+array keeps the partner column as `20A5` (only DQ5 spilled). That
+beat is not what the CPU summed.

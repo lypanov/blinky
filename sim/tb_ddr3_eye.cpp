@@ -107,6 +107,39 @@ static void expect_eq(const char* name, uint32_t got, uint32_t want) {
   }
 }
 
+static void write_word(uint32_t byte_addr, uint32_t word) {
+  write_col(byte_addr >> 1, (uint16_t)word);
+  write_col((byte_addr >> 1) + 1, (uint16_t)(word >> 16));
+}
+
+// Cold reader prologue: setup words, then each pattern word and its
+// complement, then the alias and the sentinel.
+static void cold_prologue() {
+  write_word(0x14, 0x50);
+  write_word(0x18, 0x70);
+  for (int i = 0; i < 32; i++) {
+    write_word(0x400 + 4 * i, 1u << i);
+    write_word(0x500 + 4 * i, ~((uint32_t)1 << i));
+  }
+  write_word(0x114, 0x11111111u);
+  write_word(0x7F0, 0xA5A5A5A5u);
+  uint32_t s5 = 0;
+  uint32_t s9 = 0;
+  for (int i = 0; i < 32; i++) {
+    s5 += read_word(0x400 + 4 * i);
+    s9 += read_word(0x500 + 4 * i);
+  }
+  expect_eq("cold r5", s5, 0xDFAADFAAu);
+  expect_eq("cold r9", s9, 0x20532036u);
+  expect_eq("mt1", read_word(0x14), 0x50);
+  expect_eq("mt2", read_word(0x18), 0x70);
+  expect_eq("alias", read_word(0x114), 0x11111111u);
+  expect_eq("sentinel", read_word(0x7F0), 0xA5A5A5A5u);
+  // CPU beat of the sentinel is A5A5. The Dock's next burst beat is
+  // 25A5; the stored partner column is 20A5 (lane 1 only DQ5 spilled).
+  expect_eq("partner", read_col(0x3FA), 0x20A5);
+}
+
 static void write_pair() {
   // Even word 0x44332211, odd word 0x88776655, one BC4 group.
   write_col(0x200, 0x2211);
@@ -156,6 +189,19 @@ static bool has(int argc, char** argv, const char* name) {
 
 // +ddr3_lane0=N / +ddr3_lane1=N are the programmed steps. +ddr3_center is
 // the programmed step the data eye is centered on for this place.
+static unsigned plus_hex(int argc, char** argv, const char* key, bool* present) {
+  std::string prefix = std::string("+") + key + "=";
+  for (int i = 1; i < argc; i++) {
+    std::string arg(argv[i]);
+    if (arg.compare(0, prefix.size(), prefix) == 0) {
+      *present = true;
+      return std::strtoul(arg.c_str() + prefix.size(), nullptr, 16);
+    }
+  }
+  *present = false;
+  return 0;
+}
+
 static int plus_int(int argc, char** argv, const char* key, int fallback) {
   std::string prefix = std::string("+") + key + "=";
   for (int i = 1; i < argc; i++) {
@@ -181,6 +227,10 @@ int main(int argc, char** argv) {
   top->rst_n = 1;
   wait_calib();
 
+  bool pin_set = false;
+  bool clear_set = false;
+  const unsigned pin_even = plus_hex(argc, argv, "ddr3_pin_even", &pin_set);
+  const unsigned odd_clear = plus_hex(argc, argv, "ddr3_odd_clear", &clear_set);
   const bool nohold = has(argc, argv, "+ddr3_nohold");
   const bool nowload = has(argc, argv, "+ddr3_nowload");
   const bool dm_all = has(argc, argv, "+ddr3_dm_all");
@@ -192,7 +242,16 @@ int main(int argc, char** argv) {
   const int off0 = plus_int(argc, argv, "ddr3_lane0", 10) - center;
   const int off1 = plus_int(argc, argv, "ddr3_lane1", 10) - center;
 
-  if (corrupt) {
+  if (pin_set) {
+    // Cold step-10 line: lane 0 even-word alias, lane 1 only DQ5, and
+    // DQ1 can still clear the high half of the odd word.
+    if (pin_even == 0x20FF && clear_set && odd_clear == 0x2)
+      cold_prologue();
+    else {
+      std::printf("FAIL unhandled pin mask even=%x clear=%x\n", pin_even, odd_clear);
+      return 1;
+    }
+  } else if (corrupt) {
     write_col(0x10, 0x1234);
     expect_eq("corrupt", read_col(0x10), 0);
   } else if (dm_all) {

@@ -47,6 +47,16 @@
 // per-byte bit map do not produce 54F854F7, AFF7AFF7, or 0C0D0D9D.
 // There is no plusarg for that table.
 //
+// A cold prologue with both lanes programmed to step 10, after
+// DDR3_nRESET, is a pin split rather than that whole-column alias.
+// +ddr3_pin_even is a 16-bit mask: bit 0 is DQ0, bit 8 is DQ8. A set
+// bit uses the even-word broadcast; a clear bit stores on the
+// addressed column. +ddr3_odd_clear is the same numbering. On the
+// high half of an odd column, a 0 on one of those pins clears the
+// bit the broadcast left behind. Mask 20FF and odd-clear bit 1
+// (DQ1) is this cold line: R5 DFAADFAA, R9 20532036, mask F0.
+// The step plusargs do not apply while the pin mask is set.
+//
 //   * offset 0 (programmed == center): the beat lands on the column.
 //   * offset +1: one step above the eye, toward the write-level edge.
 //     The even word of a BC4 group is written into both words, and the
@@ -107,6 +117,9 @@ module Ddr3UserModel (
   integer    lane1_sh;
   integer    center;       // programmed step the data eye is centered on
   integer    i;
+  reg        pin_even_en;
+  reg [15:0] pin_even;     // bit 0 = DQ0 ... bit 15 = DQ15, even-word broadcast
+  reg [15:0] odd_clear;    // same numbering; a 0 on the odd word's high half clears
 
   task automatic eye_from_offset;
     input integer off;
@@ -188,6 +201,73 @@ module Ddr3UserModel (
     end
   endtask
 
+  // One DQ pin. even copies the even word onto its partner. On the high
+  // half of the odd word, a clear pin written as 0 still wins.
+  task automatic put_bit;
+    input integer col;
+    input integer lane;
+    input integer bitn;
+    input val;
+    reg [7:0] tmp;
+    begin
+      if (col >= 0 && col < WORDS) begin
+        if (lane == 0)
+          tmp = lane0[col];
+        else
+          tmp = lane1[col];
+        tmp[bitn] = val;
+        if (lane == 0)
+          lane0[col] = tmp;
+        else
+          lane1[col] = tmp;
+      end
+    end
+  endtask
+
+  task automatic apply_masked;
+    input integer col;
+    input integer lane;
+    input [7:0] bytev;
+    integer bitn;
+    integer g;
+    integer partner;
+    integer idx;
+    reg even;
+    reg clr;
+    reg val;
+    reg drop;
+    begin
+      if (col >= 0 && col < WORDS) begin
+        g = col >> 2;
+        partner = col ^ 2;
+        for (bitn = 0; bitn < 8; bitn = bitn + 1) begin
+          idx = lane * 8 + bitn;
+          even = pin_even[idx];
+          clr = odd_clear[idx];
+          val = bytev[bitn];
+          if (!even) begin
+            put_bit(col, lane, bitn, val);
+          end else if ((col & 2) == 0) begin
+            put_bit(col, lane, bitn, val);
+            put_bit(partner, lane, bitn, val);
+            if (lane == 0)
+              seen0[g] = 1'b1;
+            else
+              seen1[g] = 1'b1;
+          end else begin
+            if (clr && (col & 1) && !val)
+              put_bit(col, lane, bitn, 1'b0);
+            else begin
+              drop = (lane == 0) ? seen0[g] : seen1[g];
+              if (!drop)
+                put_bit(col, lane, bitn, val);
+            end
+          end
+        end
+      end
+    end
+  endtask
+
   function [15:0] read_half;
     input integer col;
     integer c;
@@ -247,18 +327,26 @@ module Ddr3UserModel (
       s0 = 10;
       s1 = 10;
       center = 10;
+      pin_even_en = 1'b0;
+      pin_even = 16'h0;
+      odd_clear = 16'h0;
       if (!$value$plusargs("ddr3_lane0=%d", s0))
         s0 = 10;
       if (!$value$plusargs("ddr3_lane1=%d", s1))
         s1 = 10;
       if (!$value$plusargs("ddr3_center=%d", center))
         center = 10;
+      if ($value$plusargs("ddr3_pin_even=%h", pin_even))
+        pin_even_en = 1'b1;
+      if (!$value$plusargs("ddr3_odd_clear=%h", odd_clear))
+        odd_clear = 16'h0;
       eye_from_offset(s0 - center, lane0_mode, lane0_sh);
       eye_from_offset(s1 - center, lane1_mode, lane1_sh);
-      $display("DDR3 model hold=%0d wloadn=%0d dm=%0d center=%0d lane0=%0d(off %0d mode %0d sh %0d) lane1=%0d(off %0d mode %0d sh %0d) corrupt=%0d late=%0d",
+      $display("DDR3 model hold=%0d wloadn=%0d dm=%0d center=%0d lane0=%0d(off %0d mode %0d sh %0d) lane1=%0d(off %0d mode %0d sh %0d) pin_even=%h odd_clear=%h corrupt=%0d late=%0d",
                hold_en, wloadn_en, dm_mode, center,
                s0, s0 - center, lane0_mode, lane0_sh,
                s1, s1 - center, lane1_mode, lane1_sh,
+               pin_even_en ? pin_even : 16'h0, odd_clear,
                corrupt, late);
     end
   end
@@ -347,6 +435,9 @@ module Ddr3UserModel (
             put_byte(col, 0, din[7:0]);
           end else if (dm_mode == 2'd3) begin
             put_byte(col, 1, din[15:8]);
+          end else if (pin_even_en) begin
+            apply_masked(col, 0, din[7:0]);
+            apply_masked(col, 1, din[15:8]);
           end else begin
             apply_lane(col, 0, din[7:0], lane0_mode, lane0_sh);
             apply_lane(col, 1, din[15:8], lane1_mode, lane1_sh);
