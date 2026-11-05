@@ -82,7 +82,9 @@ static Options parse_args(int argc, char** argv) {
     else if (!strcmp(argv[i], "--fst")) o.fst_path = need("--fst");
     else if (!strcmp(argv[i], "--trace")) o.trace_path = need("--trace");
     else if (!strcmp(argv[i], "--led")) o.led_path = need("--led");
-    else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
+    else if (argv[i][0] == '+') {
+      // Plusarg for the behavioural memory model. commandArgs already kept it.
+    } else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
       usage(argv[0]);
       exit(0);
     } else {

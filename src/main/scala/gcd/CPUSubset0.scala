@@ -902,6 +902,7 @@ object CPUSubset0 {
     val moddesc = fpgaImage == "moddesc"
     val files = fpgaImage == "files"
     val modules = fpgaImage == "modules"
+    val ddr3 = fpgaImage == "ddr3"
     val hyper = fpgaImage == "hyperram" || fixup || rsc || fetchbl || pdchain || moddesc || files || modules
     // 20 matches sim/build_fixup_imem.py. 32 matches sim/build_rsc_imem.py.
     // 34 matches sim/build_fetchbl_imem.py (those 32, plus the stored BL
@@ -916,7 +917,7 @@ object CPUSubset0 {
     // stays clear.
     val extra = if (modules || files || moddesc) 40 else if (pdchain) 37 else if (fetchbl) 34 else if (rsc) 32 else if (fixup) 20 else 0
     val (programInstructions, customMemoryImage) = fpgaImage match {
-      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" | "files" | "modules" =>
+      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" | "files" | "modules" | "ddr3" =>
         val imemArg = sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
         val imemFile = new File(imemArg)
         val imemPath =
@@ -929,7 +930,8 @@ object CPUSubset0 {
           )
         }
         val imageName =
-          if (modules) "step-8 Modules + HyperRAM"
+          if (ddr3) "Primer 20K DDR3 data port + Blink3"
+          else if (modules) "step-8 Modules + HyperRAM"
           else if (files) "step-7 Files + HyperRAM"
           else if (moddesc) "step-6 ModDesc + HyperRAM"
           else if (pdchain) "step-5 P/D chain + HyperRAM"
@@ -958,8 +960,8 @@ object CPUSubset0 {
       gen = new CPUSubset0(
         programInstructions,
         customMemoryImage = customMemoryImage,
-        waitForStores = hyper,
-        requireMemCheck = hyper,
+        waitForStores = hyper || ddr3,
+        requireMemCheck = hyper || ddr3,
         extraChecks = extra,
         fetchStored = fetchbl,
         chainFix = pdchain || moddesc || files || modules
@@ -973,7 +975,7 @@ object CPUSubset0 {
         useRealGowin = true,
         programInstructions = programInstructions,
         customMemoryImage = customMemoryImage,
-        memBackend = if (hyper) "hyperram" else "blockram",
+        memBackend = if (ddr3) "ddr3" else if (hyper) "hyperram" else "blockram",
         extraChecks = extra,
         fetchStored = fetchbl,
         chainFix = pdchain || moddesc || files || modules
@@ -987,7 +989,7 @@ object CPUSubset0 {
         useRealGowin = false,
         programInstructions = programInstructions,
         customMemoryImage = customMemoryImage,
-        memBackend = if (hyper) "hyperram" else "blockram",
+        memBackend = if (ddr3) "ddr3" else if (hyper) "hyperram" else "blockram",
         extraChecks = extra,
         fetchStored = fetchbl,
         chainFix = pdchain || moddesc || files || modules
