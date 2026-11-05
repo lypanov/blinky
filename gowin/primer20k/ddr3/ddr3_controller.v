@@ -77,7 +77,9 @@ module ddr3_controller
 
     // Write leveling. This is done after mode registers are set.
     output            write_level_done,  // 1 means write leveling is successful for this DQS
-    output reg [7:0]  wstep,        // write delay steps, 8 bits for each DQS. this is result of write leveling.
+    output reg [7:0]  wstep,        // write-level result for DQS0
+    output reg [7:0]  wstep1,       // write delay for DQS1
+    output reg [7:0]  wstep_run,    // DQS0 delay actually used after calib
 
     // Read calibration
     // Increment rclkpos/rclksel, send a BL8 read command, and once a rburst
@@ -204,17 +206,33 @@ wire [15:0] MR3 = {3'b011, 13'b0};
 // Write leveling
 reg wlevel_done = 1'b0;
 reg [3:0] wlevel_cnt = 3'b0;
+// The two byte lanes do not share a trace delay. One wstep left the
+// earlier lane a data beat past its edge, so its byte landed on the
+// neighbour column. Each lane stops on its own DQ feedback.
 assign write_level_done = wlevel_done;
 
 // Read calibration. 
 // Note there's no read eye diagram testing yet.
 reg [3:0] dqs_read = 4'b0;
 reg dqs_hold = 1'b0;
+reg wload_n = 1'b0;
 wire [1:0] rburst;
 reg [1:0] rburst_seen;
 reg rcalib_done = 1'b0;
 reg [3:0] rcalib_cnt = 4'b0;
 assign read_calib_done = rcalib_done;
+// Lane 0's odd column comes back as the even one when the write delay
+// stays on the DQ[0] leading edge. Force an absolute step instead of
+// an offset, so a later edge detection cannot land on the same delay.
+// 10 is the step lane 1 settled on. The read gate stays put.
+always @(posedge pclk) begin
+    if (~rst_lock_n)
+        wstep_run <= 8'd0;
+    else if (rcalib_done)
+        wstep_run <= 8'd10;
+    else
+        wstep_run <= wstep;
+end
 
 `ifdef SIM
 localparam WLEVEL_COUNT=2;
@@ -242,6 +260,7 @@ always @(posedge pclk) begin
     dqs_oen[0:3] <= 4'b1111;
     dq_oen[0:3] <= 4'b1111;
     dqs_hold <= 1'b0;
+    wload_n <= 1'b0;
 
     casex ({state, cycle})
         // RESET off after 200 us 
@@ -313,7 +332,11 @@ always @(posedge pclk) begin
             if (wr) cnt_write <= cnt_write == 8'hff ? 8'hff : cnt_write + 1;
             cycle <= 4'd1;
             busy <= 1'b1;
-            if (rd) dqs_hold <= 1'b1;       // reset WPOINT/RPOINT
+            // HOLD resets the read FIFO. Without it, odd columns come
+            // back as the even one and the prologue compare fails.
+            // It also stops the write clock (UG286). The reload below
+            // puts that clock back on WSTEP before the next store.
+            if (rd) dqs_hold <= 1'b1;
         end else if (refresh) begin
             // auto-refresh
             // no need for precharge-all b/c all our r/w are done with auto-precharge.
@@ -341,8 +364,7 @@ always @(posedge pclk) begin
             A[RCD%4][12] <= 1'b1;                   // BL8 burst length
             A[RCD%4][10] <= 1'b1;                   // set auto precharge
             A[RCD%4][9:0] <= addr[COL_WIDTH-1:0];   // column address
-
-            dqs_hold <= 1'b1;                   // make hold pulse one cycle longer as we are having setup violation here...
+            dqs_hold <= 1'b1;                   // one cycle longer, setup
         end
         {READ, FIVEB'((RCD+CAS+SERDES)/4+1)}: begin   // 7 (6+6+16 = 28)
             data_ready <= 1'b1;
@@ -351,6 +373,10 @@ always @(posedge pclk) begin
             data_ready <= 1'b0;
             busy <= 0;
             state <= IDLE;
+            // WLOADN low reloads the write delay from WSTEP. HOLD left
+            // it stopped. A one-cycle high here makes the falling edge
+            // that loads WSTEP again before the bridge's next command.
+            wload_n <= 1'b1;
         end
 
         // write sequence (7 cycles at 100Mhz)
@@ -460,8 +486,10 @@ always @(posedge pclk) begin
 `ifdef SIM
     `ifdef DDR3_800
             wstep <= 8'h18;     // quick start write leveling for simulation
+            wstep1 <= 8'h18;
     `else
             wstep <= 8'h12;
+            wstep1 <= 8'h12;
     `endif
 `endif
         end
@@ -481,7 +509,10 @@ always @(posedge pclk) begin
             dqs_oen[0:3] <= 4'b0;
 
             if (~DDR3_DQ[0] || ~DDR3_DQ[8]) begin
-                wstep <= wstep + 1'd1;
+                if (~DDR3_DQ[0])
+                    wstep <= wstep + 1'd1;
+                if (~DDR3_DQ[8])
+                    wstep1 <= wstep1 + 1'd1;
                 wlevel_cnt <= 0;
                 cycle <= FIVEB'(WLMRD/4-1);    // loop
             end else begin
@@ -575,7 +606,8 @@ always @(posedge pclk) begin
 `endif
         tick <= 0;
         cycle <= 0;
-        wlevel_cnt <= 0; wlevel_done <= 2'b0; wstep <= 0;
+        wlevel_cnt <= 0; wlevel_done <= 2'b0; wstep <= 0; wstep1 <= 0;
+        wload_n <= 1'b0; dqs_hold <= 1'b0;
         rcalib_cnt <= 0; rcalib_done <= 0; rclkpos <= 0; rclksel <= 0;
         resetn_delay <= 1'b0;       // cause extra 200us reset for DDR3
         state <= RST_WAIT;
@@ -642,8 +674,8 @@ generate
             // .DQS_MODE("X4"), .HWL("true")   
         ) u_dqs (
             .FCLK(fclk), .PCLK(pclk), .DQSIN(DDR3_DQS[i0]), .RESET(~rst_lock_n), .HOLD(dqs_hold), 
-            .RLOADN(1'b0), .WLOADN(1'b0), .RMOVE(1'b0), .WMOVE(1'b0),
-            .DLLSTEP(dllstep), .WSTEP(wstep),        // 0.625/0.025
+            .RLOADN(1'b0), .WLOADN(wload_n), .RMOVE(1'b0), .WMOVE(1'b0),
+            .DLLSTEP(dllstep), .WSTEP(i0 == 0 ? wstep_run : wstep1), // per-lane delay
             .RCLKSEL(rclksel), .READ(dqs_read),
             .DQSR90(clk_dqsr[i0]), .WPOINT(dqs_waddr[i0]), .RPOINT(dqs_raddr[i0]), 
             .DQSW0(clk_dqsw[i0]), .DQSW270(clk_dqsw270[i0]), .RBURST(rburst[i0])

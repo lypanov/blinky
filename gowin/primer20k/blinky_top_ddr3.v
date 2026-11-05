@@ -3,17 +3,24 @@
 // on this board. The CPU and the bridge run on pclk (387 MHz / 4).
 //
 // Dock user LEDs are active-low. CPU io_led is active-high, so invert
-// onto L14. UART TX is M11, the Dock BL702 pin, and only the port
-// test uses it. HDMI, JTAG, and MSPI stay off this design.
+// onto L14. That is the only LED in the webcam cluster that moves.
+// A failed prologue compare leaves it dark. UART TX is M11.
+// HDMI, JTAG, and MSPI stay off this design.
 //
 // SRAM-load only. Do not flash.
-
-// Command-port proof. Pass blink is pclk/2^27 on L14:
-//   96750000 / 134217728 = 0.720844 Hz
-// and only after all 64 words match one sample edge. A13 is the 27 MHz
-// pin divided the same way, 27000000 / 134217728 = 0.201166 Hz, so a
-// configured FPGA is visible even when the compare fails.
-`define DDR3_PORT_TEST
+//
+// The command-port proof (define DDR3_PORT_TEST) blinked L14 at
+// 0.720844 Hz. This build is the CPU prologue. The steady blink is
+// the Blink3 body after every compare difference is zero.
+//
+// Each command now waits out the port-test pair (16 clocks, a refresh,
+// 16 clocks) before the next one, so the 0.538222 Hz fit does not apply.
+// Verilator, N = 5, 32, 128, 512, 1024, periods exact:
+//   pclk/edge = 576*N + 788
+// N = 262144 is 150995732 controller clocks per edge.
+//   edge = 96750000/150995732 = 0.640747 Hz
+//   full blink = 0.320373 Hz, 93.641 frames at 30 fps
+// A corrupt read leaves the pin dark. Locked before the SRAM load.
 
 module blinky_top_ddr3 (
   input  Clock,
@@ -43,6 +50,8 @@ module blinky_top_ddr3 (
   wire [2:0]  unused_addr;
   wire        cpu_led;
   wire [31:0] cpu_pc;
+  wire [31:0] cpu_r0, cpu_r4, cpu_r5, cpu_r7, cpu_r8, cpu_r9;
+  wire [15:0] cpu_mask;
   wire        unused_uart_tx;
 
   wire        ddr_rd;
@@ -51,12 +60,15 @@ module blinky_top_ddr3 (
   wire [25:0] ddr_addr;
   wire [15:0] ddr_din;
   wire [15:0] ddr_dout;
+  wire [127:0] ddr_dout128;
   wire        ddr_ready;
   wire        ddr_busy;
   wire        ddr_resetn;
   wire        write_level_done;
   wire        read_calib_done;
   wire [7:0]  unused_wstep;
+  wire [7:0]  wstep_run;
+  wire [7:0]  wstep1;
   wire [1:0]  unused_rclkpos;
   wire [2:0]  unused_rclksel;
   wire [63:0] unused_debug;
@@ -332,13 +344,136 @@ module blinky_top_ddr3 (
   assign port_s0 = 16'd0;
   assign port_s1 = 16'd0;
   assign port_s2 = 16'd0;
-  assign uart_tx = 1'b1;
+  // One status line about twice a second, after the PLL locks.
+  // H means the prologue hold. After the mask: the scanner index,
+  // the column of the last read, then dq_in beats 0..7 as four
+  // halfword pairs. Beat 0 is the byte the CPU is given today.
+  reg        hold_seen = 1'b0;
+  always @(posedge cpu_clk or negedge pll_lock) begin
+    if (!pll_lock)
+      hold_seen <= 1'b0;
+    else if (cpu_pc[15:0] >= 16'h1390 && cpu_pc[15:0] < 16'h1400)
+      hold_seen <= 1'b1;
+  end
+  reg [1:0] hold_sync = 2'b00;
+  reg [15:0] pc_snap = 16'd0;
+  always @(posedge pclk) begin
+    hold_sync <= {hold_sync[0], hold_seen};
+    pc_snap <= cpu_pc[15:0];
+  end
+  // dout128 is {beat0, ..., beat7} with beat 0 in the high half.
+  // Repack so beat 0 is the low halfword. The CPU samples beat 0 only.
+  reg [127:0] cap_beats = 128'd0;
+  reg [25:0]  cap_addr = 26'd0;
+  always @(posedge pclk) if (ddr_ready) begin
+    cap_addr <= ddr_addr;
+    cap_beats <= {ddr_dout128[15:0], ddr_dout128[31:16],
+                  ddr_dout128[47:32], ddr_dout128[63:48],
+                  ddr_dout128[79:64], ddr_dout128[95:80],
+                  ddr_dout128[111:96], ddr_dout128[127:112]};
+  end
+  // The two repeated beat words are the last write instead. A store
+  // that the DRAM did not take still shows up here.
+  reg [25:0] wr_addr = 26'd0;
+  reg [15:0] wr_data = 16'd0;
+  always @(posedge pclk) if (ddr_wr) begin
+    wr_addr <= ddr_addr;
+    wr_data <= ddr_din;
+  end
+
+  function [7:0] hexdig;
+    input [3:0] n;
+    begin
+      hexdig = (n < 4'd10) ? (8'h30 + {4'b0, n}) : (8'h37 + {4'b0, n});
+    end
+  endfunction
+
+  function [31:0] hex16;
+    input [15:0] v;
+    begin
+      hex16 = {hexdig(v[15:12]), hexdig(v[11:8]), hexdig(v[7:4]), hexdig(v[3:0])};
+    end
+  endfunction
+  function [63:0] hex32;
+    input [31:0] v;
+    begin
+      hex32 = {hex16(v[31:16]), hex16(v[15:0])};
+    end
+  endfunction
+
+  // 76 bytes: calib, hold, PC, mask, index, column, two beat
+  // pairs, the last write address and data, then the two write-level
+  // steps. The beat pairs repeat, so the last two slots are the write.
+  localparam integer UBYTES = 76;
+  wire [UBYTES*8-1:0] msg = {
+    read_calib_done ? "C" : ".",
+    hold_sync[1] ? "H" : ".",
+    hex16(pc_snap), " ",
+    hex16(cpu_mask), " ",
+    hex32(cpu_r5), " ",
+    hex32({6'd0, cap_addr}), " ",
+    hex32(cap_beats[31:0]), " ",
+    hex32(cap_beats[63:32]), " ",
+    hex32({6'd0, wr_addr}), " ",
+    hex32({16'd0, wr_data}), " ",
+    hex16({8'h00, unused_wstep}), " ",
+    hex16({8'h00, wstep_run}), "\n"
+  };
+  reg [UBYTES*8-1:0] snap = {UBYTES{8'h00}};
+  reg [25:0] rep = 26'd0;
+  reg        boot_sent = 1'b0;
+  reg        sending = 1'b0;
+  reg [6:0]  bi = 7'd0;
+  reg        tx_we = 1'b0;
+  reg [7:0]  tx_data = 8'h00;
+  wire       uart_busy;
+  wire [7:0] emit = snap[(UBYTES-1-bi)*8 +: 8];
+  ddr3_uart_tx #(.CLKS_PER_BIT(840)) u_uart (
+    .clk    (pclk),
+    .resetn (pll_lock),
+    .data   (tx_data),
+    .we     (tx_we),
+    .tx     (uart_tx),
+    .busy   (uart_busy)
+  );
+  always @(posedge pclk or negedge pll_lock) begin
+    if (!pll_lock) begin
+      rep <= 26'd0;
+      boot_sent <= 1'b0;
+      sending <= 1'b0;
+      bi <= 4'd0;
+      tx_we <= 1'b0;
+    end else begin
+      tx_we <= 1'b0;
+      rep <= rep + 26'd1;
+      if (!sending && (!boot_sent || rep == 26'd0)) begin
+        boot_sent <= 1'b1;
+        sending <= 1'b1;
+        bi <= 7'd0;
+        snap <= msg;
+      end else if (sending && !uart_busy && !tx_we) begin
+        tx_data <= emit;
+        tx_we <= 1'b1;
+        if (bi == UBYTES-1)
+          sending <= 1'b0;
+        else
+          bi <= bi + 7'd1;
+      end
+    end
+  end
   CPUMinimalWrapper u_cpu (
     .clock            (pclk),
     .reset            (cpu_reset),
     .io_cpu_clock     (cpu_clk),
     .io_led           (cpu_led),
     .io_pc            (cpu_pc),
+    .io_r0            (cpu_r0),
+    .io_r4            (cpu_r4),
+    .io_r5            (cpu_r5),
+    .io_r7            (cpu_r7),
+    .io_r8            (cpu_r8),
+    .io_r9            (cpu_r9),
+    .io_dbgMask       (cpu_mask),
     .io_deadbeef      (unused_deadbeef),
     .io_addr          (unused_addr),
     .io_uart_rx       (1'b1),
@@ -381,10 +516,13 @@ module blinky_top_ddr3 (
     .addr         (ddr_addr),
     .din          (ddr_din),
     .dout         (ddr_dout),
+    .dout128      (ddr_dout128),
     .data_ready   (ddr_ready),
     .busy         (ddr_busy),
     .write_level_done(write_level_done),
     .wstep        (unused_wstep),
+    .wstep_run    (wstep_run),
+    .wstep1       (wstep1),
     .read_calib_done(read_calib_done),
     .rclkpos      (unused_rclkpos),
     .rclksel      (unused_rclksel),
@@ -414,25 +552,13 @@ module blinky_top_ddr3 (
   assign led[1] = alive_div[26];
   assign led[2] = cpu_tick;
 `else
-  // Webcam cluster is L14 / C13 / A13. N16, N14, L16 are outside it.
-  //   L14 = program LED, the only proof pin
-  //   C13 = PC changing (bit 22)
-  //   A13 = io_led edges (bit 14)
-  reg [23:0] pc_div = 24'd0;
-  reg [15:0] led_div = 16'd0;
-  reg [31:0] pc_d = 32'd0;
-  reg        led_d = 1'b0;
-  always @(posedge cpu_clk) begin
-    pc_d <= cpu_pc;
-    led_d <= cpu_led;
-    if (cpu_pc != pc_d)
-      pc_div <= pc_div + 24'd1;
-    if (cpu_led != led_d)
-      led_div <= led_div + 16'd1;
-  end
+  // L14 is the only moving LED the webcam cluster can see. C13 and A13
+  // stay dark, so a PC divider cannot be reported as the proof blink.
+  // cpu_led is 0 until every compare difference was zero, and then it
+  // follows the Blink3 state. Failure leaves L14 off.
   assign IO_voltage = ~cpu_led;
-  assign led[0] = pc_div[22];
-  assign led[1] = led_div[14];
+  assign led[0] = 1'b1;
+  assign led[1] = 1'b1;
   assign led[2] = 1'b1;
 `endif
   assign led[3] = 1'b1;

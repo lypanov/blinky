@@ -115,6 +115,17 @@ class Ddr3UserBundle extends Bundle {
  * 96.75e6 * 7.8125e-6 = 756 controller clocks, which is tREFI for this
  * 1 Gbit part (8192 refreshes in 64 ms). A due refresh runs before the
  * next CPU command and never between the two halves of one word.
+ *
+ * busy falls at tRC, about 52 ns. The 64-word port passed only after
+ * waiting 16 controller clocks (165 ns) past that, which covers tRFC
+ * and the write's auto-precharge. The same wait sits between every
+ * command this bridge issues.
+ *
+ * The port test also refreshes between commands. Every CPU command
+ * does that same pair: gap, refresh, gap, then the next command.
+ * The pair alone did not move a store onto a cell a read had already
+ * touched. The controller reloads the write delay after HOLD; that
+ * is what put the following write on the addressed column.
  */
 class Ddr3Bridge extends Module {
   val io = IO(new Bundle {
@@ -128,7 +139,7 @@ class Ddr3Bridge extends Module {
     val ddr = new Ddr3UserBundle
   })
 
-  val sIdle :: sCal :: sRef :: sRefWait :: sCmd :: sWait :: sDone :: Nil = Enum(7)
+  val sIdle :: sCal :: sRef :: sRefWait :: sGap :: sCmd :: sWait :: sDone :: Nil = Enum(8)
   val state = RegInit(sIdle)
 
   val pend = RegInit(false.B)
@@ -145,6 +156,16 @@ class Ddr3Bridge extends Module {
   // 756 clocks is one tREFI at the 96.75 MHz controller clock.
   val refCnt = RegInit(756.U(10.W))
   val doneCnt = RegInit(0.U(3.W))
+  // Countdown while state is sGap. 16 matches the port-test wait: the
+  // counter is loaded with 16 and the next command is issued once it
+  // has been seen at 0, which is 16 clocks after busy was observed low.
+  val gapLeft = RegInit(0.U(5.W))
+  val gapNext = RegInit(sIdle)
+  // After a CPU command, the first gap ends at a refresh and the second
+  // gap ends at `resume` (the next half, or sDone). A background refresh
+  // leaves cmdRef clear and picks sCmd or sIdle from pend.
+  val resume = RegInit(sIdle)
+  val cmdRef = RegInit(false.B)
 
   val refreshDue = refCnt === 0.U
   val lane = baseAddr(1, 0)
@@ -227,7 +248,31 @@ class Ddr3Bridge extends Module {
       when (sawBusy && !io.ddr.busy) {
         sawBusy := false.B
         // catchReq is this cycle's pulse. pend has not updated yet.
-        state := Mux(pend || catchReq, sCmd, sIdle)
+        gapLeft := 16.U
+        when (cmdRef) {
+          cmdRef := false.B
+          gapNext := resume
+        } .otherwise {
+          gapNext := Mux(pend || catchReq, sCmd, sIdle)
+        }
+        state := sGap
+      }
+    }
+    is (sGap) {
+      // A load or store issued during a background refresh has to be
+      // caught here too. The pulse is one CPU cycle and does not repeat.
+      val catchReq = (io.cpuRead || io.cpuWrite) && !pend
+      when (catchReq) {
+        latch()
+        pend := true.B
+        when (gapNext === sIdle) {
+          gapNext := sCmd
+        }
+      }
+      when (gapLeft === 0.U) {
+        state := Mux(catchReq && gapNext === sIdle, sCmd, gapNext)
+      } .otherwise {
+        gapLeft := gapLeft - 1.U
       }
     }
     is (sCmd) {
@@ -261,12 +306,18 @@ class Ddr3Bridge extends Module {
         }
       }
       when (sawBusy && !io.ddr.busy && (writePhase || got)) {
+        // Port-test order: 16 clocks, a refresh, 16 clocks, then the
+        // next half or sDone.
+        gapLeft := 16.U
+        gapNext := sRef
+        cmdRef := true.B
+        state := sGap
         when (lastHalf) {
           pend := false.B
-          state := sDone
+          resume := sDone
         } .otherwise {
           phase := phase + 1.U
-          state := sCmd
+          resume := sCmd
         }
       }
     }

@@ -19,6 +19,13 @@ class CpuWrapDdr3 extends CpuWrapBase {
   val ddr = new Ddr3UserBundle
   val cpu_clock = Input(Clock())
   val pc = Output(UInt(32.W))
+  val r0 = Output(UInt(32.W))
+  val r4 = Output(UInt(32.W))
+  val r5 = Output(UInt(32.W))
+  val r7 = Output(UInt(32.W))
+  val r8 = Output(UInt(32.W))
+  val r9 = Output(UInt(32.W))
+  val dbgMask = Output(UInt(16.W))
 }
 
 class CPUMinimalWrapper(
@@ -116,7 +123,15 @@ class CPUMinimalWrapper(
     align.io.bridgeStall := bridge.io.memStall
     cpu.io.memStall := align.io.stall
     if (useRealGowin) {
-      io.asInstanceOf[CpuWrapDdr3].pc := cpu.io.pc
+      val wrap = io.asInstanceOf[CpuWrapDdr3]
+      wrap.pc := cpu.io.pc
+      wrap.r0 := cpu.io.r0
+      wrap.r4 := cpu.io.r4
+      wrap.r5 := cpu.io.r5
+      wrap.r7 := cpu.io.r7
+      wrap.r8 := cpu.io.r8
+      wrap.r9 := cpu.io.r9
+      wrap.dbgMask := cpu.io.dbgMask
     }
     if (useRealGowin) {
       val ddr = io.asInstanceOf[CpuWrapDdr3].ddr
