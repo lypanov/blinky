@@ -1,5 +1,61 @@
 # Step 1: DDR3 data port on the Tang Primer 20K Dock
 
+## Proven: CPU prologue
+
+The image without `` `define DDR3_PORT_TEST `` writes the walking pattern
+through the CPU's MemBackend and blinks L14 only when all eight compares
+store zero. The rate was locked from Verilator before this load. With the
+port-test pair (16 clocks, a refresh, 16 clocks) after every halfword
+command, the periods at N = 5, 32, 128, 512, and 1024 were exact:
+
+`pclk/edge = 576*N + 788`
+
+N = 262144 is 150,995,732 controller clocks per edge.
+
+- edge = 96750000/150995732 = 0.640747 Hz
+- full blink = 0.320373 Hz
+- 93.641 frames at 30 fps
+
+SRAM load was `openFPGALoader --busdev-num 003:078 -b tangprimer20k -m`.
+The Nano 4K at `003:081` was not loaded. Place-and-route reported 0 setup
+and 0 hold endpoints on every clock. The delay word at `0x105C` is
+`60000004`.
+
+UART on M11, the Dock's FT2232 channel B, at 115200: after calibration the
+mask is `00FF`, `r5` stays `FFFFFFFF`, the hold flag stays clear, and the
+PC sits in the Blink3 delay loop (`0x106C`, `0x1074`, `0x1080`). The
+counter at halfword `0x38` reads back as a live count. MT[2] at byte
+`0x18` reads back as `0x70`. A failed compare would be in the scanner at
+`0x1390` with the hold flag set. This boot was not.
+
+Webcam `measure_blink` `roi=primer20k` `duration=20` `warmup=2`, clip
+`blink-measure/20261105-074352-mcp` (661 frames, delivered 30.045 fps).
+The tool reported edge 0.32 Hz on the LED at (335, 109). Raw red at
+(335, 117), the pixel that carried the command-port L14, starts mid-blink
+and then the complete on+off runs are 48+46, 48+46, 47+46, 48+46, 48+46,
+48+46 frames. Those six periods are 94, 94, 93, 94, 94, 94. Mean 93.833
+frames, 0.3197 Hz, against 93.641. The other two LEDs in the cluster stay
+steady. The command-port alive marker at (336, 125) stays dark (this image
+drives only L14). The Nano 4K LED in the same clip is still 0.5 Hz.
+
+`+ddr3_corrupt` leaves the pin dark in simulation: the model returns 0,
+the compare misses, and the Blink3 body is not reached. The pin is the
+Blink3 LED state AND the eight-bit mask.
+
+The write that failed before this image is the one after a read. `HOLD`
+on a user read resets the read FIFO. Without it, odd columns come back as
+the even column and the compare fails (mask `0000`, PC in the scanner).
+UG286 also says `HOLD` stops the write clock. With `HOLD` and no reload,
+the toggle's low half (`0x5A74`, aimed at column `0x28`) came back two
+columns later, and the light cell stayed the command-port residue
+`addr ^ 0xA5A5`. The read's last cycle now pulses `WLOADN` high for one
+clock. The falling edge reloads the write delay from `WSTEP` before the
+bridge's next command. Lane 0's `WSTEP` is forced to 10 after read
+calibration; that is the step whose prologue compare returned `00FF`.
+The 16-clock gap and `RCALIB_COUNT` of 16 are the same waits as the
+command-port proof. The 1.178879 Hz figure further down is the fit from
+before those waits. It is not this measurement.
+
 ## Proven: 64-word command port
 
 The bitstream with `` `define DDR3_PORT_TEST `` in `blinky_top_ddr3.v` is the one that ran. It writes 64 halfwords (`addr ^ 16'hA5A5`), refreshes between words, then reads them back. L14 blinks only if every word matches one sample edge. The locked rate, from the PLL before the load, is
@@ -36,7 +92,7 @@ That earlier 64-word image sampled `dout` on `data_ready` as well, waited only u
 
 The pins are not the difference. The placer puts the DDR balls on banks 4, 5, and 6, all `SSTL15` / `BANK_VCCIO=1.5`, the same balls as `nestang-v04` `nestang_dock.cst` including `nCS` at P5. The documented 1.5 V keys land on those banks (T2–T5 on bank 4, C7/D7/E8/E9 on bank 6). Byte 0, DQS0, and CK are on bank 5. Gowin's DDR3 IP was not swapped in. Its manual treats `tRFC` as its own REFRESH-to-ACTIVE parameter, separate from `tRC`, which is the gap this controller was not waiting.
 
-The CPU prologue path is still in the source, under the `` `else `` of `DDR3_PORT_TEST`. It has not blinked at 1.178879 Hz. A diagnostic load reached the failure hold at one PC change per `cpu_clk` (2.885 Hz on the PC divider), so that path completed memory operations with bad data. It is not this proof.
+The CPU prologue path is the section above. This command-port bitstream is a different image: `` `define DDR3_PORT_TEST ``, and it does not run the CPU.
 
 ## Design
 
@@ -100,12 +156,13 @@ the other byte survives.
 
 Refresh is the bridge's job. This part needs a refresh every 7.8125 µs
 (8192 refreshes in 64 ms). At the 96.75 MHz controller clock that is 756
-clocks. A due refresh runs before the next CPU command and never between
-the two halves of one word. A CPU request is only high for one cycle, so
-a request that arrives during a refresh is latched and run after it. The
-counter does not start until read calibration has finished, and the CPU
-is held in reset until then. If calibration never finishes the blinking
-LED stays dark. That CPU image is not the bitstream measured above.
+clocks, and a due refresh still runs on that cadence. Every CPU halfword
+also does the command-port pair: 16 clocks, a refresh, 16 clocks, then
+the next half or the done state. A CPU request is only high for one cycle,
+so a request that arrives during a refresh is latched and run after it.
+The counter does not start until read calibration has finished, and the
+CPU is held in reset until then. If calibration never finishes the
+blinking LED stays dark.
 
 ## Why a wrong result cannot blink at this rate
 
@@ -113,7 +170,7 @@ LED stays dark. That CPU image is not the bitstream measured above.
   one compare. The eight zero-difference stores are what arm the pin.
 - The one remaining software hole is a `SUB` that returns 0 for unequal
   operands. That would arm the pin and also collapse the delay compare, so
-  the LED would toggle every iteration, near 55 kHz, not at the rate below.
+  the LED would toggle every iteration, near 55 kHz, not at 0.320373 Hz.
 - `+ddr3_corrupt` makes the behavioural model return 0 on every read, with
   the same `data_ready` timing. On the netlist that will be synthesized,
   20000 `pclk` cycles after reset: 0 LED edges, the Blink3 body at
@@ -208,13 +265,12 @@ is a quarter of that. The cycle counts are `pclk` cycles.
 - full blink (on + off) = **1.178879 Hz**
 - full period = **0.848264 s**
 
-The tool's `predicted_blink3_hz` (3.433 Hz) is the block-RAM Blink3 figure.
-It is not this prediction. 1.178879 Hz is inside the detector's 0.2–8 Hz
-band. It is 136% above the 0.5 Hz the Nano 4K is blinking and 66% below
-the 3.433 Hz block-RAM rate. The Dock did not blink at 1.178879 Hz. The
-load of this CPU image reached the failure hold, one PC change per
-`cpu_clk` (2.885 Hz on the divider). The measured proof is the
-command-port blink at the top of this note.
+That 1.178879 Hz fit does not include the 16-clock gap or the refresh
+between commands. Both are inside the delay loop of the image that
+blinked. The lock that was written down before the SRAM load, and the
+rate the camera measured, is 0.320373 Hz (93.641 frames). The tool's
+`predicted_blink3_hz` (3.433 Hz) is the block-RAM Blink3 figure. It is
+not either of these.
 
 An earlier `pclk/4` bitstream, without the four-cycle stall hold, was
 loaded onto the Dock. The upper board's three LEDs stayed steady for the

@@ -275,7 +275,48 @@ def assemble_prologue(success: int = 0) -> list[int]:
     a.at(lambda pc, success=success: cond_branch(pc, success, 7))
     a.label("hold")
     a.word(f1(8, 1, 1, 1))
-    a.branch("hold", 7)
+    # Compare failed. Walk all 64 words, holding each for ~0.75 s so a
+    # UART line can catch r5=index and r4=the word. Index 0..31 is the
+    # pattern at 0x400; 32..63 is the complement at 0x500.
+    a.word(mov_imm(6, 0))
+    a.label("scan")
+    a.word(mov_imm(3, PATTERN))
+    a.word(f1(9, 11, 6, 32))       # r11 = index - 32; flags for the GE
+    a.branch("ge32", 13)
+    a.word(f1(8, 1, 6, 0))         # r1 = index
+    a.word(f0(8, 1, 1, 1))
+    a.word(f0(8, 1, 1, 1))         # r1 = index * 4
+    a.word(f0(8, 3, 3, 1))
+    a.branch("loadw", 7)
+    a.label("ge32")
+    a.word(mov_imm(3, COMPLEMENT))
+    a.word(f1(8, 1, 11, 0))        # r1 = index - 32
+    a.word(f0(8, 1, 1, 1))
+    a.word(f0(8, 1, 1, 1))
+    a.word(f0(8, 3, 3, 1))
+    a.label("loadw")
+    a.word(ldw(4, 3, 0))
+    a.word(mov_imm(5, 0))
+    a.word(f1(8, 5, 6, 0))         # r5 = index, stable through the delay
+    # ~0.75 s at 24 MHz: 200 * 30000 iterations of the 3-instruction loop.
+    # Longer than the 0.69 s UART period, so a line never skips an index.
+    a.word(mov_imm(7, 0))
+    a.label("od")
+    a.word(mov_imm(8, 0))
+    a.label("id")
+    a.word(f1(8, 8, 8, 1))
+    a.word(f1(9, 2, 8, 30000))
+    a.branch("id", 9)
+    a.word(f1(8, 7, 7, 1))
+    a.word(f1(9, 2, 7, 200))
+    a.branch("od", 9)
+    a.word(f1(8, 6, 6, 1))
+    a.word(f1(9, 2, 6, 64))
+    a.branch("wrap", 1)
+    a.branch("scan", 7)
+    a.label("wrap")
+    a.word(mov_imm(6, 0))
+    a.branch("scan", 7)
     return a.encode(PROLOGUE)
 
 

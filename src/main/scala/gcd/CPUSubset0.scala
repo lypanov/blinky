@@ -82,6 +82,15 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val r1 = Output(UInt(32.W))  // Output register R1 for testing
     val r2 = Output(UInt(32.W))  // Output register R2 for testing
     val r3 = Output(UInt(32.W))  // Output register R3 for testing
+    // Prologue accumulators. At the 0x1390 hold, r0 is the OR of every
+    // compare difference, r4/r5 are the pattern XOR and sum, r8/r9 the
+    // complement XOR and sum, and r7 is the last load.
+    val r4 = Output(UInt(32.W))
+    val r5 = Output(UInt(32.W))
+    val r7 = Output(UInt(32.W))
+    val r8 = Output(UInt(32.W))
+    val r9 = Output(UInt(32.W))
+    val dbgMask = Output(UInt(16.W))
     val halted = Output(Bool())  // Signal to indicate when the CPU has completed execution
     val led = Output(Bool())     // LED output for the Tang Nano 4K
     val pc = Output(UInt(32.W))  // Program counter value for testing
@@ -826,6 +835,12 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   io.r1 := regs(1)
   io.r2 := regs(2)
   io.r3 := regs(3)
+  io.r4 := regs(4)
+  io.r5 := regs(5)
+  io.r7 := regs(7)
+  io.r8 := regs(8)
+  io.r9 := regs(9)
+  io.dbgMask := checkMask.map(m => (m.asUInt | 0.U(16.W))(15, 0)).getOrElse(0.U(16.W))
   io.halted := halted
   val tailOk = if (tailChecks == 0) {
     true.B
