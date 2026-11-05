@@ -25,8 +25,9 @@
 // Locked before the SRAM load.
 //
 // DDR3_READER is the cold step sweep. The place that passed
-// programmed both lanes to step 10. DDR3_FETCH forces both lanes to
-// that step and does not sweep. The ALU place stays on the default:
+// programmed both lanes to step 10. DDR3_FETCH is a new route: those
+// same codes are one DLL step above its eye, so it forces both lanes
+// to step 9 and does not sweep. The ALU place stays on the default:
 // lane 0 at step 10, lane 1 on the write-level result. The delay
 // loop is unchanged, so the rate above is the stored-BL prediction.
 
@@ -460,7 +461,7 @@ module blinky_top_ddr3 (
     // Sweep image: programmed lane 1, then programmed lane 0.
     hex16({8'h00, wstep1_run}), " ",
 `elsif DDR3_FETCH
-    // Stored-BL image: both lanes are forced to step 10.
+    // Stored-BL image: both lanes are forced to this route's eye.
     hex16({8'h00, wstep1_run}), " ",
 `else
     hex16({8'h00, unused_wstep}), " ",
@@ -652,12 +653,14 @@ module blinky_top_ddr3 (
     end
   end
 `else
-  localparam [7:0] LANE0_STEP = 8'd10;
 `ifdef DDR3_FETCH
-  // The step-3 place passed with both lanes at step 10. Lane 1 is not
-  // left on the write-level result.
-  localparam [7:0] LANE1_STEP = 8'd10;
+  // Reader place passed at step 10. On this route step 10 is the
+  // even-word alias (R5 AAAAAAAA, beats A5A5A5A5). The eye is step 9
+  // on both lanes. Lane 1 is not left on the write-level result.
+  localparam [7:0] LANE0_STEP = 8'd9;
+  localparam [7:0] LANE1_STEP = 8'd9;
 `else
+  localparam [7:0] LANE0_STEP = 8'd10;
   localparam [7:0] LANE1_STEP = 8'd0;
 `endif
   wire [7:0] step0_ov = 8'd0;
