@@ -85,10 +85,9 @@ object CPUSimTop {
 
     val (gen, outFile, label) = image match {
       case "blink3" =>
-        val imemPath = new File(
-          projectRoot,
-          sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
-        ).getAbsolutePath
+        val rawImem = sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
+        val imemFile = new File(rawImem)
+        val imemPath = (if (imemFile.isAbsolute) imemFile else new File(projectRoot, rawImem)).getAbsolutePath
         val words = loadInstructionsFromFile(imemPath)
         println(s"CPUSimTop: Blink3 custom IMEM ${words.length} words from $imemPath")
         (

@@ -31,7 +31,8 @@ VERILATOR_FLAGS := --cc --exe --build --trace-fst \
 
 .PHONY: all sim verilate run wave plot visualizer clean generate traces \
 	imem-blink3 generate-blink2 generate-blink3 \
-	verilate-blink2 verilate-blink3 run-blink2 run-blink3
+	verilate-blink2 verilate-blink3 run-blink2 run-blink3 \
+	blink3-period
 
 all: traces
 
@@ -144,6 +145,11 @@ wave: run-blink2
 
 visualizer: traces
 	python3 $(SIMDIR)/visualizer/serve.py
+
+# Small-N Blink3: LED edges must match 15N+18. Default N=5 (93 cycles/edge).
+BLINK3_N ?= 5
+blink3-period:
+	$(ROOT)/tools/run_blink3_period.sh $(BLINK3_N)
 
 clean:
 	rm -rf $(SIMDIR)/obj_dir $(SIMDIR)/obj_dir_blink2 $(SIMDIR)/obj_dir_blink3 \

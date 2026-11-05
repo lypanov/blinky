@@ -356,6 +356,7 @@ sim/out/
 sim/obj_dir/
 sim/obj_dir_blink2/
 sim/obj_dir_blink3/
+sim/obj_dir_blink3_n*/
 sim/visualizer/trace.json
 sim/visualizer/program.json
 sim/visualizer/imem/

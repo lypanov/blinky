@@ -25,8 +25,8 @@ const WATCH_ORDER = [
 ];
 
 const state = {
-  traces: { blink2: null, blink3: null },
-  programs: { blink2: [], blink3: [] },
+  traces: { blink2: null, blink3: null, blink3n5: null },
+  programs: { blink2: [], blink3: [], blink3n5: [] },
   image: "blink2",
   i: 0,
   running: false,
@@ -214,12 +214,17 @@ function initBannerText(init) {
   return `BEGIN body at ${hex32(init.begin_pc)} executes; STW at ${hex32(init.store_pc)} writes 0. ${light}.`;
 }
 
-function delayBannerText(delay) {
+function delayBannerText(delay, trace) {
   if (!delay) return "";
   const stored = delay.value === delay.max_iterations
     ? `dmem[${hex32(delay.addr)}] = ${delay.max_iterations}`
     : `dmem[${hex32(delay.addr)}] is ${delay.value}`;
-  return `MHI at ${hex32(delay.mhi_pc)} then STW at ${hex32(delay.store_pc)}. ${stored}. 800-cycle sim never reaches Toggle.`;
+  const op = (delay.mhi_word >>> 28) === 4 ? "MOV" : "MHI";
+  const periods = (trace && trace.summary && trace.summary.periods) || [];
+  const tail = periods.length
+    ? `LED edge period ${trace.summary.mean_period.toFixed(0)} cycles (15N+18, N=${delay.max_iterations}).`
+    : "800-cycle sim never reaches Toggle.";
+  return `${op} at ${hex32(delay.mhi_pc)} then STW at ${hex32(delay.store_pc)}. ${stored}. ${tail}`;
 }
 
 function applyCycle() {
@@ -338,6 +343,7 @@ function selectImage(name) {
   state.lastRegs = {};
   $("btn-blink2").classList.toggle("active", name === "blink2");
   $("btn-blink3").classList.toggle("active", name === "blink3");
+  $("btn-blink3n5").classList.toggle("active", name === "blink3n5");
   const t = currentTrace();
   const p = currentProgram();
   if (!t) {
@@ -363,7 +369,7 @@ function selectImage(name) {
     $("fail-text").innerHTML = failBannerHtml(t.failure);
   }
   if (t.init) $("init-text").textContent = initBannerText(t.init);
-  if (t.delay) $("delay-text").textContent = delayBannerText(t.delay);
+  if (t.delay) $("delay-text").textContent = delayBannerText(t.delay, t);
   renderSource(t.mod_source || []);
   renderAsm(p);
   applyCycle();
@@ -414,6 +420,7 @@ function bind() {
   $("btn-delay").onclick = jumpToDelay;
   $("btn-blink2").onclick = () => selectImage("blink2");
   $("btn-blink3").onclick = () => selectImage("blink3");
+  $("btn-blink3n5").onclick = () => selectImage("blink3n5");
   $("speed").oninput = () => {
     $("speed-label").textContent = SPEEDS[Number($("speed").value)].label;
     if (state.running) schedule();
@@ -431,6 +438,7 @@ function bind() {
     else if (ev.key === "d" || ev.key === "D") { jumpToDelay(); }
     else if (ev.key === "2") selectImage("blink2");
     else if (ev.key === "3") selectImage("blink3");
+    else if (ev.key === "5") selectImage("blink3n5");
     else if (ev.key === "[") {
       $("speed").value = Math.max(0, Number($("speed").value) - 1);
       $("speed").dispatchEvent(new Event("input"));
@@ -445,18 +453,26 @@ async function main() {
   bind();
   renderRegsGrid();
   try {
-    const [b2, b3, p2, p3] = await Promise.all([
+    const [b2, b3, b3n5, p2, p3, p3n5] = await Promise.all([
       loadJson("./traces/blink2.json"),
       loadJson("./traces/blink3.json"),
+      loadJson("./traces/blink3_n5.json").catch(() => null),
       loadJson("./traces/blink2_program.json").catch(() => null),
       loadJson("./traces/blink3_program.json").catch(() => null),
+      loadJson("./traces/blink3_n5_program.json").catch(() => null),
     ]);
     state.traces.blink2 = b2;
     state.traces.blink3 = b3;
+    state.traces.blink3n5 = b3n5;
     state.programs.blink2 = (p2 && p2.entries) || [];
     state.programs.blink3 = (p3 && p3.entries) || [];
+    state.programs.blink3n5 = (p3n5 && p3n5.entries) || [];
+    $("btn-blink3n5").classList.toggle("hidden", !b3n5);
     const params = new URLSearchParams(location.search);
-    const want = params.get("p") === "blink3" ? "blink3" : "blink2";
+    const p = params.get("p");
+    const want = (p === "blink3n5" || (p === "blink3" && params.get("n") === "5"))
+      ? "blink3n5"
+      : (p === "blink3" ? "blink3" : "blink2");
     selectImage(want);
     if (params.get("fail") != null || params.get("step") === "fail") {
       jumpToFailure();
@@ -466,6 +482,15 @@ async function main() {
       jumpToInit();
     } else if (params.get("delay") != null) {
       jumpToDelay();
+    } else if (params.get("led") != null) {
+      const wantOn = params.get("led") === "1" || params.get("led") === "on";
+      const steps = (currentTrace() && currentTrace().cycles) || [];
+      const firstEdge = ((currentTrace() && currentTrace().led_toggles) || [0])[0];
+      const idx = steps.findIndex((c) => !!c.led === wantOn && c.cycle >= firstEdge);
+      if (idx >= 0) {
+        state.i = idx;
+        applyCycle();
+      }
     } else if (params.get("i") != null) {
       state.i = Number(params.get("i")) || 0;
       applyCycle();

@@ -27,6 +27,7 @@ from imem_layout import (  # noqa: E402
     mhi_r0,
     pad_imem,
     patch_blink3_maxiter,
+    patch_blink3_sim_n,
 )
 
 TRACE = os.path.join(HERE, "visualizer", "traces", "blink3.json")
@@ -94,10 +95,21 @@ def test_fpga_imem_pad_and_patch():
     print("[ok] FPGA IMEM pad 2048; MHI patch 131072; predicted ratio ~2")
 
 
+def test_sim_small_n_is_mov():
+    mem = blink3_imem(FINAL)
+    patched = patch_blink3_sim_n(mem, 5)
+    assert patched[BLINK3_MAXITER_PC // 4] == 0x40000005, hex(patched[BLINK3_MAXITER_PC // 4])
+    assert patched[0] == mem[0] and patched[0x108C // 4] == mem[0x108C // 4]
+    assert patch_blink3_sim_n(mem, 262144)[BLINK3_MAXITER_PC // 4] == BLINK3_MHI_WORD
+    assert blink3_cycles_per_edge(5) == 15 * 5 + 18 == 93
+    print("[ok] N=5 is MOV R0, 5; edge period 93; N=262144 stays MHI")
+
+
 def main() -> int:
     test_source_and_image()
     test_trace_stores_delay()
     test_fpga_imem_pad_and_patch()
+    test_sim_small_n_is_mov()
     return 0
 
 

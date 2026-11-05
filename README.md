@@ -111,6 +111,7 @@ exposed to the internet:
 ssh -N -L 8765:127.0.0.1:8765 bee
 open http://127.0.0.1:8765/                 # Blink2
 open http://127.0.0.1:8765/?p=blink3        # Blink3
+open http://127.0.0.1:8765/?p=blink3n5      # Blink3 with maxIterations = 5 (LED period 93)
 open http://127.0.0.1:8765/?p=blink3&delay  # maxIterations := 262144 (MHI / dmem[0x74])
 open http://127.0.0.1:8765/?p=blink3&init   # AMMT BEGIN at 0x1028
 open http://127.0.0.1:8765/?p=blink3&light  # STW light := 0 at 0x1038
@@ -121,7 +122,9 @@ then `http://<bee-lan-ip>:8765/`.
 
 Keyboard: Space run/pause, `S` / `→` next instruction, `A` / `←` previous, `R`
 reset, `I` AMMT BEGIN, `L` light:=0, `D` delay 262144, `F` jump to BL Toggle if present,
-`2` / `3` switch program, `[` / `]` speed.
+`2` / `3` / `5` switch program (`5` is Blink3 with N=5), `[` / `]` speed.
+
+Bee can run Blink3 and the NESTang Alter Ego sim side by side. Commands, the N=5 waveform, and the Alter Ego frames are in [`docs/sim-bee/README.md`](docs/sim-bee/README.md). Both commands stay in Verilator. NESTang stays in `~/fpga/nestang`.
 
 ---
 

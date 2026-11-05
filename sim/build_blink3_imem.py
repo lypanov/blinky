@@ -21,7 +21,7 @@ from imem_layout import (  # noqa: E402
     blink3_imem,
     blink3_predicted_hz,
     pad_imem,
-    patch_blink3_maxiter,
+    patch_blink3_sim_n,
     write_words,
 )
 
@@ -32,7 +32,7 @@ def main() -> int:
         "--max-iter",
         type=int,
         default=None,
-        help="Patch LightToggle MHI delay (e.g. 262144 or 131072). Default: leave image as linked.",
+        help="Patch LightToggle delay. Multiples of 65536 stay MHI; smaller N becomes MOV R0, N.",
     )
     parser.add_argument(
         "--pad",
@@ -51,7 +51,7 @@ def main() -> int:
     words = blink3_imem(src)
     n = args.max_iter
     if n is not None:
-        words = patch_blink3_maxiter(words, n)
+        words = patch_blink3_sim_n(words, n)
     if args.pad is not None:
         words = pad_imem(words, args.pad)
 
