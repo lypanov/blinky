@@ -23,6 +23,9 @@
 // - Read calibration starts at rclkpos 1, rclksel 6, and commits
 //   on rburst. It does not compare dq_in.
 // - WLEVEL_COUNT and RCALIB_COUNT are 2.
+// - dm_out is cleared with a nonblocking assign. A blocking
+//   default is visible to OSER8_MEM on this same pclk, and the
+//   write beat stays masked.
 
 module ddr3_controller
 #(
@@ -312,7 +315,10 @@ always @(posedge pclk) begin
     {nRAS[2], nCAS[2], nWE[2]} <= CMD_NOP; {nRAS[3], nCAS[3], nWE[3]} <= CMD_NOP;
     A[0] <= 1'b0; A[1] <= 1'b0; A[2] <= 1'b0; A[3] <= 1'b0;
     BA[0] <= 3'b0; BA[1] <= 3'b0; BA[2] <= 3'b0; BA[3] <= 3'b0;
-    dm_out = 8'b1111_1111;
+    // Nonblocking, same as dq_oen. A blocking default here is
+    // already 8'hff when OSER8_MEM samples DM on this pclk, so
+    // the unmask scheduled below never reaches the pins.
+    dm_out <= 8'b1111_1111;
     dqs_oen[0:3] <= 4'b1111;
     dq_oen[0:3] <= 4'b1111;
     dqs_hold <= 1'b0;
@@ -677,6 +683,12 @@ always @(posedge pclk) begin
         wload_n <= 1'b0; dqs_hold <= 1'b0;
         rcalib_cnt <= 0; rcalib_done <= 0; rclkpos <= 0; rclksel <= 0;
         resetn_delay <= 1'b0;       // cause extra 200us reset for DDR3
+        // Serializer inputs power up X. An X beat with DM low
+        // stores X, and the read gives that X back.
+        dq_out[0] <= 16'd0; dq_out[1] <= 16'd0; dq_out[2] <= 16'd0; dq_out[3] <= 16'd0;
+        dq_out[4] <= 16'd0; dq_out[5] <= 16'd0; dq_out[6] <= 16'd0; dq_out[7] <= 16'd0;
+        dqs_out <= 8'd0;
+        dm_out <= 8'd0;
         state <= RST_WAIT;
   end
 end

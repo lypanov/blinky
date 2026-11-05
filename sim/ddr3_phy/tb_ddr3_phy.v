@@ -28,7 +28,12 @@ module tb_ddr3_phy;
     wire [2:0]  rclksel;
     wire        wlevel_done, rcalib_done;
 
-    wire        ddr_nrst, ddr_ck, cke, cs_n, ras_n, cas_n, we_n, odt;
+    wire        ddr_nrst, ddr_ck, cke_ctl, cs_n, ras_n, cas_n, we_n, odt;
+    wire        cke;
+    // CKE is a register on pclk, and pclk is aligned with ck.
+    // The pad delay is what gives tIH. 400 ps is past the sg25
+    // 275 ps hold and leaves the next edge its 350 ps setup.
+    assign #400 cke = cke_ctl;
     wire [2:0]  ba;
     wire [12:0] a;
     wire [1:0]  dm;
@@ -105,7 +110,7 @@ module tb_ddr3_phy;
         .DDR3_nWE(we_n),
         .DDR3_nCS(cs_n),
         .DDR3_CK(ddr_ck),
-        .DDR3_CKE(cke),
+        .DDR3_CKE(cke_ctl),
         .DDR3_nRESET(ddr_nrst),
         .DDR3_DM(dm),
         .DDR3_ODT(odt)
@@ -141,89 +146,102 @@ module tb_ddr3_phy;
     reg [15:0] slot4;
     reg        saw;
 
-    task wait_idle;
-        begin
-            waits = 0;
-            while (busy !== 1'b0 && waits < READY_WAIT) begin
-                @(posedge pclk);
-                waits = waits + 1;
-            end
-            if (busy !== 1'b0) begin
-                $display("FAIL busy stayed high");
-                fails = fails + 1;
-            end
-        end
-    endtask
-
+    // The controller samples din at the DQ beat, several pclk after
+    // wr. A nonblocking update on the same edge as wait(busy) lets
+    // the next command overwrite din before that beat.
     task do_write;
         input [25:0] a;
         input [15:0] v;
         begin
-            wait_idle;
+            wait (busy === 1'b0);
             @(posedge pclk);
-            wr <= 1'b1;
-            rd <= 1'b0;
-            refresh <= 1'b0;
-            addr <= a;
-            din <= v;
+            #1;
+            wr = 1'b1;
+            rd = 1'b0;
+            refresh = 1'b0;
+            addr = a;
+            din = v;
             @(posedge pclk);
-            wr <= 1'b0;
+            #1;
+            wr = 1'b0;
+            if (busy !== 1'b1)
+                wait (busy === 1'b1);
+            wait (busy === 1'b0);
         end
     endtask
 
     task do_refresh;
         begin
-            wait_idle;
+            wait (busy === 1'b0);
             @(posedge pclk);
-            refresh <= 1'b1;
-            wr <= 1'b0;
-            rd <= 1'b0;
+            #1;
+            refresh = 1'b1;
+            wr = 1'b0;
+            rd = 1'b0;
             @(posedge pclk);
-            refresh <= 1'b0;
+            #1;
+            refresh = 1'b0;
+            if (busy !== 1'b1)
+                wait (busy === 1'b1);
+            wait (busy === 1'b0);
+            // The controller ends refresh at tRC (20 nCK). The
+            // model requires tRFC, 110 ns, before the next ACT.
+            waits = 0;
+            while (waits < 8) begin
+                @(posedge pclk);
+                waits = waits + 1;
+            end
         end
     endtask
 
-    // Sample the beat the Dock uses. dout under SIM is the other slot.
+    // Score dq_in[0] at data_ready. Other slots and later cycles are
+    // printed and do not pass the run.
     task do_read;
         input [25:0] a;
         input [15:0] exp;
+        integer s;
+        reg [15:0] slice;
         begin
-            wait_idle;
+            wait (busy === 1'b0);
             @(posedge pclk);
-            rd <= 1'b1;
-            wr <= 1'b0;
-            refresh <= 1'b0;
-            addr <= a;
+            #1;
+            rd = 1'b1;
+            wr = 1'b0;
+            refresh = 1'b0;
+            addr = a;
             @(posedge pclk);
-            rd <= 1'b0;
+            #1;
+            rd = 1'b0;
             saw = 1'b0;
             slot0 = 16'hxxxx;
             slot4 = 16'hxxxx;
             waits = 0;
             while (waits < READY_WAIT) begin
                 @(posedge pclk);
+                #1;
                 waits = waits + 1;
-                if (data_ready === 1'b1) begin
+                $display("RSAMP %0d addr=%h ready=%b raw=%h",
+                         waits, a, data_ready, dout128);
+                for (s = 0; s < 8; s = s + 1) begin
+                    slice = dout128[127 - s*16 -: 16];
+                    if (slice === exp)
+                        $display("HIT addr=%h pclk=%0d slot=%0d", a, waits, s);
+                    // Column 1's byte is 2222. 1111 in any slot is
+                    // the even-word alias. It does not pass.
+                    if (exp === 16'h2222 && slice === 16'h1111)
+                        $display("ALIAS addr=%h pclk=%0d slot=%0d even=1111",
+                                 a, waits, s);
+                end
+                if (data_ready === 1'b1 && !saw) begin
                     slot0 = dout128[127:112];
                     slot4 = dout128[63:48];
                     saw = 1'b1;
+                end
+                if (saw && waits > 4 && busy === 1'b0)
                     waits = READY_WAIT;
-                end
             end
-            $display("READ addr=%h dock_slot=%h sim_slot=%h sim_dout=%h ready=%b exp=%h raw=%h",
-                     a, slot0, slot4, dout, saw, exp, dout128);
-            // The score uses the data_ready cycle. Print the next few
-            // dock-slot samples so a late capture is visible and is
-            // not counted as a pass.
-            if (saw) begin
-                waits = 0;
-                while (waits < 4) begin
-                    @(posedge pclk);
-                    waits = waits + 1;
-                    $display("READ+ %0d addr=%h dock_slot=%h",
-                             waits, a, dout128[127:112]);
-                end
-            end
+            $display("READ addr=%h dock_slot=%h sim_slot=%h sim_dout=%h ready=%b exp=%h",
+                     a, slot0, slot4, dout, saw, exp);
             if (!saw) begin
                 $display("FAIL addr=%h data_ready did not rise", a);
                 fails = fails + 1;
@@ -238,6 +256,26 @@ module tb_ddr3_phy;
             end
         end
     endtask
+
+    integer pin_left;
+    initial pin_left = 0;
+    // The command is on the pin for one ck. The next edges are the
+    // preamble and the burst, which is where DM and DQ have to be
+    // a real 0 or 1.
+    always @(posedge ddr_ck) begin
+        if (rcalib_done && {cs_n, ras_n, cas_n, we_n} === 4'b0100) begin
+            $display("CMD write ba=%h a=%h", ba, a);
+            pin_left = 10;
+        end
+        if (rcalib_done && {cs_n, ras_n, cas_n, we_n} === 4'b0101) begin
+            $display("CMD read ba=%h a=%h", ba, a);
+            pin_left = 10;
+        end
+        if (pin_left > 0) begin
+            $display("PIN dm=%b dqs=%b dq=%h", dm, dqs, dq);
+            pin_left = pin_left - 1;
+        end
+    end
 
     initial begin
         fails = 0;
