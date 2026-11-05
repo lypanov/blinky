@@ -179,11 +179,14 @@ module tb_ddr3_cpu_phy;
     reg        prev_led;
     reg        saw_ready;
     reg [15:0] last_beat;
+    reg [31:0] prev_pc;
 
     initial begin
         rst_n = 1'b0;
         cpu_reset = 1'b1;
-        cmd_en = 1'b0;
+        // phy_rd === 1'b1 already ignores X. Gating the command off
+        // after reset release drops the bridge's one-cycle pulse.
+        cmd_en = 1'b1;
         waits = 0;
         cycle = 0;
         edges = 0;
@@ -195,6 +198,7 @@ module tb_ddr3_cpu_phy;
         prev_led = 1'b0;
         saw_ready = 1'b0;
         last_beat = 16'hxxxx;
+        prev_pc = 32'hxxxxxxxx;
         max_cycles = 500000;
         if (!$value$plusargs("max_pclk=%d", max_cycles))
             max_cycles = 500000;
@@ -202,8 +206,12 @@ module tb_ddr3_cpu_phy;
         #10000;
         @(negedge ck);
         rst_n = 1'b1;
+        if ($test$plusargs("cpu_now")) begin
+            repeat (16) @(posedge pclk);
+            cpu_reset = 1'b0;
+        end
 
-        while (rcalib_done !== 1'b1 && waits < PCLK_WAIT) begin
+        if (!$test$plusargs("cpu_now")) while (rcalib_done !== 1'b1 && waits < PCLK_WAIT) begin
             @(posedge pclk);
             waits = waits + 1;
             if (waits == 1 || waits % 200 == 0) begin
@@ -212,22 +220,26 @@ module tb_ddr3_cpu_phy;
                 $fflush;
             end
         end
-        $display("CALIB done=%b wstep=%h/%h run=%h/%h rclkpos=%h rclksel=%h cycles=%0d",
-                 rcalib_done, wstep, wstep1, wstep_run, wstep1_run,
-                 rclkpos, rclksel, waits);
-        $fflush;
-        if (rcalib_done !== 1'b1) begin
-            $display("PHY_SCORE fail");
-            $finish;
+        if (!$test$plusargs("cpu_now")) begin
+            $display("CALIB done=%b wstep=%h/%h run=%h/%h rclkpos=%h rclksel=%h cycles=%0d",
+                     rcalib_done, wstep, wstep1, wstep_run, wstep1_run,
+                     rclkpos, rclksel, waits);
+            $fflush;
+            if (rcalib_done !== 1'b1) begin
+                $display("PHY_SCORE fail");
+                $finish;
+            end
         end
 
         // Hold the CPU through training, then release it on pclk.
         repeat (16) @(posedge pclk);
         cpu_reset = 1'b0;
-        repeat (8) @(posedge pclk);
-        cmd_en = 1'b1;
         #1;
         prev_led = led;
+        $display("CPU reset released pc=%h pend=%b stall=%b rd=%b wr=%b ref=%b busy=%b",
+                 pc, cpu.cpu.memoryAccessPending, cpu.cpu.io_memStall,
+                 phy_rd, phy_wr, phy_refresh, busy);
+        $fflush;
 
         while (edges < 2 && cycle < max_cycles) begin
             @(posedge pclk);
@@ -248,6 +260,22 @@ module tb_ddr3_cpu_phy;
             if ((rd_pin || wr_pin || ref_pin) && !busy) begin
                 cmds = cmds + 1;
             end
+            if ($test$plusargs("cpu_trace") && pc !== prev_pc) begin
+                $display("PC cyc=%0d pc=%h ir=%h r0=%h addr=%h pend=%b stall=%b",
+                         cycle, pc, cpu.cpu._instructionRom_data, r0,
+                         cpu.cpu.instructionRom.addr,
+                         cpu.cpu.memoryAccessPending, cpu.cpu.io_memStall);
+                $fflush;
+                prev_pc = pc;
+            end
+            // Setup's link points at this halt. Reaching it before a
+            // DRAM read means BT R0 did not enter the prologue.
+            if (reads == 0 && pc[31:4] == 28'h000000b && cycle > 80) begin
+                $display("END cycle=%0d edges=%0d first=%0d period=%0d pc=%h r5=%h r9=%h mask=%h reads=%0d",
+                         cycle, edges, first_edge, period, pc, r5, r9, mask, reads);
+                $display("PHY_SCORE fail");
+                $finish;
+            end
             if (led !== prev_led) begin
                 if (first_edge < 0)
                     first_edge = cycle;
@@ -260,7 +288,7 @@ module tb_ddr3_cpu_phy;
                 $fflush;
                 prev_led = led;
             end
-            if (cycle % 2000 == 0) begin
+            if (cycle <= 20 || cycle % 200 == 0) begin
                 $display("RUN cyc=%0d pc=%h r5=%h r9=%h mask=%h led=%b reads=%0d cmds=%0d",
                          cycle, pc, r5, r9, mask, led, reads, cmds);
                 $fflush;

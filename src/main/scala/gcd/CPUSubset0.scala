@@ -804,6 +804,12 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       instructionRom.io.addr := (codeRomAddr >> 2)(addrBits - 1, 0)
     }
   }
+  // Last so it wins over the code-page address. While reset is 1 the
+  // ROM must present the instruction at 0x80. An X on holdForCode would
+  // otherwise sink this select and the first fetch stays X.
+  when (reset.asBool) {
+    instructionRom.io.addr := (0x80.U(32.W) >> 2)(addrBits - 1, 0)
+  }
   
   // Register write logic
   when (regWrite) {
