@@ -419,6 +419,9 @@ def pdchain_imem(
         max_iter=max_iter,
         mov_iter=mov_iter,
         success=ALU,
+        # The ALU sits at 0x1400. The long compare scanner walks through
+        # that address, so this image uses the two-instruction hold.
+        hold_scan=False,
     )
     alu, _ = assemble_alu(alu_break, success=READER)
     reader, _ = assemble_reader(reader_break, success=CHAIN)
