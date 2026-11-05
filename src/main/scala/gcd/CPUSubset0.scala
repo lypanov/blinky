@@ -90,7 +90,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val r7 = Output(UInt(32.W))
     val r8 = Output(UInt(32.W))
     val r9 = Output(UInt(32.W))
-    val dbgMask = Output(UInt(16.W))
+    val dbgMask = Output(UInt(32.W))
     val halted = Output(Bool())  // Signal to indicate when the CPU has completed execution
     val led = Output(Bool())     // LED output for the Tang Nano 4K
     val pc = Output(UInt(32.W))  // Program counter value for testing
@@ -840,7 +840,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   io.r7 := regs(7)
   io.r8 := regs(8)
   io.r9 := regs(9)
-  io.dbgMask := checkMask.map(m => (m.asUInt | 0.U(16.W))(15, 0)).getOrElse(0.U(16.W))
+  io.dbgMask := checkMask.map(m => (m.asUInt | 0.U(32.W))(31, 0)).getOrElse(0.U(32.W))
   io.halted := halted
   val tailOk = if (tailChecks == 0) {
     true.B
@@ -917,7 +917,8 @@ object CPUSubset0 {
     val moddesc = fpgaImage == "moddesc"
     val files = fpgaImage == "files"
     val modules = fpgaImage == "modules"
-    val ddr3 = fpgaImage == "ddr3"
+    val ddr3fixup = fpgaImage == "ddr3fixup"
+    val ddr3 = fpgaImage == "ddr3" || ddr3fixup
     val hyper = fpgaImage == "hyperram" || fixup || rsc || fetchbl || pdchain || moddesc || files || modules
     // 20 matches sim/build_fixup_imem.py. 32 matches sim/build_rsc_imem.py.
     // 34 matches sim/build_fetchbl_imem.py (those 32, plus the stored BL
@@ -930,9 +931,9 @@ object CPUSubset0 {
     // timing and were not loaded.
     // A mismatch leaves the LED dark, because a slot that is never stored
     // stays clear.
-    val extra = if (modules || files || moddesc) 40 else if (pdchain) 37 else if (fetchbl) 34 else if (rsc) 32 else if (fixup) 20 else 0
+    val extra = if (modules || files || moddesc) 40 else if (pdchain) 37 else if (fetchbl) 34 else if (rsc) 32 else if (fixup || ddr3fixup) 20 else 0
     val (programInstructions, customMemoryImage) = fpgaImage match {
-      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" | "files" | "modules" | "ddr3" =>
+      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" | "files" | "modules" | "ddr3" | "ddr3fixup" =>
         val imemArg = sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
         val imemFile = new File(imemArg)
         val imemPath =
@@ -945,7 +946,8 @@ object CPUSubset0 {
           )
         }
         val imageName =
-          if (ddr3) "Primer 20K DDR3 data port + Blink3"
+          if (ddr3fixup) "Primer 20K DDR3 fixup ALU"
+          else if (ddr3) "Primer 20K DDR3 data port + Blink3"
           else if (modules) "step-8 Modules + HyperRAM"
           else if (files) "step-7 Files + HyperRAM"
           else if (moddesc) "step-6 ModDesc + HyperRAM"
