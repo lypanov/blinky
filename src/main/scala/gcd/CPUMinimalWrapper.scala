@@ -25,7 +25,7 @@ class CpuWrapDdr3 extends CpuWrapBase {
   val r7 = Output(UInt(32.W))
   val r8 = Output(UInt(32.W))
   val r9 = Output(UInt(32.W))
-  val dbgMask = Output(UInt(32.W))
+  val dbgMask = Output(UInt(40.W))
 }
 
 class CPUMinimalWrapper(
