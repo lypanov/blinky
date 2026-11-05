@@ -47,10 +47,14 @@ run "$EYE" +ddr3_center=9 +ddr3_lane0=9
 # is the step-sweep table (54F854F7 / AFF7AFF7 / 0C0D0D9D). Both lanes at
 # step 10 are two rows of that table and they disagree.
 run "$EYE" +ddr3_center=9 +ddr3_lane0=9 +ddr3_lane1=9
-# Fetch route. Center defaults to 9. Lanes left at 10 are the loaded
-# bitstream (offset +1). Lanes at 9 are that route's eye.
+# Fetch route. Absolute steps 9 and 10 are the same even-word alias.
+# +ddr3_wlevel_eye is both lanes at edge-3: lane 0 one below.
+# +ddr3_fetch_split is lane 0 at edge-2 and lane 1 at edge-3.
+# +ddr3_fetch_eye is lane 0 at edge-1 and lane 1 at edge-4.
 run "$EYE" +ddr3_place_fetch
 run "$EYE" +ddr3_place_fetch +ddr3_lane0=9 +ddr3_lane1=9
+run "$EYE" +ddr3_wlevel_eye
+run "$EYE" +ddr3_fetch_eye
 # Cold prologue, both lanes programmed to step 10 after reset.
 # Lane 0 is the even-word alias. Lane 1 stays on the column except DQ5
 # (bit 13 of the mask). DQ1 (odd-clear bit 1) still clears the high
@@ -198,7 +202,10 @@ write_hex sim/obj_dir/ddr3rsc_n5.words
 
 # Stored BL. The fetch is outside the delay loop, so the period stays
 # 576*N+788 once the eye is hit. The first edge is 648 pclk later than
-# the reader image. This route's center is 9, not the reader's 10.
+# the reader image. Absolute steps 9 and 10 are the same miss.
+# +ddr3_wlevel_eye is both lanes at edge-3: lane 0 one below.
+# +ddr3_fetch_split is lane 0 at edge-2 and lane 1 at edge-3.
+# +ddr3_fetch_eye is lane 0 at edge-1 and lane 1 at edge-4.
 python3 sim/build_fetchbl_imem.py --mov-iter 5 --pad 2048 \
   --out sim/obj_dir/ddr3fetch_n5.words
 python3 sim/build_fetchbl_imem.py --mov-iter 8 --pad 2048 \
@@ -211,38 +218,49 @@ python3 sim/build_fetchbl_imem.py --mov-iter 5 --pad 2048 --break-slot 33 \
   --out sim/obj_dir/ddr3fetch_b33.words
 
 elaborate ddr3fetch sim/obj_dir/ddr3fetch_n5.words
-# Loaded bitstream: both lanes stay at 10. On this route that is one
-# step above the eye, the Dock line. +ddr3_center=9 is the same center.
+# Loaded bitstreams. Step 10 and step 9 are the same Dock line.
 CPU ddr3fetch --cycles 80000 --edges 0 --pc 1390 \
   --r5 aaaaaaaa --r9 55555536 --mask f0 \
   +ddr3_place_fetch
 CPU ddr3fetch --cycles 80000 --edges 0 --pc 1390 \
   --r5 aaaaaaaa --r9 55555536 --mask f0 \
-  +ddr3_center=9
-# Named eye. Both lanes at step 9. The fetch is outside the delay
+  +ddr3_place_fetch +ddr3_lane0=9 +ddr3_lane1=9
+# Both lanes at edge-3. Lane 0 is one code low, lane 1 is on the eye.
+CPU ddr3fetch --cycles 80000 --edges 0 --pc 1390 \
+  --r5 00550054 --r9 ffaaff8c --mask f0 \
+  +ddr3_wlevel_eye
+# Lane 0 at edge-2, lane 1 at edge-3. DQ1 is one column early and
+# DQ13 is in the even-word alias. The other fourteen pins are centered.
+CPU ddr3fetch --cycles 80000 --edges 0 --pc 1390 \
+  --r5 dfffdfff --r9 1ffe1fe1 --mask f0 \
+  +ddr3_fetch_split
+# Lane 1 one code above the eye, lane 0 on it. Board steps 0006 000B.
+CPU ddr3fetch --cycles 80000 --edges 0 --pc 1390 \
+  --r5 aaffaaff --r9 550054e1 --mask f0 \
+  +ddr3_lane1=11
+# Lane 0 at edge-1, lane 1 at edge-4. The fetch is outside the delay
 # loop, so the period and the first edge stay where they were.
 CPU ddr3fetch --cycles 80000 --edges 2 --period 3668 --first 33550 \
   --r5 00000000 --r9 ffffffe1 --mask 3ffffffffff --pc 101c \
-  +ddr3_place_fetch +ddr3_lane0=9 +ddr3_lane1=9
+  +ddr3_fetch_eye
 write_hex sim/obj_dir/ddr3fetch_n8.words
 CPU ddr3fetch --cycles 80000 --edges 2 --period 5396 --first 35278 \
   --r5 00000000 --r9 ffffffe1 --mask 3ffffffffff \
-  +ddr3_place_fetch +ddr3_lane0=9 +ddr3_lane1=9
+  +ddr3_fetch_eye
 write_hex sim/obj_dir/ddr3fetch_n32.words
 CPU ddr3fetch --cycles 120000 --edges 2 --period 19220 --first 49102 \
   --r5 00000000 --r9 ffffffe1 --mask 3ffffffffff \
-  +ddr3_place_fetch +ddr3_lane0=9 +ddr3_lane1=9
+  +ddr3_fetch_eye
 # Slot 32 wrong: the compare holds and the BL is never fetched.
-# These are the step-9 program, not the loaded step-10 bitstream.
 write_hex sim/obj_dir/ddr3fetch_b32.words
 CPU ddr3fetch --cycles 80000 --edges 0 --pc 1cd8 \
   --r5 00000000 --r9 ffffffe1 --mask ffffffffff \
-  +ddr3_place_fetch +ddr3_lane0=9 +ddr3_lane1=9
+  +ddr3_fetch_eye
 # Slot 33 wrong: the BL runs, then the link compare holds.
 write_hex sim/obj_dir/ddr3fetch_b33.words
 CPU ddr3fetch --cycles 80000 --edges 0 --pc 1c20 \
   --r5 00000000 --r9 ffffffe1 --mask 1ffffffffff \
-  +ddr3_place_fetch +ddr3_lane0=9 +ddr3_lane1=9
+  +ddr3_fetch_eye
 # The pin split is the earlier reader place, not this route.
 write_hex sim/obj_dir/ddr3fetch_n5.words
 CPU ddr3fetch --cycles 80000 --edges 0 --pc 1390 \
@@ -267,7 +285,7 @@ build ddr3fetch-rom verilator "${VFLAGS[@]}" -DPRINTF_COND=0 \
 write_hex sim/obj_dir/ddr3fetch_n5.words
 run sim/obj_dir/ddr3_cpu_ddr3fetch_rom/ddr3_cpu --cycles 80000 --edges 0 \
   --pc 1f00 --r5 00000000 --r9 ffffffe1 --mask 1ffffffffff \
-  +ddr3_place_fetch +ddr3_lane0=9 +ddr3_lane1=9
+  +ddr3_fetch_eye
 
 if [[ "$FAIL" -ne 0 ]]; then
   echo "stand-in mismatches" >&2
