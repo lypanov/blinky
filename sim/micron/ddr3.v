@@ -1,5 +1,3 @@
-//a given ddr3 memory
-
 `define MAX_MEM
 /****************************************************************************************
 *
@@ -97,12 +95,26 @@
 // MAKE SURE YOUR SIMULATOR USES "PS" RESOLUTION
 `timescale 1ps / 1ps
 
-`define den1024Mb
-`define x8
-`define sg093
 
-module ddr3 (intf.mem ifx);
-   
+module ddr3 (
+    rst_n,
+    ck,
+    ck_n,
+    cke,
+    cs_n,
+    ras_n,
+    cas_n,
+    we_n,
+    dm_tdqs,
+    ba,
+    addr,
+    dq,
+    dqs,
+    dqs_n,
+    tdqs_n,
+    odt
+);
+
 `ifdef den1024Mb
     `include "1024Mb_ddr3_parameters.vh"
 `elsif den2048Mb
@@ -132,30 +144,23 @@ module ddr3 (intf.mem ifx);
     `define MEM_SIZE   (1<<MEM_BITS)
     `define MAX_PIPE   4*CL_MAX
 
-
-
-    
-
     // Declare Ports
-    wire   rst_n;
-    wire   ck;
-    wire   ck_n;
-    wire   cke;
-    wire   cs_n;
-    wire   ras_n;
-    wire   cas_n;
-    wire   we_n;
-    wire   [DM_BITS-1:0]   dm;
-    wire   [BA_BITS-1:0]   ba;
-    wire   [ADDR_BITS-1:0] addr;
-    wire   [DQ_BITS-1:0]   dq;
-    wire   [DQS_BITS-1:0]  dqs;
-    wire   [DQS_BITS-1:0]  dqs_n;
-    wire   [DQ_BITS-1:0]   dq0;
-    wire   [DQS_BITS-1:0]  dqs0;
-    wire   [DQS_BITS-1:0]  dqs0_n;
-    reg  [DQS_BITS-1:0]  tdqs_n;
-    wire   odt;
+    input   rst_n;
+    input   ck;
+    input   ck_n;
+    input   cke;
+    input   cs_n;
+    input   ras_n;
+    input   cas_n;
+    input   we_n;
+    inout   [DM_BITS-1:0]   dm_tdqs;
+    input   [BA_BITS-1:0]   ba;
+    input   [ADDR_BITS-1:0] addr;
+    inout   [DQ_BITS-1:0]   dq;
+    inout   [DQS_BITS-1:0]  dqs;
+    inout   [DQS_BITS-1:0]  dqs_n;
+    output  [DQS_BITS-1:0]  tdqs_n;
+    input   odt;
 
     // clock jitter
     real    tck_avg;
@@ -363,29 +368,6 @@ module ddr3 (intf.mem ifx);
     time    tm_dq       [127:0];
     time    tm_cmd_addr [23:0];
     reg [8*7-1:0] cmd_addr_string [23:0];
-
-assign		rst_n = ifx.rst_n;
-assign		ck = ifx.ck;
-assign		ck_n = ~ifx.ck;
-assign		cke = ifx.cke;
-assign		cs_n = ifx.cs_n;
-assign		ras_n = ifx.ras_n;
-assign		cas_n = ifx.cas_n;
-assign		we_n = ifx.we_n;
-assign  	dm = ifx.dm;
-assign		ba = ifx.ba;
-assign		addr = ifx.addr;
-assign    dq = ifx.dq;
-assign    dqs = ifx.dqs;
-assign   	dqs_n = ifx.dqs_n;
-assign    odt = ifx.odt;
-assign 	  ifx.tdqs_n = tdqs_n;
-assign    ifx.dq0 = dq0;   ///connects to if here
-assign 	  ifx.dqs0 = dqs0;
-assign		ifx.dqs0_n = dqs0_n;
-
-
-
     initial begin
         cmd_addr_string[ 0] = "CS_N   ";
         cmd_addr_string[ 1] = "RAS_N  ";
@@ -519,7 +501,7 @@ assign		ifx.dqs0_n = dqs0_n;
     always @(ras_n  ) ras_n_in   <= #BUS_DELAY ras_n;
     always @(cas_n  ) cas_n_in   <= #BUS_DELAY cas_n;
     always @(we_n   ) we_n_in    <= #BUS_DELAY we_n;
-    always @(dm) dm_in      <= #BUS_DELAY dm;
+    always @(dm_tdqs) dm_in      <= #BUS_DELAY dm_tdqs;
     always @(ba     ) ba_in      <= #BUS_DELAY ba;
     always @(addr   ) addr_in    <= #BUS_DELAY addr;
     always @(dq     ) dq_in      <= #BUS_DELAY dq;
@@ -551,20 +533,16 @@ assign		ifx.dqs0_n = dqs0_n;
     integer                rdqs_cntr;
     integer                rdqen_cntr;
     integer                rdq_cntr;
-    
-/*THIS IS ASSIGNED IN MEMORY*/ //I assigned a seperate sig DQ0,DQS0 etc to be memory output to avoid inout port
-    bufif1 buf_dqs    [DQS_BITS-1:0] (dqs0,     dqs_out_dly,  dqs_out_en_dly & {DQS_BITS{out_en}});
-    bufif1 buf_dqs_n  [DQS_BITS-1:0] (dqs0_n,   ~dqs_out_dly, dqs_out_en_dly & {DQS_BITS{out_en}});
-    bufif1 buf_dq     [DQ_BITS-1:0]  (dq0,      dq_out_dly,   dq_out_en_dly  & {DQ_BITS {out_en}});
+
+    bufif1 buf_dqs    [DQS_BITS-1:0] (dqs,     dqs_out_dly,  dqs_out_en_dly & {DQS_BITS{out_en}});
+    bufif1 buf_dqs_n  [DQS_BITS-1:0] (dqs_n,   ~dqs_out_dly, dqs_out_en_dly & {DQS_BITS{out_en}});
+    bufif1 buf_dq     [DQ_BITS-1:0]  (dq,      dq_out_dly,   dq_out_en_dly  & {DQ_BITS {out_en}});
     assign tdqs_n = {DQS_BITS{1'bz}};
 
     assign TZQCS   = max( 64, ceil( 80000/tck_avg));
     assign TZQINIT =  max(512, ceil(640000/tck_avg));
     assign TZQOPER =  max(256, ceil(320000/tck_avg));
-   assign ifx.tzqcs = TZQCS;
-   assign ifx.tzqinit =  TZQINIT;
-   assign ifx.tzqoper = TZQOPER;
-   
+
     initial begin
         if (BL_MAX < 2) 
             $display("%m ERROR: BL_MAX parameter must be >= 2.  \nBL_MAX = %d", BL_MAX);
@@ -2975,4 +2953,3 @@ assign		ifx.dqs0_n = dqs0_n;
     always @(posedge dqs_in[63]) if ( dqs_in[63]) dqs_neg_timing_check(63);
 
 endmodule
-
