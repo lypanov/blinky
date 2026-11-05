@@ -170,21 +170,27 @@ object CPUSimTop {
           s"$targetDir/CPUSimTopBlink3.v",
           "blink3"
         )
-      case "ddr3" =>
+      case "ddr3" | "ddr3fixup" =>
+        val extra = if (image == "ddr3fixup") 20 else 0
         val imemPath = new File(
           projectRoot,
-          sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/ddr3.words")
+          sys.env.getOrElse(
+            "BLINK3_IMEM",
+            if (image == "ddr3fixup") "sim/visualizer/imem/ddr3fixup.words"
+            else "sim/visualizer/imem/ddr3.words"
+          )
         ).getAbsolutePath
         val words = loadInstructionsFromFile(imemPath)
-        println(s"CPUSimTop: ddr3 IMEM ${words.length} words from $imemPath")
+        println(s"CPUSimTop: $image IMEM ${words.length} words extraChecks=$extra from $imemPath")
         (
           () => new CPUSimTop(
             Seq.empty,
             customMemoryImage = Some(words),
-            memBackend = "ddr3"
+            memBackend = "ddr3",
+            extraChecks = extra
           ),
           s"$targetDir/CPUSimTopDdr3.v",
-          "ddr3"
+          image
         )
       case "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" | "files" | "modules" =>
         val imemPath = new File(

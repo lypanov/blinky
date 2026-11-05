@@ -13,14 +13,15 @@
 // 0.720844 Hz. This build is the CPU prologue. The steady blink is
 // the Blink3 body after every compare difference is zero.
 //
-// Each command now waits out the port-test pair (16 clocks, a refresh,
-// 16 clocks) before the next one, so the 0.538222 Hz fit does not apply.
-// Verilator, N = 5, 32, 128, 512, 1024, periods exact:
+// The fixup ALU runs once, before Blink3, so it is not in the delay
+// loop. Verilator of that image, N = 5, 32, 128, 512, 1024, periods
+// exact and the same line as the step-1 fit:
 //   pclk/edge = 576*N + 788
 // N = 262144 is 150995732 controller clocks per edge.
 //   edge = 96750000/150995732 = 0.640747 Hz
 //   full blink = 0.320373 Hz, 93.641 frames at 30 fps
-// A corrupt read leaves the pin dark. Locked before the SRAM load.
+// A corrupt read, or one wrong ALU constant, leaves the pin dark.
+// Locked before the SRAM load.
 
 module blinky_top_ddr3 (
   input  Clock,
@@ -51,7 +52,7 @@ module blinky_top_ddr3 (
   wire        cpu_led;
   wire [31:0] cpu_pc;
   wire [31:0] cpu_r0, cpu_r4, cpu_r5, cpu_r7, cpu_r8, cpu_r9;
-  wire [15:0] cpu_mask;
+  wire [31:0] cpu_mask;
   wire        unused_uart_tx;
 
   wire        ddr_rd;
@@ -401,21 +402,22 @@ module blinky_top_ddr3 (
     end
   endfunction
 
-  // 76 bytes: calib, hold, PC, mask, index, column, two beat
-  // pairs, the last write address and data, then the two write-level
-  // steps. The beat pairs repeat, so the last two slots are the write.
-  localparam integer UBYTES = 76;
+  // 80 bytes: calib, hold, PC, the 28-bit check mask, the pattern
+  // sum (R5), the last read column and one beat pair, the last write
+  // address and data, the complement sum (R9), then the two write
+  // steps. A fixup miss leaves a zero in the mask and the pin dark.
+  localparam integer UBYTES = 80;
   wire [UBYTES*8-1:0] msg = {
     read_calib_done ? "C" : ".",
     hold_sync[1] ? "H" : ".",
     hex16(pc_snap), " ",
-    hex16(cpu_mask), " ",
+    hex32(cpu_mask), " ",
     hex32(cpu_r5), " ",
     hex32({6'd0, cap_addr}), " ",
     hex32(cap_beats[31:0]), " ",
-    hex32(cap_beats[63:32]), " ",
     hex32({6'd0, wr_addr}), " ",
     hex32({16'd0, wr_data}), " ",
+    hex32(cpu_r9), " ",
     hex16({8'h00, unused_wstep}), " ",
     hex16({8'h00, wstep_run}), "\n"
   };

@@ -17,6 +17,7 @@
 #   FPGA_IMAGE=files tools/gowin_build.sh        # HyperRAM plus Files, two .rsc images, and Load of Blink5
 #   FPGA_IMAGE=modules tools/gowin_build.sh      # HyperRAM plus Modules.Init on the reset path, then Load of Blink5
 #   FPGA_IMAGE=ddr3 BOARD=primer20k tools/gowin_build.sh  # Primer 20K DDR3 data port + Blink3
+#   FPGA_IMAGE=ddr3fixup BOARD=primer20k tools/gowin_build.sh  # that port plus the step-2 ALU
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -53,6 +54,9 @@ if [[ "$FPGA_IMAGE" == "modules" && -z "${BLINK3_IMEM:-}" ]]; then
 fi
 if [[ "$FPGA_IMAGE" == "ddr3" && -z "${BLINK3_IMEM:-}" ]]; then
   BLINK3_IMEM="$ROOT/sim/visualizer/imem/ddr3.words"
+fi
+if [[ "$FPGA_IMAGE" == "ddr3fixup" && -z "${BLINK3_IMEM:-}" ]]; then
+  BLINK3_IMEM="$ROOT/sim/visualizer/imem/ddr3fixup.words"
 fi
 BLINK3_IMEM="${BLINK3_IMEM:-$ROOT/sim/visualizer/imem/blink3.words}"
 export FPGA_IMAGE BLINK3_IMEM
@@ -158,18 +162,26 @@ elif [[ "$FPGA_IMAGE" == "hyperram" ]]; then
   EXPECT_MHI="$(mhi_hex "$BLINK3_MAXITER")"
   GOWIN_OUT_NAME="hyperram_n${BLINK3_MAXITER}"
   GOWIN_TCL="$ROOT/gowin/gowin_build_hyperram.tcl"
-elif [[ "$FPGA_IMAGE" == "ddr3" ]]; then
+elif [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" ]]; then
   if [[ "$BOARD" != "primer20k" && "$BOARD" != "tangprimer20k" ]]; then
     echo "error: the DDR3 data port loads the Tang Primer 20K only (BOARD=$BOARD)" >&2
     exit 1
   fi
-  echo "==> DDR3 IMEM (prologue at 0x1200, Blink3 body, maxIterations=$BLINK3_MAXITER)"
-  python3 "$ROOT/sim/build_hyperram_imem.py" \
-    --max-iter "$BLINK3_MAXITER" \
-    --pad 2048 \
-    --out "$BLINK3_IMEM"
+  if [[ "$FPGA_IMAGE" == "ddr3fixup" ]]; then
+    echo "==> DDR3 fixup IMEM (prologue, ALU at 0x1400, maxIterations=$BLINK3_MAXITER)"
+    python3 "$ROOT/sim/build_fixup_imem.py" \
+      --max-iter "$BLINK3_MAXITER" \
+      --pad 2048 \
+      --out "$BLINK3_IMEM"
+  else
+    echo "==> DDR3 IMEM (prologue at 0x1200, Blink3 body, maxIterations=$BLINK3_MAXITER)"
+    python3 "$ROOT/sim/build_hyperram_imem.py" \
+      --max-iter "$BLINK3_MAXITER" \
+      --pad 2048 \
+      --out "$BLINK3_IMEM"
+  fi
   EXPECT_MHI="$(mhi_hex "$BLINK3_MAXITER")"
-  GOWIN_OUT_NAME="ddr3_n${BLINK3_MAXITER}"
+  GOWIN_OUT_NAME="${FPGA_IMAGE}_n${BLINK3_MAXITER}"
   GOWIN_TCL="$ROOT/gowin/primer20k/gowin_ddr3.tcl"
 elif [[ "$FPGA_IMAGE" == "blink3" ]]; then
   echo "==> Blink3 IMEM (trampoline at 0, linked image at 0x1000+, maxIterations=$BLINK3_MAXITER)"
@@ -284,7 +296,7 @@ elif [[ "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" 
       exit 1
     fi
   fi
-elif [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "ddr3" ]]; then
+elif [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" ]]; then
   echo "==> Checking Blink3 trampoline / BL Toggle encodings"
   for word in f7000409 f7000410 f7ffffdc; do
     if grep -qi "$word" "$IMEM_HEX"; then
@@ -296,7 +308,7 @@ elif [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE
   done
 fi
 
-if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3" ]]; then
+if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" ]]; then
   echo "==> Checking prologue entry MOV R0, 0x1200"
   if grep -qi '40001200' "$IMEM_HEX"; then
     echo "    found 40001200"
@@ -305,7 +317,7 @@ if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" =
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
+if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
   echo "==> Checking sign-extended MOV R1, -1"
   if grep -qi '5100ffff' "$IMEM_HEX"; then
     echo "    found 5100ffff"
@@ -370,7 +382,7 @@ case "$BOARD" in
     echo "==> Gowin syn+PNR (GW2A-LV18PG256C8/I7 Dock) out=$GOWIN_OUT_NAME"
     mkdir -p "$ROOT/gowin/primer20k/impl"
     cd "$ROOT/gowin/primer20k"
-    if [[ "$FPGA_IMAGE" == "ddr3" ]]; then
+    if [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" ]]; then
       gw_sh "$ROOT/gowin/primer20k/gowin_ddr3.tcl"
     else
       gw_sh "$ROOT/gowin/primer20k/gowin_blink3.tcl"

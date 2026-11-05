@@ -206,7 +206,7 @@ def _fold_diff(a: Asm, acc: int, expected: int, slot: int) -> None:
     a.word(stw(0, 11, 0))          # store the difference; zero arms this slot
 
 
-def assemble_prologue(success: int = 0) -> list[int]:
+def assemble_prologue(success: int = 0, hold_scan: bool = True) -> list[int]:
     c = expected_constants()
     a = Asm()
     # R12 (MT = 0x10) and R14 (SP) stay as setup left them.
@@ -275,6 +275,11 @@ def assemble_prologue(success: int = 0) -> list[int]:
     a.at(lambda pc, success=success: cond_branch(pc, success, 7))
     a.label("hold")
     a.word(f1(8, 1, 1, 1))
+    if not hold_scan:
+        # Two-instruction spin. The step-2 ALU is placed at 0x1400, so
+        # the scanner cannot follow this ADD.
+        a.branch("hold", 7)
+        return a.encode(PROLOGUE)
     # Compare failed. Walk all 64 words, holding each for ~0.75 s so a
     # UART line can catch r5=index and r4=the word. Index 0..31 is the
     # pattern at 0x400; 32..63 is the complement at 0x500.
@@ -326,6 +331,7 @@ def hyperram_imem(
     mov_iter: int | None = None,
     pad: int | None = None,
     success: int = 0,
+    hold_scan: bool = True,
 ) -> list[int]:
     if max_iter is not None and mov_iter is not None:
         raise ValueError("pass only one of max_iter and mov_iter")
@@ -336,7 +342,7 @@ def hyperram_imem(
         if not 0 < mov_iter <= 0xFFFF:
             raise ValueError(mov_iter)
         words[BLINK3_MAXITER_PC // 4] = mov_imm(0, mov_iter)
-    prog = assemble_prologue(success)
+    prog = assemble_prologue(success, hold_scan=hold_scan)
     base = PROLOGUE // 4
     end = base + len(prog)
     if end * 4 > 0x2000:
