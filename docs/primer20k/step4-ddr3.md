@@ -256,7 +256,7 @@ CH1394 00000000F0 AAFFAAFF 000003F9 A5A5A5A5 000003EF 00000000 550054E1 0006 000
 Mask `F0`, sentinel beats `A5A5A5A5`. The bytes have the shape of
 lane 0 centered and lane 1 in the even-word alias. That is not
 `+ddr3_lane1=11`: that plusarg leaves lane 0 at the old center 10
-and prints R5 `FFAAFFAA`. Under the Dock centers, lane 1 at `0006`
+and prints R5 `AAFFAAFF` (R9 `550054E1`). Under the Dock centers, lane 1 at `0006`
 with lane 0 at `000B` is one below, R5 `550054FF`
 (`+ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=6`), the same row as
 `+ddr3_lane1=9` on center 10. The even-word alias with lane 0 on
@@ -309,5 +309,15 @@ one-below-center and the even-word alias: one below is lane 1 at 6
 (R5 `550054FF`) and the even-word alias is lane 1 at 8
 (R5 `AAFFAAFF`).
 
-Step 5 is not started. The Nano 4K was not loaded. Nothing was
-written to flash. The Dock is on this SRAM image.
+Accepted at `4dfd5d8`. `sim/run_ddr3_standin.sh` prints
+`stand-in matches`. The witness
+`+ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7` is centers 11 and 7,
+offsets 0 and 0, period 3668, first edge 33550, R5 `00000000`,
+R9 `FFFFFFE1`, mask `3ffffffffff`. Bare `+ddr3_fetch_eye` (lanes
+left at 10) holds at `0x1394` with R5 `00544054`, R9 `00A9C18C`,
+mask `30`, and 0 edges. The Dock UART, read again without a reload,
+is still calibration `C`, a delay-loop PC, mask `FFFFFFFFFF`,
+R5 `00000000`, R9 `FFFFFFE1`, steps `0007` `000B`. The model still
+has no write-level input, so it does not name the next build's
+edge. The Nano 4K was not loaded. Nothing was written to flash.
+The Dock stays on this SRAM image.
