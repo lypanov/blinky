@@ -40,6 +40,8 @@ build eye verilator "${VFLAGS[@]}" \
 
 EYE=sim/obj_dir/ddr3_eye/ddr3_eye
 run "$EYE"
+run "$EYE" +ddr3_center=9
+run "$EYE" +ddr3_center=9 +ddr3_lane0=9
 run "$EYE" +ddr3_lane0=9 +ddr3_lane1=9
 run "$EYE" +ddr3_lane1=9
 run "$EYE" +ddr3_lane0=9
@@ -107,19 +109,31 @@ CPU ddr3fixup --cycles 80000 --edges 2 --period 3668 --first 25434 \
   --r5 ffffffff --r9 ffffffe1 --mask fffffff
 
 elaborate ddr3rsc sim/obj_dir/ddr3rsc_n5.words
+# ALU place (center 10). The reader program passes here. The reader
+# bitstream does not have this place; see +ddr3_center=9 below.
 CPU ddr3rsc --cycles 80000 --edges 2 --period 3668 --first 32902 \
   --r5 00000000 --r9 ffffffe1 --mask ffffffffff
+# Reader place. Lane 0 is still the forced step 10. That step is one
+# above the data eye, and lane 1 sits in the same beat.
 CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
   --r5 aaaaaaaa --r9 55555536 --mask f0 \
-  +ddr3_lane0=9 +ddr3_lane1=9
+  +ddr3_center=9
+# Same place, lane 0 programmed down onto the eye. Lane 1 stays aliased.
 CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
   --r5 aaffaaff --r9 550054e1 --mask f0 \
-  +ddr3_lane1=9
-CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
-  --r5 ffaaffaa --r9 00550036 --mask f0 \
-  +ddr3_lane0=9
+  +ddr3_center=9 +ddr3_lane0=9
+# ALU place: one step below the eye, then one step above it.
 CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
   --r5 55555554 --r9 aaaaaa8c --mask f0 \
+  +ddr3_lane0=9 +ddr3_lane1=9
+CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
+  --r5 550054ff --r9 aaffaae1 --mask f0 \
+  +ddr3_lane1=9
+CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
+  --r5 00550054 --r9 ffaaff8c --mask f0 \
+  +ddr3_lane0=9
+CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
+  --r5 aaaaaaaa --r9 55555536 --mask f0 \
   +ddr3_lane0=11 +ddr3_lane1=11
 CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
   --r5 aaaaaaaa --r9 55555536 --mask a0 \

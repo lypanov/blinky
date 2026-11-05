@@ -154,6 +154,18 @@ static bool has(int argc, char** argv, const char* name) {
   return false;
 }
 
+// +ddr3_lane0=N / +ddr3_lane1=N are the programmed steps. +ddr3_center is
+// the programmed step the data eye is centered on for this place.
+static int plus_int(int argc, char** argv, const char* key, int fallback) {
+  std::string prefix = std::string("+") + key + "=";
+  for (int i = 1; i < argc; i++) {
+    std::string arg(argv[i]);
+    if (arg.compare(0, prefix.size(), prefix) == 0)
+      return std::atoi(arg.c_str() + prefix.size());
+  }
+  return fallback;
+}
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   top = new VDdr3UserModel;
@@ -169,9 +181,6 @@ int main(int argc, char** argv) {
   top->rst_n = 1;
   wait_calib();
 
-  const bool early0 = has(argc, argv, "+ddr3_lane0=9");
-  const bool early1 = has(argc, argv, "+ddr3_lane1=9");
-  const bool late_both = has(argc, argv, "+ddr3_lane0=11") && has(argc, argv, "+ddr3_lane1=11");
   const bool nohold = has(argc, argv, "+ddr3_nohold");
   const bool nowload = has(argc, argv, "+ddr3_nowload");
   const bool dm_all = has(argc, argv, "+ddr3_dm_all");
@@ -179,6 +188,9 @@ int main(int argc, char** argv) {
   const bool dm_lane1 = has(argc, argv, "+ddr3_dm_lane1");
   const bool shift1 = has(argc, argv, "+ddr3_lane1=12");
   const bool corrupt = has(argc, argv, "+ddr3_corrupt");
+  const int center = plus_int(argc, argv, "ddr3_center", 10);
+  const int off0 = plus_int(argc, argv, "ddr3_lane0", 10) - center;
+  const int off1 = plus_int(argc, argv, "ddr3_lane1", 10) - center;
 
   if (corrupt) {
     write_col(0x10, 0x1234);
@@ -214,28 +226,39 @@ int main(int argc, char** argv) {
     write_pair();
     check_pair(0x2211, 0x4433, 0x2211, 0x4433);
     // An odd column that was written on its own still reads as the even
-    // column. The early eye would have kept this write.
+    // column. One step above the eye would have kept this write.
     write_col(0x16, 0xBEEF);
     expect_eq("isolated odd", read_col(0x16), 0x0000);
     byte_walk(false);
-  } else if (late_both) {
-    write_pair();
-    check_pair(0x6655, 0x8877, 0x6655, 0x8877);
-  } else if (early0 && early1) {
+  } else if (off0 == 1 && off1 == 1) {
+    // Programmed one step above the eye. On the reader place that is
+    // the forced step 10 (+ddr3_center=9). On the ALU place it is step 11.
     write_pair();
     check_pair(0x2211, 0x4433, 0x2211, 0x4433);
     write_col(0x16, 0xBEEF);
     expect_eq("isolated odd kept", read_col(0x16), 0xBEEF);
     byte_walk(false);
-  } else if (early1 && !early0) {
+  } else if (off0 == -1 && off1 == -1) {
+    write_pair();
+    check_pair(0x6655, 0x8877, 0x6655, 0x8877);
+    byte_walk(false);
+  } else if (off0 == 0 && off1 == 1) {
     write_pair();
     check_pair(0x2211, 0x4433, 0x2255, 0x4477);
     byte_walk(false);
-  } else if (early0 && !early1) {
+  } else if (off0 == 1 && off1 == 0) {
     write_pair();
     check_pair(0x2211, 0x4433, 0x6611, 0x8833);
     byte_walk(false);
-  } else {
+  } else if (off0 == 0 && off1 == -1) {
+    write_pair();
+    check_pair(0x6611, 0x8833, 0x6655, 0x8877);
+    byte_walk(false);
+  } else if (off0 == -1 && off1 == 0) {
+    write_pair();
+    check_pair(0x2255, 0x4477, 0x6655, 0x8877);
+    byte_walk(false);
+  } else if (off0 == 0 && off1 == 0) {
     write_pair();
     check_pair(0x2211, 0x4433, 0x6655, 0x8877);
     // Neighbour column in the same group is not written by a one-beat store.
@@ -246,6 +269,9 @@ int main(int argc, char** argv) {
     write_col(0x28, 0x1111);
     expect_eq("reload aimed", read_col(0x28), 0x1111);
     expect_eq("reload not shifted", read_col(0x2A), 0);
+  } else {
+    std::printf("FAIL unhandled eye off0=%d off1=%d\n", off0, off1);
+    return 1;
   }
 
   if (g_fail) {
