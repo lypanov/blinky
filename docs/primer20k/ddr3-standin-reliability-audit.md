@@ -29,15 +29,22 @@ program the Dock was not running, or a program that had not been loaded.
 | Fetch, both lanes 10, then both lanes 9 (`878b767`, `05a8c61`) | `AAAAAAAA` both times, steps `000A` then `0009` | `+ddr3_place_fetch` forced offset +1 and ignored the lane numbers. The script's pass was both lanes at 9. The Dock at 9 was the same alias. |
 | Fetch pass image (`0cd9710`) | steps `0007` `000B`, R5 `00000000`, full mask, blink | `+ddr3_fetch_eye` with the lanes left at 10. In that Verilog the flag does not set a center. It only skips the place-fetch override. Center stays 10, so the green run is the ALU eye. `+ddr3_wlevel_eye` hardcoded offsets −1 and 0 and did not read the lane plusargs. |
 | Same image, flag fixed (`4dfd5d8`) | same UART, no reload | `+ddr3_fetch_eye` now sets centers 11 and 7, and the pass case passes both lane numbers. That matches the program already on the Dock. The model still has no write-level input. |
-| P/D chain (`df7b130`, one SRAM load) | same printed steps `0007` `000B`, R5 `AAAAAAAA`, R9 `55555536`, mask `F0`, hold `0x1394` | `+ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7` is a pass (R5 0, mask `1fffffffffff`). `+ddr3_place_fetch` at those lanes is R5 `FFAAFFAA`. Nothing in the committed model prints `AAAAAAAA` for lanes 11 and 7. |
+| P/D chain, backoff 1 and 3 (`df7b130`) | steps `0007` `000B`, R5 `AAAAAAAA`, R9 `55555536`, mask `F0`, hold `0x1394` | `+ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7` is a pass. `+ddr3_place_fetch` at those lanes is R5 `FFAAFFAA`. |
+| P/D chain, backoff 2 and 4 (`89fd0ae`) | still `AAAAAAAA` / mask `F0`, steps `0006` `000B`. Lane 0's edge moved `000C` → `000D`, so the extra backoff left lane 0 at `000B`. Lane 1 moved 7 → 6 and stayed the alias. | `+ddr3_pd_eye` forces offset +1 when lane 0 is 11 and lane 1 is 6 or 7. The flag has no offset 0. The script's blink witness is default lanes 10 and 10, which that note calls not a Dock pair. |
+| Fetch bitstream loaded back, this calibration (UART read, no load from this audit) | delay-loop PC, mask `FFFFFFFFFF`, R5 `00000000`, R9 `FFFFFFE1`, steps `0007` `000C` | `+ddr3_fetch_eye +ddr3_lane0=12 +ddr3_lane1=7` is center 11/7, lane 0 offset +1, hold `0x1394`, R5 `FFAAFFAA`, mask `F0`, 0 edges. The centers fitted at `4dfd5d8` miss the image they were fitted to, one calibration later. |
 
 The controller already says this. `wstep_run` is the write-level edge
 minus `WLEVEL_BACKOFF` (`gowin/primer20k/ddr3/ddr3_controller.v`). The
 comment on those parameters says the stand-in does not read the edge.
-Fetch and the P/D image both subtract 1 and 3, and both UARTs printed
-`0007` `000B`, so the edge codes were `000C` and `000A` on both builds.
-The column still moved. A model whose only alignment input is the
-programmed step has to print one R5 for that pair. The board printed two.
+The first P/D build subtracted 1 and 3 and printed `0007` `000B`, the
+fetch pass's steps, and the column was the alias. A model whose only
+alignment input is the programmed step has to print one R5 for that
+pair. The board printed two.
+
+The same fetch bitstream, loaded back after those trials, calibrated
+lane 0's edge to `000D` and printed `0007` `000C` while the column
+stayed the pass. On that place the eye moved with the edge. The
+stand-in still has the old centers, so it calls lane 0 at 12 a miss.
 
 ## Root causes, in order
 
@@ -60,12 +67,12 @@ programmed step has to print one R5 for that pair. The board printed two.
    `+ddr3_center`, `+ddr3_place_fetch` (codes 9 and 10 forced to offset
    +1), `+ddr3_fetch_eye` (centers 11 and 7), `+ddr3_fetch_split` (DQ1
    and DQ13 fixed), `+ddr3_pin_even` / `+ddr3_odd_clear` (one cold UART;
-   the step model is switched off while the mask is set). The working
-   tree, not yet committed, adds `+ddr3_pd_eye` with centers 10 and 6 so
-   the loaded steps become the alias, and moves the blink witness to
-   lanes 10 and 6. Those lanes were not loaded. That is the step-9 move
-   again: the inferred center is promoted to the pass before the Dock
-   has run it.
+   the step model is switched off while the mask is set). `89fd0ae`
+   adds `+ddr3_pd_eye`, which forces offset +1 for lane 0 at 11 and
+   for lane 1 at 6 or 7, and has no offset 0. That records the plateau.
+   It does not say which step would be the column. The script still
+   ends in `stand-in matches`, and the blink numbers in that section
+   are default lanes 10 and 10.
 
 4. **Whole-column shift cannot be the pin model, and the pin model
    cannot be the column model.** The step-9 split `AFF0B9CF` and the
@@ -131,8 +138,8 @@ every later step.
   still printed `AAAAAAAA`.
 - Modules accepting `stand-in matches` without running the witness at
   the steps the UART prints. That check is what rejected `0cd9710`.
-  It is also what has to happen to a green `+ddr3_pd_eye` run at lanes
-  10 and 6.
+  The image on the Dock right now prints `0007` `000C` and passes.
+  `+ddr3_fetch_eye` at those steps holds with R5 `FFAAFFAA`.
 
 ## Fixes, before another Modules step trusts the sim
 
@@ -160,7 +167,11 @@ every later step.
    center and loaded again. That is the rule that already ended the
    step-9 trial and the P/D trial.
 
-4. Leave `+ddr3_pd_eye` out of the pass path. Centers 10 and 6 describe
-   the miss. They are not a witness the Dock has run. The committed
-   record is the right one: same steps as the fetch pass, R5
-   `AAAAAAAA`, and no plusarg for that row.
+4. Keep `+ddr3_pd_eye` as a record of two misses, and keep it out of
+   any sentence that says the column is known. It has no offset 0.
+   Do not load another backoff to hunt one. Lane 1 at 6 and at 7 were
+   the same alias, and lane 0's edge moved so the extra backoff did
+   not move its step. The fetch image now on the Dock is a pass at
+   `0007` `000C`. The centers from `4dfd5d8` call that pair a miss.
+   The next model has to follow the edge the controller just measured,
+   which is what the fetch place did and what the fixed centers do not.
