@@ -15,6 +15,7 @@
 #   FPGA_IMAGE=pdchain tools/gowin_build.sh      # HyperRAM plus device P-chain and D-chain fixups
 #   FPGA_IMAGE=moddesc tools/gowin_build.sh      # HyperRAM plus ModDesc, the module table, and a procedure call
 #   FPGA_IMAGE=files tools/gowin_build.sh        # HyperRAM plus Files, two .rsc images, and Load of Blink5
+#   FPGA_IMAGE=modules tools/gowin_build.sh      # HyperRAM plus Modules.Init on the reset path, then Load of Blink5
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -46,6 +47,9 @@ fi
 if [[ "$FPGA_IMAGE" == "files" && -z "${BLINK3_IMEM:-}" ]]; then
   BLINK3_IMEM="$ROOT/sim/visualizer/imem/files.words"
 fi
+if [[ "$FPGA_IMAGE" == "modules" && -z "${BLINK3_IMEM:-}" ]]; then
+  BLINK3_IMEM="$ROOT/sim/visualizer/imem/modules.words"
+fi
 BLINK3_IMEM="${BLINK3_IMEM:-$ROOT/sim/visualizer/imem/blink3.words}"
 export FPGA_IMAGE BLINK3_IMEM
 GOWIN_TCL="$ROOT/gowin/gowin_build.tcl"
@@ -72,13 +76,22 @@ mhi_hex() {
   python3 -c "print(f'{(0x60000000 | (int($1) >> 16)):08x}')"
 }
 
-if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" ]]; then
+if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
   if [[ "$BOARD" != "nano4k" && "$BOARD" != "tangnano4k" ]]; then
     echo "error: HyperRAM images load the Tang Nano 4K only (BOARD=$BOARD)" >&2
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "files" ]]; then
+if [[ "$FPGA_IMAGE" == "modules" ]]; then
+  echo "==> Modules IMEM (Init with a 4 KB reserve, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
+  python3 "$ROOT/sim/build_modules_imem.py" \
+    --max-iter "$BLINK3_MAXITER" \
+    --pad 2048 \
+    --out "$BLINK3_IMEM"
+  EXPECT_MHI="$(mhi_hex "$BLINK3_MAXITER")"
+  GOWIN_OUT_NAME="modules_n${BLINK3_MAXITER}"
+  GOWIN_TCL="$ROOT/gowin/gowin_build_hyperram.tcl"
+elif [[ "$FPGA_IMAGE" == "files" ]]; then
   echo "==> Files IMEM (two .rsc images and Load of Blink5, maxIterations=$BLINK3_MAXITER)"
   python3 "$ROOT/sim/build_files_imem.py" \
     --max-iter "$BLINK3_MAXITER" \
@@ -204,7 +217,7 @@ if [[ "$FPGA_IMAGE" == "pdchain" ]]; then
     echo "error: fixed BL f7ffffdc is in the ROM; the device walk would not be the proof" >&2
     exit 1
   fi
-elif [[ "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" ]]; then
+elif [[ "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
   echo "==> Checking the procedure-variable call and the unfixed BL placeholder"
   if grep -qi 'd7000001' "$IMEM_HEX"; then
     echo "    found d7000001"
@@ -227,7 +240,7 @@ elif [[ "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" ]]; then
     echo "error: address 0 is still the Blink3 trampoline; a zero procedure variable could blink" >&2
     exit 1
   fi
-  if [[ "$FPGA_IMAGE" == "files" ]]; then
+  if [[ "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
     echo "==> Checking Load's BT R1 and the Blink5 name word"
     for word in c7000001 61006e69; do
       if grep -qi "$word" "$IMEM_HEX"; then
@@ -237,6 +250,22 @@ elif [[ "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" ]]; then
         exit 1
       fi
     done
+  fi
+  if [[ "$FPGA_IMAGE" == "modules" ]]; then
+    echo "==> Checking reset enters the Modules body"
+    entry="$(sed -n '40p' "$IMEM_HEX")"
+    if [[ "$entry" == "400006c0" ]]; then
+      echo "    ROM 0x9C is the modules body ($entry)"
+    else
+      echo "error: ROM 0x9C is $entry, expected 400006c0" >&2
+      exit 1
+    fi
+    if grep -qi '40001200' "$IMEM_HEX"; then
+      echo "    body still has the prologue MOV 40001200"
+    else
+      echo "error: prologue MOV 40001200 missing from the modules body" >&2
+      exit 1
+    fi
   fi
 elif [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" ]]; then
   echo "==> Checking Blink3 trampoline / BL Toggle encodings"
@@ -250,7 +279,7 @@ elif [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE
   done
 fi
 
-if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" ]]; then
+if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
   echo "==> Checking prologue entry MOV R0, 0x1200"
   if grep -qi '40001200' "$IMEM_HEX"; then
     echo "    found 40001200"
@@ -259,7 +288,7 @@ if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" =
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" ]]; then
+if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
   echo "==> Checking sign-extended MOV R1, -1"
   if grep -qi '5100ffff' "$IMEM_HEX"; then
     echo "    found 5100ffff"
@@ -268,7 +297,7 @@ if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fe
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" ]]; then
+if [[ "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
   echo "==> Checking LDB R1, [R3] and STB R1, [R3]"
   for word in 91300000 b1300000; do
     if grep -qi "$word" "$IMEM_HEX"; then
