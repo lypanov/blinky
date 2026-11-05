@@ -192,6 +192,64 @@ CPU ddr3rsc --cycles 80000 --edges 0 --pc 1b44 \
 
 write_hex sim/obj_dir/ddr3rsc_n5.words
 
+# Stored BL. The fetch is outside the delay loop, so the period stays
+# 576*N+788. The first edge is 648 pclk later than the reader image.
+python3 sim/build_fetchbl_imem.py --mov-iter 5 --pad 2048 \
+  --out sim/obj_dir/ddr3fetch_n5.words
+python3 sim/build_fetchbl_imem.py --mov-iter 8 --pad 2048 \
+  --out sim/obj_dir/ddr3fetch_n8.words
+python3 sim/build_fetchbl_imem.py --mov-iter 32 --pad 2048 \
+  --out sim/obj_dir/ddr3fetch_n32.words
+python3 sim/build_fetchbl_imem.py --mov-iter 5 --pad 2048 --break-slot 32 \
+  --out sim/obj_dir/ddr3fetch_b32.words
+python3 sim/build_fetchbl_imem.py --mov-iter 5 --pad 2048 --break-slot 33 \
+  --out sim/obj_dir/ddr3fetch_b33.words
+
+elaborate ddr3fetch sim/obj_dir/ddr3fetch_n5.words
+CPU ddr3fetch --cycles 80000 --edges 2 --period 3668 --first 33550 \
+  --r5 00000000 --r9 ffffffe1 --mask 3ffffffffff --pc 101c
+write_hex sim/obj_dir/ddr3fetch_n8.words
+CPU ddr3fetch --cycles 80000 --edges 2 --period 5396 --first 35278 \
+  --r5 00000000 --r9 ffffffe1 --mask 3ffffffffff
+write_hex sim/obj_dir/ddr3fetch_n32.words
+CPU ddr3fetch --cycles 120000 --edges 2 --period 19220 --first 49102 \
+  --r5 00000000 --r9 ffffffe1 --mask 3ffffffffff
+# Slot 32 wrong: the compare holds and the BL is never fetched.
+write_hex sim/obj_dir/ddr3fetch_b32.words
+CPU ddr3fetch --cycles 80000 --edges 0 --pc 1cd8 \
+  --r5 00000000 --r9 ffffffe1 --mask ffffffffff
+# Slot 33 wrong: the BL runs, then the link compare holds.
+write_hex sim/obj_dir/ddr3fetch_b33.words
+CPU ddr3fetch --cycles 80000 --edges 0 --pc 1c20 \
+  --r5 00000000 --r9 ffffffe1 --mask 1ffffffffff
+# The prologue misses are unchanged by the fetch program.
+write_hex sim/obj_dir/ddr3fetch_n5.words
+CPU ddr3fetch --cycles 80000 --edges 0 --pc 1390 \
+  --r5 dfaadfaa --r9 20532036 --mask f0 \
+  +ddr3_pin_even=20FF +ddr3_odd_clear=2
+CPU ddr3fetch --cycles 80000 --edges 0 --pc 1390 \
+  --r5 aaaaaaaa --r9 55555536 --mask f0 \
+  +ddr3_center=9
+
+# Same words, fetched from ROM. The data compare passes. The CPU sits
+# on the hold at 0x1F00 and R15 is still the reset value, so slot 33
+# fails and the LED stays dark.
+say "elaborate ddr3fetch FETCH_STORED=0"
+if ! FETCH_STORED=0 SIM_IMAGE=ddr3fetch \
+    BLINK3_IMEM=sim/obj_dir/ddr3fetch_n5.words \
+    mill chisel-blinky.runMain gcd.CPUSimTop; then
+  echo "FAIL elaborate ddr3fetch FETCH_STORED=0" >&2
+  exit 1
+fi
+build ddr3fetch-rom verilator "${VFLAGS[@]}" -DPRINTF_COND=0 \
+  --top-module CPUSimTop --Mdir sim/obj_dir/ddr3_cpu_ddr3fetch_rom -o ddr3_cpu \
+  -CFLAGS "-std=c++17 -O2" \
+  generated/CPUSimTopDdr3.v generated/InstrRom.v \
+  sim/CpuClock.v sim/Ddr3UserModel.v sim/tb_ddr3_cpu.cpp
+write_hex sim/obj_dir/ddr3fetch_n5.words
+run sim/obj_dir/ddr3_cpu_ddr3fetch_rom/ddr3_cpu --cycles 80000 --edges 0 \
+  --pc 1f00 --r5 00000000 --r9 ffffffe1 --mask 1ffffffffff
+
 if [[ "$FAIL" -ne 0 ]]; then
   echo "stand-in mismatches" >&2
   exit 1

@@ -170,25 +170,28 @@ object CPUSimTop {
           s"$targetDir/CPUSimTopBlink3.v",
           "blink3"
         )
-      case "ddr3" | "ddr3fixup" | "ddr3rsc" =>
-        val extra = if (image == "ddr3rsc") 32 else if (image == "ddr3fixup") 20 else 0
+      case "ddr3" | "ddr3fixup" | "ddr3rsc" | "ddr3fetch" =>
+        val extra = if (image == "ddr3fetch") 34 else if (image == "ddr3rsc") 32 else if (image == "ddr3fixup") 20 else 0
+        val fetchStored = image == "ddr3fetch" && sys.env.getOrElse("FETCH_STORED", "1") != "0"
         val imemPath = new File(
           projectRoot,
           sys.env.getOrElse(
             "BLINK3_IMEM",
-            if (image == "ddr3rsc") "sim/visualizer/imem/ddr3rsc.words"
+            if (image == "ddr3fetch") "sim/visualizer/imem/ddr3fetch.words"
+            else if (image == "ddr3rsc") "sim/visualizer/imem/ddr3rsc.words"
             else if (image == "ddr3fixup") "sim/visualizer/imem/ddr3fixup.words"
             else "sim/visualizer/imem/ddr3.words"
           )
         ).getAbsolutePath
         val words = loadInstructionsFromFile(imemPath)
-        println(s"CPUSimTop: $image IMEM ${words.length} words extraChecks=$extra from $imemPath")
+        println(s"CPUSimTop: $image IMEM ${words.length} words extraChecks=$extra fetchStored=$fetchStored from $imemPath")
         (
           () => new CPUSimTop(
             Seq.empty,
             customMemoryImage = Some(words),
             memBackend = "ddr3",
-            extraChecks = extra
+            extraChecks = extra,
+            fetchStored = fetchStored
           ),
           s"$targetDir/CPUSimTopDdr3.v",
           image

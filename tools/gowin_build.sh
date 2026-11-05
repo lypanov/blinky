@@ -19,6 +19,7 @@
 #   FPGA_IMAGE=ddr3 BOARD=primer20k tools/gowin_build.sh  # Primer 20K DDR3 data port + Blink3
 #   FPGA_IMAGE=ddr3fixup BOARD=primer20k tools/gowin_build.sh  # that port plus the step-2 ALU
 #   FPGA_IMAGE=ddr3rsc BOARD=primer20k tools/gowin_build.sh    # that port plus LDB/STB and the .rsc reader
+#   FPGA_IMAGE=ddr3fetch BOARD=primer20k tools/gowin_build.sh  # that port plus one BL fetched back from a store
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -61,6 +62,9 @@ if [[ "$FPGA_IMAGE" == "ddr3fixup" && -z "${BLINK3_IMEM:-}" ]]; then
 fi
 if [[ "$FPGA_IMAGE" == "ddr3rsc" && -z "${BLINK3_IMEM:-}" ]]; then
   BLINK3_IMEM="$ROOT/sim/visualizer/imem/ddr3rsc.words"
+fi
+if [[ "$FPGA_IMAGE" == "ddr3fetch" && -z "${BLINK3_IMEM:-}" ]]; then
+  BLINK3_IMEM="$ROOT/sim/visualizer/imem/ddr3fetch.words"
 fi
 BLINK3_IMEM="${BLINK3_IMEM:-$ROOT/sim/visualizer/imem/blink3.words}"
 export FPGA_IMAGE BLINK3_IMEM
@@ -166,12 +170,18 @@ elif [[ "$FPGA_IMAGE" == "hyperram" ]]; then
   EXPECT_MHI="$(mhi_hex "$BLINK3_MAXITER")"
   GOWIN_OUT_NAME="hyperram_n${BLINK3_MAXITER}"
   GOWIN_TCL="$ROOT/gowin/gowin_build_hyperram.tcl"
-elif [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" ]]; then
+elif [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" ]]; then
   if [[ "$BOARD" != "primer20k" && "$BOARD" != "tangprimer20k" ]]; then
     echo "error: the DDR3 data port loads the Tang Primer 20K only (BOARD=$BOARD)" >&2
     exit 1
   fi
-  if [[ "$FPGA_IMAGE" == "ddr3rsc" ]]; then
+  if [[ "$FPGA_IMAGE" == "ddr3fetch" ]]; then
+    echo "==> DDR3 stored-BL IMEM (prologue, ALU, reader, fetch at 0x1F00, maxIterations=$BLINK3_MAXITER)"
+    python3 "$ROOT/sim/build_fetchbl_imem.py" \
+      --max-iter "$BLINK3_MAXITER" \
+      --pad 2048 \
+      --out "$BLINK3_IMEM"
+  elif [[ "$FPGA_IMAGE" == "ddr3rsc" ]]; then
     echo "==> DDR3 reader IMEM (prologue, ALU, bytes at 0x1800, maxIterations=$BLINK3_MAXITER)"
     python3 "$ROOT/sim/build_rsc_imem.py" \
       --max-iter "$BLINK3_MAXITER" \
@@ -306,7 +316,7 @@ elif [[ "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" 
       exit 1
     fi
   fi
-elif [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" ]]; then
+elif [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" ]]; then
   echo "==> Checking Blink3 trampoline / BL Toggle encodings"
   for word in f7000409 f7000410 f7ffffdc; do
     if grep -qi "$word" "$IMEM_HEX"; then
@@ -318,7 +328,7 @@ elif [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE
   done
 fi
 
-if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" ]]; then
+if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" ]]; then
   echo "==> Checking prologue entry MOV R0, 0x1200"
   if grep -qi '40001200' "$IMEM_HEX"; then
     echo "    found 40001200"
@@ -327,7 +337,7 @@ if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" =
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
+if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
   echo "==> Checking sign-extended MOV R1, -1"
   if grep -qi '5100ffff' "$IMEM_HEX"; then
     echo "    found 5100ffff"
@@ -336,7 +346,7 @@ if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" 
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
+if [[ "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
   echo "==> Checking LDB R1, [R3] and STB R1, [R3]"
   for word in 91300000 b1300000; do
     if grep -qi "$word" "$IMEM_HEX"; then
@@ -347,7 +357,7 @@ if [[ "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "
     fi
   done
 fi
-if [[ "$FPGA_IMAGE" == "fetchbl" ]]; then
+if [[ "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "ddr3fetch" ]]; then
   echo "==> Checking MHI of the BL prefix and the ROM hold at 0x1F00"
   if grep -qi '6400f700' "$IMEM_HEX"; then
     echo "    found 6400f700"
@@ -392,10 +402,13 @@ case "$BOARD" in
     echo "==> Gowin syn+PNR (GW2A-LV18PG256C8/I7 Dock) out=$GOWIN_OUT_NAME"
     mkdir -p "$ROOT/gowin/primer20k/impl"
     cd "$ROOT/gowin/primer20k"
-    if [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" ]]; then
-      # The reader place's eye is programmed step 9 on both lanes.
-      # The prologue and the ALU keep the default force of 10.
-      if [[ "$FPGA_IMAGE" == "ddr3rsc" ]]; then
+    if [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" ]]; then
+      # The reader sweep is DDR3_READER. The stored-BL image forces both
+      # lanes to step 10, the eye this place passed on. The prologue and
+      # the ALU keep lane 1 on the write-level result.
+      if [[ "$FPGA_IMAGE" == "ddr3fetch" ]]; then
+        printf '%s\n' '`define DDR3_FETCH' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
+      elif [[ "$FPGA_IMAGE" == "ddr3rsc" ]]; then
         printf '%s\n' '`define DDR3_READER' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
       else
         printf '%s\n' '// prologue and ALU: lane 0 stays at step 10' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
