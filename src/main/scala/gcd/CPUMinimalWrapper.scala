@@ -15,6 +15,12 @@ class CpuWrapHyper extends CpuWrapBase {
   val hr = new HyperRamUserBundle
 }
 
+class CpuWrapDdr3 extends CpuWrapBase {
+  val ddr = new Ddr3UserBundle
+  val cpu_clock = Input(Clock())
+  val pc = Output(UInt(32.W))
+}
+
 class CPUMinimalWrapper(
     useRealGowin: Boolean = true,
     programInstructions: Seq[String] = Seq.empty[String],
@@ -26,22 +32,32 @@ class CPUMinimalWrapper(
     chainFix: Boolean = false
 ) extends Module {
   val hyper = memBackend == "hyperram"
+  val ddr3 = memBackend == "ddr3"
   val exposeHyper = hyper && useRealGowin
-  val io = IO(if (exposeHyper) new CpuWrapHyper else new CpuWrapBase)
+  val exposeDdr = ddr3 && useRealGowin
+  val io = IO(
+    if (exposeHyper) new CpuWrapHyper
+    else if (exposeDdr) new CpuWrapDdr3
+    else new CpuWrapBase
+  )
   
   // Blink2 uses the small default IMEM (programInstructions). Blink3 passes
   // the linked image + address-0 BL trampoline as customMemoryImage.
   // HyperRAM uses that image plus the walking-pattern prologue, and stalls
   // loads and stores. Block RAM keeps waitForStores false.
-  val cpu = Module(new CPUSubset0(
-    programInstructions,
-    customMemoryImage = customMemoryImage,
-    waitForStores = hyper,
-    requireMemCheck = hyper,
-    extraChecks = extraChecks,
-    fetchStored = fetchStored,
-    chainFix = chainFix
-  ))
+  // The DDR3 CPU is on pclk/4. The bridge stays on pclk.
+  val cpuClock = if (ddr3 && useRealGowin) io.asInstanceOf[CpuWrapDdr3].cpu_clock else clock
+  val cpu = withClock(cpuClock) {
+    Module(new CPUSubset0(
+      programInstructions,
+      customMemoryImage = customMemoryImage,
+      waitForStores = hyper || ddr3,
+      requireMemCheck = hyper || ddr3,
+      extraChecks = extraChecks,
+      fetchStored = fetchStored,
+      chainFix = chainFix
+    ))
+  }
   io.led := cpu.io.led
   
   // Use the abstracted RAM controller for cycling display
@@ -80,6 +96,52 @@ class CPUMinimalWrapper(
       bridge.io.hr.rd_data := model.io.rd_data
       bridge.io.hr.rd_data_valid := model.io.rd_data_valid
       bridge.io.hr.init_calib := model.io.init_calib
+    }
+  } else if (ddr3) {
+    val bridge = Module(new Ddr3Bridge)
+    val sync = withClock(cpuClock) { Module(new Ddr3CpuPortSync) }
+    sync.io.inAddr := cpu.io.memAddr
+    sync.io.inWriteData := cpu.io.memWriteData
+    sync.io.inWrite := cpu.io.memWrite
+    sync.io.inRead := cpu.io.memRead
+    sync.io.inByte := cpu.io.memByte
+    bridge.io.cpuAddr := sync.io.addr
+    bridge.io.cpuWriteData := sync.io.writeData
+    bridge.io.cpuWrite := sync.io.write
+    bridge.io.cpuRead := sync.io.read
+    bridge.io.cpuByte := sync.io.byte
+    cpu.io.memReadData := bridge.io.cpuReadData
+    val align = withClock(cpuClock) { Module(new Ddr3StallAlign) }
+    align.io.req := cpu.io.memRead || cpu.io.memWrite
+    align.io.bridgeStall := bridge.io.memStall
+    cpu.io.memStall := align.io.stall
+    if (useRealGowin) {
+      io.asInstanceOf[CpuWrapDdr3].pc := cpu.io.pc
+    }
+    if (useRealGowin) {
+      val ddr = io.asInstanceOf[CpuWrapDdr3].ddr
+      ddr.rd := bridge.io.ddr.rd
+      ddr.wr := bridge.io.ddr.wr
+      ddr.refresh := bridge.io.ddr.refresh
+      ddr.addr := bridge.io.ddr.addr
+      ddr.din := bridge.io.ddr.din
+      bridge.io.ddr.dout := ddr.dout
+      bridge.io.ddr.data_ready := ddr.data_ready
+      bridge.io.ddr.busy := ddr.busy
+      bridge.io.ddr.calib := ddr.calib
+    } else {
+      val model = Module(new Ddr3UserModel)
+      model.io.clk := clock
+      model.io.rst_n := ~reset.asBool
+      model.io.rd := bridge.io.ddr.rd
+      model.io.wr := bridge.io.ddr.wr
+      model.io.refresh := bridge.io.ddr.refresh
+      model.io.addr := bridge.io.ddr.addr
+      model.io.din := bridge.io.ddr.din
+      bridge.io.ddr.dout := model.io.dout
+      bridge.io.ddr.data_ready := model.io.data_ready
+      bridge.io.ddr.busy := model.io.busy
+      bridge.io.ddr.calib := model.io.calib
     }
   } else {
     val memoryController = Module(new MemoryController(useRealGowin))
