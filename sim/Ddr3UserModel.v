@@ -20,11 +20,22 @@
 //
 // Write delay is the controller's WSTEP, compared with +ddr3_center.
 // The controller forces lane 0 to step 10 after read calibration and
-// leaves lane 1 on its write-level result. On the ALU place that force
+// leaves lane 1 on its write-level result, except the reader build,
+// which forces both lanes to step 9. On the ALU place the force of 10
 // is the data eye, so the default center is 10 and lane 1 defaults to
-// the same step. On the reader place the data eye is programmed step 9:
-// the same force of 10 is one step above the eye. +ddr3_center=9 is that
-// place. It does not change the step the bitstream writes.
+// the same step. On the earlier reader place, where lane 1 was left on
+// the write-level result, the data eye was programmed step 9: the force
+// of 10 is one step above that eye. +ddr3_center=9 is that place. It
+// does not change the step the bitstream writes.
+//
+// Forcing both lanes to 9 on the rebuilt reader place is not this
+// offset 0. The Dock read the sentinel as 0x2505A5A5 (DQ5, DQ7 and DQ15
+// clear on beat 1, beat 0 intact) and summed the pattern to AFF0B9CF.
+// That is a split inside one step: the pins do not agree. A whole
+// column, a per-beat bitwise mask, and a per-pin slide of one or two
+// columns were checked against that UART; none of them produce the two
+// sums and the sentinel together. This model still has only the whole
+// column. Offset 0 means every pin landed on the addressed column.
 //
 //   * offset 0 (programmed == center): the beat lands on the column.
 //   * offset +1: one step above the eye, toward the write-level edge.

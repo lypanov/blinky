@@ -289,16 +289,14 @@ step; the force is the same point as the lane-0 force of 10, which
 is `rcalib_done`. Lane 1 is left on the write-level result for the
 prologue and the ALU. Those bitstreams are not rebuilt.
 
-`+ddr3_center=9 +ddr3_lane0=9 +ddr3_lane1=9` is that bitstream on the
-reader place. N=5 first edge 32902, period 3668. N=32 first edge
-48454, period 19220. R5 `00000000`, R9 `FFFFFFE1`, mask
-`FFFFFFFFFF`. The line is still `576*N+788`. N=262144 is 150995732
-controller clocks per edge, 0.640747 Hz, full blink 0.320373 Hz,
-93.641 frames at 30 fps. Locked before the SRAM load. A corrupt
-read or one wrong header byte leaves the pin dark. UART on a pass
-shows `wstep_run` `0009`, no `H`, and a PC in the Blink3 loop.
-`AAFFAAFF` would mean lane 1 did not land on the eye. `AAAAAAAA`
-with `wstep_run` `0009` would mean this place's center is no longer 9.
+`+ddr3_center=9 +ddr3_lane0=9 +ddr3_lane1=9` is still offset 0 inside
+the stand-in: every pin on the addressed column, the same whole-beat
+hit as the ALU place. N=5 first edge 32902, period 3668. N=32 first
+edge 48454, period 19220. R5 `00000000`, R9 `FFFFFFE1`, mask
+`FFFFFFFFFF`. The line is still `576*N+788`. That run is not a
+prediction for this bitstream. The Dock section below is the
+prediction that failed, and the following section is why no column
+rule was substituted for it.
 
 ## Fidelity check of the step-9 bitstream (stop)
 
@@ -331,3 +329,74 @@ sampled by the CPU is `2505`, with `A5A5` in the other beat. No
 plusarg in `sim/run_ddr3_standin.sh` prints R5 `AFF0B9CF` or R9
 `450FEFF1`. No webcam. The locked rate was not changed. The Dock was
 put back on `ddr3fixup_n262144.fs`. Steps 4–8 were not started.
+
+## The step-9 sample is not a column eye
+
+The stand-in was not given a new plusarg. Nothing that moves whole
+columns, or that edits a beat by a bitwise mask, produces this UART
+together with the two words that did match. The board was not loaded
+for the check.
+
+The last read is column `0x3F9`, the high half of the sentinel at
+`0x7F0`. The CPU's beat is `2505` and the other captured beat is
+`A5A5`. The last store is the high half of the sentinel difference,
+`0x7F60` at column `0x3EF`. That is
+`(0x2505A5A5 - 0xA5A5A5A5) >> 16`, so the word the CPU read is
+`0x2505A5A5`. The low half, column `0x3F8`, came back `A5A5`. The
+high half lost DQ5, DQ7 and DQ15 (`A5A5 XOR 2505 = 80A0`). DQ0, DQ2,
+DQ8, DQ10 and DQ13 stayed 1. Copying either neighbouring beat cannot
+do that: the other half of this word is also `A5A5`, and the next
+column was never written.
+
+Mask `0000000050` is bits 4 and 6: MT[1] at `0x14` is still `0x50`,
+and the alias word at `0x114` is still `0x11111111`. MT[2], the
+sentinel, and the four fold checks missed. MT[1] and the alias are
+beats 2 and 3 of their groups. The broken sentinel beat is beat 1.
+
+R5 `AFF0B9CF` is the sum of the 32 pattern words. Its low 16 bits are
+`B9CF`, not `FFFF`. Beats 1 and 3 are the high halves, so a fault
+that touches only those beats cannot move the low 16 bits. Beats 0
+and 2 are wrong as well, and they are wrong in a way that still
+returns `0x50` and `0x11111111` and still returns `A5A5` for sentinel
+beat 0.
+
+Three column rules were checked against that constraint.
+
+Replacing any per-beat set of bits with the next column's bits leaves
+the pattern sum's low 16 bits at `FFFF`. Each one-hot bit that falls
+out of a low half is the same bit the paired high half drops back
+in. The board's low half is `B9CF`.
+
+A per-beat bitwise map (each output bit passed, cleared, forced, or
+flipped), limited to the maps that keep the sentinel and the two
+passing words, has no pair of low-half maps whose pattern sum ends in
+`B9CF` and whose complement sum ends in `EFF1` at the same time.
+
+Sliding a per-lane set of bits by one or two columns, with the
+distance allowed to change per beat, gives 2304 memories that match
+the sentinel and the single-word checks. None of them has both sums.
+The closest hamming distance on the two sums together is 12. Sending
+those bits to the other word of the BC4 group instead (`column ^ 2`),
+over every pin choice that keeps the sentinel and the two passing
+words and still makes MT[2] miss, was exhaustive and had no hit.
+
+So programmed step 9 with both lanes forced is not the center, and it
+is not one whole column above or below a center. The strobe is where
+the DQ pins disagree with each other. One WSTEP on this place is not
+one column for every pin. The earlier fit, programmed 10 on the
+previous reader place as one column above an eye at 9, was the case
+where the pins that failed all failed together. Forcing lane 1 to 9
+moved the data pins relative to the feedback pin. Raw `wstep` is
+still `000D`, so that feedback edge did not move. The data pins are
+not the feedback pin.
+
+`+ddr3_center=9 +ddr3_lane0=9 +ddr3_lane1=9` remains the whole-pin hit
+in `sim/run_ddr3_standin.sh`. It is the model's arithmetic when the
+programmed step equals the center, which is still the right model of
+the ALU place at step 10. It is not a prediction for
+`LANE0_STEP=9` / `LANE1_STEP=9`. There is no plusarg for this split.
+Another SRAM load of this image will not match the stand-in. A
+programmed step that comes back as R5 `FFFFFFFF` is a center the
+model can name. A step that comes back as `AAAAAAAA` or `55555554`
+is the whole-column miss the model already has (`+ddr3_center` one
+below or one above that step). A second split-pin UART will not.
