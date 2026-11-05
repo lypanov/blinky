@@ -47,6 +47,29 @@ class InstrRom(depth: Int, addrBits: Int, hexPath: String) extends BlackBox {
   romWriter.close()
 }
 
+// Slots past the 45-bit mask. The address is registered on the store
+// cycle and compared on the next cycle, so the compare is not part of
+// the instruction path. The step-6 stores land hundreds of cycles
+// before the delay loop, so that extra cycle does not move an edge.
+class CheckTail(n: Int, base: Int) extends Module {
+  val io = IO(new Bundle {
+    val en = Input(Bool())
+    val addr = Input(UInt(32.W))
+    val ok = Output(Bool())
+  })
+  val enQ = RegNext(io.en, false.B)
+  val addrQ = RegNext(io.addr(15, 0), 0.U(16.W))
+  val bits = RegInit(0.U(n.W))
+  when (enQ) {
+    for (i <- 0 until n) {
+      when (addrQ === ((base + i * 4) & 0xffff).U) {
+        bits := bits | (1.U(n.W) << i).asUInt
+      }
+    }
+  }
+  io.ok := bits.andR
+}
+
 class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
                  customMemoryImage: Option[Seq[String]] = None,
                  waitForStores: Boolean = false,
@@ -108,7 +131,14 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // extraChecks are the step-2 ALU compares plus, on the step-3 image, the
   // byte and .rsc header compares. Both live at 0x800+4*slot.
   val memSlots = if (requireMemCheck) 8 else 0
-  val totalChecks = memSlots + extraChecks
+  // The one-hot update below is a variable shift. Widening it past the
+  // step-5 mask (8 memory slots + 37 compares) added about 50 LUTs, and
+  // the 27 MHz path from the instruction ROM missed timing. Slots past
+  // that width are CheckTail, which looks at the store port and does
+  // not sit in this shift.
+  val shifterExtra = math.min(extraChecks, 37)
+  val tailChecks = extraChecks - shifterExtra
+  val totalChecks = memSlots + shifterExtra
   val checkMask = if (totalChecks > 0) Some(RegInit(0.U(totalChecks.W))) else None
   
   // Instruction words. A combinational case-ROM of the fixup image did not
@@ -528,9 +558,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
               val slot = memDelta(4, 2)
               mask := mask | (1.U(totalChecks.W) << slot)
             }
-            if (extraChecks > 0) {
+            if (shifterExtra > 0) {
               val aluDelta = effectiveAddr - 0x800.U
-              when (aluDelta < (extraChecks * 4).U) {
+              when (aluDelta < (shifterExtra * 4).U) {
                 // Bit 7 of the byte offset is slot 32 (address 0x880). A
                 // 5-bit index would wrap that store onto slot 0.
                 val slot = aluDelta(8, 2) +& memSlots.U
@@ -797,9 +827,18 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   io.r2 := regs(2)
   io.r3 := regs(3)
   io.halted := halted
+  val tailOk = if (tailChecks == 0) {
+    true.B
+  } else {
+    val tail = Module(new CheckTail(tailChecks, 0x800 + shifterExtra * 4))
+    tail.io.en := io.memWrite && !io.memByte && (io.memWriteData === 0.U)
+    tail.io.addr := io.memAddr
+    tail.io.ok
+  }
   io.led := checkMask.map { m =>
     val armed = ((BigInt(1) << totalChecks) - 1).U(totalChecks.W)
-    ledState && (m === armed)
+    val ready = ledState && (m === armed)
+    if (tailChecks == 0) ready else ready && tailOk
   }.getOrElse(ledState)
   io.pc := pc  // Connect the program counter to the output
 }
@@ -860,15 +899,18 @@ object CPUSubset0 {
     val rsc = fpgaImage == "rsc"
     val fetchbl = fpgaImage == "fetchbl"
     val pdchain = fpgaImage == "pdchain"
-    val hyper = fpgaImage == "hyperram" || fixup || rsc || fetchbl || pdchain
+    val moddesc = fpgaImage == "moddesc"
+    val hyper = fpgaImage == "hyperram" || fixup || rsc || fetchbl || pdchain || moddesc
     // 20 matches sim/build_fixup_imem.py. 32 matches sim/build_rsc_imem.py.
     // 34 matches sim/build_fetchbl_imem.py (those 32, plus the stored BL
     // and the link register). 37 matches sim/build_pdchain_imem.py.
+    // 40 matches sim/build_moddesc_imem.py (those 37, plus the module
+    // table, the procedure variable, and the BLR link).
     // A mismatch leaves the LED dark, because a slot that is never stored
     // stays clear.
-    val extra = if (pdchain) 37 else if (fetchbl) 34 else if (rsc) 32 else if (fixup) 20 else 0
+    val extra = if (moddesc) 40 else if (pdchain) 37 else if (fetchbl) 34 else if (rsc) 32 else if (fixup) 20 else 0
     val (programInstructions, customMemoryImage) = fpgaImage match {
-      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" =>
+      case "blink3" | "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" =>
         val imemArg = sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
         val imemFile = new File(imemArg)
         val imemPath =
@@ -881,7 +923,8 @@ object CPUSubset0 {
           )
         }
         val imageName =
-          if (pdchain) "step-5 P/D chain + HyperRAM"
+          if (moddesc) "step-6 ModDesc + HyperRAM"
+          else if (pdchain) "step-5 P/D chain + HyperRAM"
           else if (fetchbl) "step-4 stored BL + HyperRAM"
           else if (rsc) "step-3 byte/.rsc reader + HyperRAM"
           else if (fixup) "fixup ALU + HyperRAM"
@@ -911,7 +954,7 @@ object CPUSubset0 {
         requireMemCheck = hyper,
         extraChecks = extra,
         fetchStored = fetchbl,
-        chainFix = pdchain
+        chainFix = pdchain || moddesc
       ),
       firtoolOpts = firtoolOpts
     )
@@ -925,7 +968,7 @@ object CPUSubset0 {
         memBackend = if (hyper) "hyperram" else "blockram",
         extraChecks = extra,
         fetchStored = fetchbl,
-        chainFix = pdchain
+        chainFix = pdchain || moddesc
       ),
       firtoolOpts = firtoolOpts
     )
@@ -939,7 +982,7 @@ object CPUSubset0 {
         memBackend = if (hyper) "hyperram" else "blockram",
         extraChecks = extra,
         fetchStored = fetchbl,
-        chainFix = pdchain
+        chainFix = pdchain || moddesc
       ),
       firtoolOpts = firtoolOpts
     )
