@@ -240,23 +240,34 @@ int main(int argc, char** argv) {
   const bool corrupt = has(argc, argv, "+ddr3_corrupt");
   const bool place_fetch = has(argc, argv, "+ddr3_place_fetch");
   const bool fetch_eye = has(argc, argv, "+ddr3_fetch_eye");
+  const bool pd_eye = has(argc, argv, "+ddr3_pd_eye");
   const int center = plus_int(argc, argv, "ddr3_center", 10);
   const int s0 = plus_int(argc, argv, "ddr3_lane0", 10);
   const int s1 = plus_int(argc, argv, "ddr3_lane1", 10);
-  // The Dock image's centers are lane 0 = 11 and lane 1 = 7.
-  // Absolute 9 and 10 on the earlier image are both offset +1.
-  // The lane numbers are read in both cases.
+  const int edge0 = plus_int(argc, argv, "ddr3_edge0", -1);
+  const int edge1 = plus_int(argc, argv, "ddr3_edge1", -1);
+  // Fetch centers are lane 0 = 11 and lane 1 = 7 unless both edges
+  // are supplied. Then the center is the edge minus backoff 1 and 3.
+  // The P/D place has no eye: lane 0 at 10 or 11, and lane 1 at 5, 6,
+  // or 7, are +1.
   int c0 = center;
   int c1 = center;
-  if (fetch_eye) {
+  if (fetch_eye || pd_eye) {
     c0 = 11;
     c1 = 7;
   }
+  if (fetch_eye && edge0 >= 0 && edge1 >= 0) {
+    c0 = edge0 - 1;
+    c1 = edge1 - 3;
+  }
   int off0 = s0 - c0;
   int off1 = s1 - c1;
-  if (place_fetch && !fetch_eye) {
+  if (place_fetch && !fetch_eye && !pd_eye) {
     off0 = (s0 == 9 || s0 == 10) ? 1 : (s0 - 10);
     off1 = (s1 == 9 || s1 == 10) ? 1 : (s1 - 10);
+  } else if (pd_eye) {
+    off0 = (s0 == 10 || s0 == 11) ? 1 : (s0 - 11);
+    off1 = (s1 == 5 || s1 == 6 || s1 == 7) ? 1 : (s1 - 7);
   }
 
   if (pin_set) {

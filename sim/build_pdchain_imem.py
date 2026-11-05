@@ -419,6 +419,7 @@ def pdchain_imem(
         max_iter=max_iter,
         mov_iter=mov_iter,
         success=ALU,
+        hold_scan=False,
     )
     alu, _ = assemble_alu(alu_break, success=READER)
     reader, _ = assemble_reader(reader_break, success=CHAIN)
