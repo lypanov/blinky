@@ -224,11 +224,12 @@ module tb_ddr3_phy;
                          waits, a, data_ready, dout128);
                 for (s = 0; s < 8; s = s + 1) begin
                     slice = dout128[127 - s*16 -: 16];
-                    if (slice === exp)
+                    if (slice === exp && data_ready === 1'b1)
                         $display("HIT addr=%h pclk=%0d slot=%0d", a, waits, s);
-                    // Column 1's byte is 2222. 1111 in any slot is
-                    // the even-word alias. It does not pass.
-                    if (exp === 16'h2222 && slice === 16'h1111)
+                    // 1111 in the Dock slot at data_ready, on the
+                    // column-1 read, is the even-word alias.
+                    if (exp === 16'h2222 && slice === 16'h1111
+                            && data_ready === 1'b1 && s == 0)
                         $display("ALIAS addr=%h pclk=%0d slot=%0d even=1111",
                                  a, waits, s);
                 end
@@ -257,17 +258,66 @@ module tb_ddr3_phy;
         end
     endtask
 
+    // One line per read. pre/at/post are dq_in[0] on the pclk
+    // before data_ready, at data_ready, and one pclk after.
+    // The score does not use this task.
+    task do_read_phase;
+        input [25:0] a;
+        reg [15:0] pre, at, post, prev;
+        reg got;
+        begin
+            wait (busy === 1'b0);
+            @(posedge pclk);
+            #1;
+            rd = 1'b1;
+            wr = 1'b0;
+            refresh = 1'b0;
+            addr = a;
+            @(posedge pclk);
+            #1;
+            rd = 1'b0;
+            got = 1'b0;
+            pre = 16'hxxxx;
+            at = 16'hxxxx;
+            post = 16'hxxxx;
+            prev = 16'hxxxx;
+            waits = 0;
+            while (waits < READY_WAIT && !got) begin
+                @(posedge pclk);
+                #1;
+                waits = waits + 1;
+                if (data_ready === 1'b1) begin
+                    pre = prev;
+                    at = dout128[127:112];
+                    @(posedge pclk);
+                    #1;
+                    post = dout128[127:112];
+                    got = 1'b1;
+                end
+                prev = dout128[127:112];
+            end
+            $display("PHASE rp=%0d rs=%0d addr=%h pre=%h at=%h post=%h raw=%h",
+                     ctl.rclkpos, ctl.rclksel, a, pre, at, post, dout128);
+            $fflush;
+            wait (busy === 1'b0);
+        end
+    endtask
+
     integer pin_left;
-    initial pin_left = 0;
+    reg phase_sweep;
+    initial begin
+        pin_left = 0;
+        phase_sweep = 1'b0;
+    end
     // The command is on the pin for one ck. The next edges are the
     // preamble and the burst, which is where DM and DQ have to be
     // a real 0 or 1.
     always @(posedge ddr_ck) begin
-        if (rcalib_done && {cs_n, ras_n, cas_n, we_n} === 4'b0100) begin
+        if (!phase_sweep && rcalib_done && {cs_n, ras_n, cas_n, we_n} === 4'b0100) begin
             $display("CMD write ba=%h a=%h", ba, a);
             pin_left = 10;
         end
-        if (rcalib_done && {cs_n, ras_n, cas_n, we_n} === 4'b0101) begin
+        if (!phase_sweep && rcalib_done && {cs_n, ras_n, cas_n, we_n} === 4'b0101) begin
             $display("CMD read ba=%h a=%h", ba, a);
             pin_left = 10;
         end
@@ -324,6 +374,30 @@ module tb_ddr3_phy;
         do_write(26'h000001, 16'h2222);
         do_write(26'h000010, 16'h3333);
         do_refresh;
+        // Diagnostic only. The default run does not take this branch.
+        // It moves the read gate across the burst and prints dq_in[0].
+        if ($test$plusargs("phase_sweep")) begin
+            phase_sweep = 1'b1;
+            begin : sweep
+                integer rp, rs;
+                for (rp = 0; rp < 3; rp = rp + 1) begin
+                    for (rs = 0; rs < 8; rs = rs + 1) begin
+                        if ((rp == 1) || (rp == 0 && rs >= 4) || (rp == 2 && rs < 4)) begin
+                            force ctl.rclkpos = rp[1:0];
+                            force ctl.rclksel = rs[2:0];
+                            #1;
+                            do_read_phase(26'h000000);
+                            do_read_phase(26'h000001);
+                            do_read_phase(26'h000010);
+                        end
+                    end
+                end
+            end
+            release ctl.rclkpos;
+            release ctl.rclksel;
+            $display("PHY_SCORE fail");
+            $finish;
+        end
         do_read(26'h000000, 16'h1111);
         do_read(26'h000001, 16'h2222);
         do_read(26'h000010, 16'h3333);
