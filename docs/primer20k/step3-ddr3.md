@@ -495,20 +495,238 @@ the prologue hold. No further pair was run. No webcam. The locked
 rate was not changed. The Dock was put back on
 `ddr3fixup_n262144.fs`. Steps 4–8 were not started.
 
-The same programmed step is not one column shift on every pin. Lane 0
-is the even-word alias already named by `+ddr3_center=9`. Lane 1 is
-on the addressed column except DQ5, which aliases with lane 0. On the
-high half of an odd column, a 0 on DQ1 still clears the bit that
-alias left. The stand-in prints this line with
+## Remaining step-3 plan
+
+This is the runbook for finishing step 3 on the Tang Primer 20K Dock.
+The Dock owner follows it. If the next stand-in tip still disagrees
+with a cold UART, stop, leave the accepted ALU image loaded, and hand
+this same runbook to the DDR3 sim agent. Do not guess a second sweep.
+
+### Where it stands
+
+The Dock is parked on `ddr3fixup_n262144.fs`. Do not SRAM-load a
+step-3 image until the coordinator says the next stand-in tip is
+ready. The locked blink is unchanged. Steps 4–8 are not started. The
+Nano 4K at bus 003 device 081 is not loaded.
+
+The open target is one cold prologue, both lanes programmed to step
+10 (`000A`), taken after a controller reset:
 
 ```
-+ddr3_pin_even=20FF +ddr3_odd_clear=2
+CH1390 00000000F0 DFAADFAA 000003F9 25A5A5A5 000003EF 00000000 20532036 000A 000A
 ```
 
-`20FF` sets DQ0–DQ7 and DQ13 (lane 1's DQ5). `odd_clear` bit 1 is DQ1,
-and it applies only to that high half. The step plusargs are not used
-while the pin mask is set, so `+ddr3_center=9` still prints the
-whole-column `AAAAAAAA` / `55555536` line. The CPU beat of the
-sentinel stays `A5A5`. The Dock's next burst beat is `25A5`; the
-array keeps the partner column as `20A5` (only DQ5 spilled). That
-beat is not what the CPU summed.
+That line is the only fidelity target from the cold run. The warm
+step table above is not a target. The next tip has to print this
+line from a clean array: PC `0x1390`, mask `00000000F0`, R5
+`DFAADFAA`, R9 `20532036`, both programmed steps `000A`.
+
+### Goal
+
+Prove the byte path. `FPGA_IMAGE=ddr3rsc` is the DDR3 prologue, the
+fixup ALU, the LDB/STB reader at `0x1800`, then Blink3.
+`maxIterations` stays 262144. The reader is outside the delay loop.
+A pass is the prologue, the ALU, and all twelve reader checks
+writing zeros, then Blink3 blinking at the locked rate. A prologue
+hold at `0x1390` means the reader never started. A reader hold at
+`0x1B44` means a byte or header check failed.
+
+### Cold prologue
+
+One programmed pair per trial. Do not leave the controller or the
+array up across trials. A miss writes the wrong columns and the next
+trial reads the previous bytes. That is how the warm table was
+produced. It is not a measurement.
+
+For each pair:
+
+1. Reset the DDR3 controller. `DDR3_nRESET` follows `resetn` and
+   `resetn_delay`, so the reset drops the DRAM contents. Clearing the
+   8 KiB the prologue reads (the stand-in's 4096 halfwords, byte
+   addresses `0x000` through `0x1FFF`, including `0x014`, `0x018`,
+   `0x114`, `0x400`, `0x500`, and `0x7F0`) is the other legal cold
+   start. A clear only counts if it hits the columns this trial's
+   reads will see. The reset is the cold start that produced the
+   line above.
+2. Let write leveling and read calibration finish with the step
+   override off.
+3. Program that one pair and let `WSTEP` load before any store.
+   `WLOADN` stays low between commands, so holding the CPU in reset
+   for a few tens of microseconds after calibration is enough.
+4. Release the CPU and run one prologue.
+5. Score the UART line from that trial only.
+
+The image at `5e99131` does this in `blinky_top_ddr3.v` under
+`DDR3_READER`. It starts at both lanes 10, holds the CPU across the
+controller reset, and parks on the first sum that is not a center or
+a named one-column miss. `AAAAAAAA` tries both lanes one step down.
+`55555554` tries both lanes one step up. At most three cold trials.
+Anything else parks and keeps printing that one line.
+
+### UART
+
+M11, 115200 8N1, FTDI channel B (libftdi interface 2) on bus 3
+address 78. Open that channel before the SRAM load. The reader image
+prints 82 bytes:
+
+```
+C|H PC MASK R5 READ_COL BEATS WR_ADDR WR_DATA R9 LANE1 LANE0
+```
+
+`C` is read calibration done, `.` is not. `H` is the prologue hold
+(`0x1390`..`0x13FF`) or the reader hold; `.` is not held. `MASK` is
+40 bits. `R5` is the pattern sum until the reader reuses it. `R9` is
+the complement sum. `LANE1` then `LANE0` are the programmed steps
+(`wstep1_run`, `wstep_run`). The ALU image's older print is 8 mask
+digits and ends in raw `wstep` then `wstep_run`. Do not compare those
+two layouts field by field.
+
+### What counts as proven
+
+Run `sim/run_ddr3_standin.sh` before any SRAM load. It must already
+name the UART the next cold trial is expected to print. A passing
+eye is the default command port: center 10, both lanes programmed to
+10, `HOLD`, `WLOADN`, one BC4 beat. On `ddr3rsc` at N = 5 that is
+period 3668, first edge 32902, mask `FFFFFFFFFF`, R9 `FFFFFFE1`, and
+R5 `00000000` once the reader has reused it. The blink edge is at PC
+`0x101C`. Zero LED edges and a hold are a fail. The locked line is
+not refit:
+
+`pclk/edge = 576*N + 788`
+
+N = 262144 is 150,995,732 `pclk` cycles per edge. Full blink
+0.320373 Hz, 93.641 frames at 30 fps.
+
+Step 3 is proven only when all of these are true on one cold trial:
+
+- The stand-in, with the plusargs for that programmed pair and that
+  center, prints the same PC class, mask, R5, and R9 as the board.
+- The board line repeats, so it is not a one-cycle snap.
+- Calibration is `C`. The PC is in the Blink3 delay loop, not
+  `0x1390` and not `0x1B44`.
+- Mask is `FFFFFFFFFF` (slots `0x7C0` through `0x87C`, forty zeros).
+  Slots 20..31 are the lane word `0x44332211`, the four lane bytes,
+  the neighbour `0xA5A5A5A5`, the updated byte `0x77`, the surviving
+  byte `0x33`, the name, the key `0x13579BDF`, version 1, and size
+  `0x100`.
+- R5 is `00000000`. R9 is `FFFFFFE1`.
+- The raw webcam frames of L14 match 0.320373 Hz. The tool headline
+  is not the proof.
+
+These are named, and they are not a pass:
+
+| cold R5 | meaning |
+| --- | --- |
+| `FFFFFFFF` | prologue center, if the later checks have not reused R5 yet. A pass moves on to mask `FFFFFFFFFF` and R5 `00000000` |
+| `AAAAAAAA` | one-column miss, one step above the eye (`+ddr3_center` one below the programmed step) |
+| `55555554` | one-column miss, one step below the eye |
+
+A named miss is agreement. Cold-retry the one adjacent pair the
+model names as the center. Do not walk a warm table. If that
+neighbor is not the center and is not the other named miss, stop.
+
+### Stop, and do not bounce
+
+Stop on the first cold line the stand-in cannot name. One UART, the
+programmed pair, the plusargs that were supposed to print it, and
+what they printed instead. Restore the ALU image. Do not send a
+second table. Do not change the programmed step to chase the camera
+or to force a pass the model does not print.
+
+The next tip is the one chance to score `DFAADFAA` at both lanes
+`000A`. Pull it only when the coordinator says it is ready, rerun
+`sim/run_ddr3_standin.sh`, then one cold trial of that pair.
+
+- If the cold board line matches the stand-in and the proven list
+  above is met, step 3 is done. The Dock owner keeps steps 4–8.
+  There is no handover.
+- If the cold UART is a shape the model still cannot name, or the
+  board and the sim disagree on a shape the model does name, stop.
+  Leave `ddr3fixup_n262144.fs` loaded. Report that one line. The
+  DDR3 sim agent takes the rest of this runbook on the Dock. After
+  that work is finished, the Dock owner reviews the stand-in and the
+  step-3 result, sends review comments back, and only then starts
+  step 4. A DDR3 miss on step 4 stops the hardware path for a
+  stand-in redesign. Do not open another tip-and-retry loop on step 3.
+
+### Sim first
+
+From the repo root, before `gw_sh` and before `openFPGALoader`:
+
+```
+sim/run_ddr3_standin.sh
+```
+
+The script builds no bitstream and loads neither FPGA. Record the
+plusargs and the PC, mask, R5, and R9 they print. The cold trial on
+the Dock uses that same programmed pair. A model that does not print
+`DFAADFAA` / `20532036` / mask `F0` / PC `0x1390` for both lanes at
+step 10 on a clean array has not scored the open target.
+
+### Build
+
+```
+FPGA_IMAGE=ddr3rsc BOARD=primer20k tools/gowin_build.sh
+```
+
+Unset `BLINK3_IMEM` unless you mean to override the reader words.
+The script writes `` `define DDR3_READER `` into
+`gowin/primer20k/ddr3_eye.vh` for this image only. The delay word in
+`generated/imem_inline.hex` must be `60000004`. Place-and-route must
+report setup and hold TNS 0 on `pclk` and `cpu_clk`. The bitstream
+is `gowin/primer20k/impl/pnr/ddr3rsc_n262144.fs`. Do not overwrite
+`ddr3fixup_n262144.fs`.
+
+### Dock load
+
+SRAM only, bus 003 device 078, board `tangprimer20k`. Never `-f`,
+`--write-flash`, or `--external-flash`. Do not use
+`tools/sram_load.sh` while both FT2232 cables are present. It can
+select the wrong device.
+
+```
+openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
+  gowin/primer20k/impl/pnr/ddr3rsc_n262144.fs
+```
+
+Confirm the detect idcode on that bus is `0x81b` (GW2A-18) before
+the load. Bus 003 device 081 is the Nano 4K (`0x100981b`). Leave it
+alone.
+
+After the measurement, whether it passed or stopped, SRAM-load the
+parked ALU image the same way:
+
+```
+openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
+  gowin/primer20k/impl/pnr/ddr3fixup_n262144.fs
+```
+
+The ALU line that confirms the restore is the 8-digit print, for
+example `C.106C`, mask `0FFFFFFF`, R5 `FFFFFFFF`, R9 `FFFFFFE1`,
+`wstep_run` `000A`. The PC moves in the delay loop.
+
+### Webcam
+
+Call `measure_blink` on `http://127.0.0.1:8766/mcp` only after a
+cold line meets the proven list. `roi=primer20k`, `duration=20`,
+`warmup=2`. Keep the clip path. The proof is the raw on and off
+frame counts of L14, not the tool's Hz headline. The pass LED and
+the 0.201 Hz marker sit a few pixels apart, and the detector has
+mixed them before. At 30 fps a full blink is 93.641 frames. The
+Nano 4K LED in the same clip is about 60 frames, 0.5 Hz, and is not
+the Dock. A dark L14 with the CPU in a hold is not a blink sample.
+Do not change N, the PLL, or the delay word to move the rate.
+
+### Done, before step 4
+
+All of the following, written into this file:
+
+- Stand-in command and the UART it printed, run before the load.
+- The cold Dock UART of that same pair, repeating.
+- Those two lines agree on PC class, mask, R5, and R9.
+- The proven list above, including the raw L14 frame counts and the
+  clip path.
+- The ALU image restored on 003:078, with its pass UART quoted.
+- The Nano 4K untouched, and no flash write.
+
+Until that list is filled, step 4 does not start.
