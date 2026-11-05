@@ -27,8 +27,10 @@
 // DDR3_READER is the cold step sweep. The place that passed
 // programmed both lanes to step 10. DDR3_FETCH does not reuse that
 // code: on its route, steps 9 and 10 are the same even-word alias.
-// Lane 0 loads its write-level edge minus 1. Lane 1 loads its
-// edge minus 3. The ALU
+// This image loads lane 0 with its write-level edge minus 1 and
+// lane 1 with its edge minus 3. On the build on the Dock those
+// codes are 000B and 0007. The edge moved between builds, so the
+// stand-in takes the programmed steps and not the edge. The ALU
 // place stays on lane 0 at step 10 and lane 1 on the write-level
 // result. The delay loop is unchanged.
 
@@ -462,7 +464,7 @@ module blinky_top_ddr3 (
     // Sweep image: programmed lane 1, then programmed lane 0.
     hex16({8'h00, wstep1_run}), " ",
 `elsif DDR3_FETCH
-    // Stored-BL image: lane 1 one code above 0006, then lane 0.
+    // Stored-BL image: programmed lane 1, then programmed lane 0.
     hex16({8'h00, wstep1_run}), " ",
 `else
     hex16({8'h00, unused_wstep}), " ",
@@ -659,8 +661,9 @@ module blinky_top_ddr3 (
   localparam [7:0] LANE0_STEP = 8'd10;
   localparam [7:0] LANE1_STEP = 8'd0;
 `ifdef DDR3_FETCH
-  // Lane 0 at code 000B is centered. Lane 1 at 0006 is the
-  // even-word alias (R5 AAFFAAFF), one code below that center.
+  // Backoff 1 and backoff 3. On the build on the Dock the edges
+  // were 000C and 000A, so the steps are 000B and 0007. 0006 is
+  // not this image. An earlier build's lane 0 edge was 000D.
   localparam [7:0] WLEVEL_BACKOFF = 8'd1;
   localparam [7:0] WLEVEL_BACKOFF1 = 8'd3;
 `else

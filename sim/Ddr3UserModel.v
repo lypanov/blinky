@@ -24,18 +24,21 @@
 // change the step a bitstream writes. It says which programmed step is
 // the eye on that route.
 //
-// +ddr3_place_fetch is the stored-BL route with an absolute step.
-// Programmed 9 and programmed 10 both repeat the offset-+1 line:
-// R5 AAAAAAAA, R9 55555536, mask F0, sentinel beats A5A5A5A5.
-// +ddr3_wlevel_eye is both lanes at the write-level edge minus 3.
-// That is lane 0 one code below its eye and lane 1 on its eye:
-// R5 00550054, R9 FFAAFF8C, mask F0, steps 0007 000A.
-// +ddr3_fetch_split is lane 0 at edge-2 and lane 1 at edge-3.
-// Fourteen pins are centered. DQ1 is one column early and DQ13 is
-// in the even-word alias: R5 DFFFDFFF, R9 1FFE1FE1, mask F0,
-// steps 0007 000B. Lane 1 one code above the eye is +ddr3_lane1=11:
-// R5 AAFFAAFF, R9 550054E1, steps 0006 000B. +ddr3_fetch_eye is the
-// pass, both lanes centered.
+// +ddr3_place_fetch is the absolute-step image, before backoff.
+// The model reads the lane numbers. Codes 9 and 10 were both
+// measured as offset +1 (R5 AAAAAAAA, R9 55555536, mask F0). The
+// model reads the step. Any other code on that image is step-10.
+// +ddr3_fetch_eye is the image on the Dock. It sets lane 0's center
+// to 11 and lane 1's center to 7. The pass is those two steps:
+// +ddr3_lane0=11 +ddr3_lane1=7. There is no write-level input. The
+// lane-0 edge was 000D on one build and 000C on the next, so a
+// backoff does not name the eye. Lane 0 at 10 with lane 1 at 7 is
+// one below (R5 00550054). Lane 1 at 6 with lane 0 at 11 is one
+// below on lane 1 (R5 550054FF). Lane 1 at 8 with lane 0 at 11 is
+// the even-word alias (R5 AAFFAAFF). Those are different rows.
+// +ddr3_fetch_split is an earlier image's pin split (DQ1 one column
+// early, DQ13 in the even-word alias, R5 DFFFDFFF). That image
+// printed the same codes 000B/0007. It is not offset 0.
 //
 // Forcing both lanes to 9 on the rebuilt reader place is not this
 // offset 0. The Dock read the sentinel as 0x2505A5A5 (DQ5, DQ7 and DQ15
@@ -278,7 +281,8 @@ module Ddr3UserModel (
     end
   endtask
 
-  // Edge-2 / edge-3 on the fetch route. DQ1 lands one column early.
+  // Earlier image that printed DFFFDFFF at steps 0007 000B. DQ1 lands
+  // one column early. Not offset 0, and not the pass program.
   // DQ13 takes the even word of the BC4 group on both words. Every
   // other pin writes the addressed column. The sentinel bytes are
   // equal across a group, so DQ13's alias does not move it.
@@ -370,7 +374,7 @@ module Ddr3UserModel (
     if ($test$plusargs("ddr3_dm_lane1"))
       dm_mode = 2'd3;
     begin : eye_init
-      integer s0, s1, off0, off1;
+      integer s0, s1, off0, off1, c0, c1;
       s0 = 10;
       s1 = 10;
       center = 10;
@@ -383,18 +387,22 @@ module Ddr3UserModel (
         s1 = 10;
       if (!$value$plusargs("ddr3_center=%d", center))
         center = 10;
-      // Absolute codes 9 and 10 are the same miss. Edge-3 on both
-      // lanes leaves lane 0 one code low. Edge-2 / edge-3 is offset 0.
-      if ($test$plusargs("ddr3_wlevel_eye")) begin
-        off0 = -1;
-        off1 = 0;
-      end else if ($test$plusargs("ddr3_place_fetch") &&
-                   !$test$plusargs("ddr3_fetch_eye")) begin
-        off0 = 1;
-        off1 = 1;
+      // Fetch image on the Dock: per-lane centers, not one center
+      // and not the write-level edge. Place-fetch reads the step and
+      // maps only codes 9 and 10 onto offset +1.
+      c0 = center;
+      c1 = center;
+      if ($test$plusargs("ddr3_fetch_eye")) begin
+        c0 = 11;
+        c1 = 7;
+      end
+      if ($test$plusargs("ddr3_place_fetch") &&
+          !$test$plusargs("ddr3_fetch_eye")) begin
+        off0 = (s0 == 9 || s0 == 10) ? 1 : (s0 - 10);
+        off1 = (s1 == 9 || s1 == 10) ? 1 : (s1 - 10);
       end else begin
-        off0 = s0 - center;
-        off1 = s1 - center;
+        off0 = s0 - c0;
+        off1 = s1 - c1;
       end
       eye_from_offset(off0, lane0_mode, lane0_sh);
       eye_from_offset(off1, lane1_mode, lane1_sh);
@@ -404,8 +412,8 @@ module Ddr3UserModel (
         pin_even_en = 1'b1;
       if (!$value$plusargs("ddr3_odd_clear=%h", odd_clear))
         odd_clear = 16'h0;
-      $display("DDR3 model hold=%0d wloadn=%0d dm=%0d center=%0d lane0=%0d(off %0d mode %0d sh %0d) lane1=%0d(off %0d mode %0d sh %0d) pin_even=%h odd_clear=%h corrupt=%0d late=%0d",
-               hold_en, wloadn_en, dm_mode, center,
+      $display("DDR3 model hold=%0d wloadn=%0d dm=%0d center0=%0d center1=%0d lane0=%0d(off %0d mode %0d sh %0d) lane1=%0d(off %0d mode %0d sh %0d) pin_even=%h odd_clear=%h corrupt=%0d late=%0d",
+               hold_en, wloadn_en, dm_mode, c0, c1,
                s0, off0, lane0_mode, lane0_sh,
                s1, off1, lane1_mode, lane1_sh,
                pin_even_en ? pin_even : 16'h0, odd_clear,
