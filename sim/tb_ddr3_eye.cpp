@@ -238,7 +238,8 @@ int main(int argc, char** argv) {
   const bool dm_lane1 = has(argc, argv, "+ddr3_dm_lane1");
   const bool shift1 = has(argc, argv, "+ddr3_lane1=12");
   const bool corrupt = has(argc, argv, "+ddr3_corrupt");
-  const int center = plus_int(argc, argv, "ddr3_center", 10);
+  const bool place_fetch = has(argc, argv, "+ddr3_place_fetch");
+  const int center = plus_int(argc, argv, "ddr3_center", place_fetch ? 9 : 10);
   const int off0 = plus_int(argc, argv, "ddr3_lane0", 10) - center;
   const int off1 = plus_int(argc, argv, "ddr3_lane1", 10) - center;
 

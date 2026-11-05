@@ -19,14 +19,19 @@
 // the same beat or the merged byte does not come back.
 //
 // Write delay is the controller's WSTEP, compared with +ddr3_center.
-// The controller forces lane 0 to step 10 after read calibration and
-// leaves lane 1 on its write-level result, except the reader build,
-// which forces both lanes to step 9. On the ALU place the force of 10
-// is the data eye, so the default center is 10 and lane 1 defaults to
-// the same step. On the earlier reader place, where lane 1 was left on
-// the write-level result, the data eye was programmed step 9: the force
-// of 10 is one step above that eye. +ddr3_center=9 is that place. It
-// does not change the step the bitstream writes.
+// The default center is 10. That is the ALU place and the reader place
+// that passed: both lanes programmed to step 10. +ddr3_center does not
+// change the step a bitstream writes. It says which programmed step is
+// the eye on that route.
+//
+// +ddr3_place_fetch is the stored-BL route. Its center is 9 unless
+// +ddr3_center is also passed. The loaded ddr3fetch bitstream forces
+// both lanes to 10, and the Dock repeats the offset-+1 line: R5
+// AAAAAAAA, R9 55555536, mask F0, sentinel beats A5A5A5A5. The
+// prologue is the same as the reader and the CPU never reaches the
+// stored BL, so those instructions do not move the writes. The eye
+// moved with the route. TNS 0 does not keep DLL step 10 on the DRAM
+// eye. Both lanes at 9 on this place are offset 0.
 //
 // Forcing both lanes to 9 on the rebuilt reader place is not this
 // offset 0. The Dock read the sentinel as 0x2505A5A5 (DQ5, DQ7 and DQ15
@@ -334,8 +339,14 @@ module Ddr3UserModel (
         s0 = 10;
       if (!$value$plusargs("ddr3_lane1=%d", s1))
         s1 = 10;
-      if (!$value$plusargs("ddr3_center=%d", center))
-        center = 10;
+      // Fetch route: the measured eye is one DLL step below the
+      // reader's. An explicit center still wins.
+      if (!$value$plusargs("ddr3_center=%d", center)) begin
+        if ($test$plusargs("ddr3_place_fetch"))
+          center = 9;
+        else
+          center = 10;
+      end
       if ($value$plusargs("ddr3_pin_even=%h", pin_even))
         pin_even_en = 1'b1;
       if (!$value$plusargs("ddr3_odd_clear=%h", odd_clear))

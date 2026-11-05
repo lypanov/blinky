@@ -15,18 +15,22 @@ back through the DDR3 bridge. `extraChecks` is 34. The pin gate is
 42 bits. The UART mask is still 40 bits, so slots 32 and 33 are not
 on the line. A full UART mask plus the blink is those two slots.
 
-Both write lanes are forced to step 10 after read calibration, the
-eye the step-3 place passed on. There is no step sweep and no cold
-retry. Lane 1 is not left on the write-level result. The ALU image
-is unchanged.
+The loaded bitstream forces both write lanes to step 10, the eye the
+step-3 place passed on. There is no step sweep. Lane 1 is not left
+on the write-level result. The ALU image is unchanged. On this route
+those codes are one DLL step above the eye. The source now forces
+both lanes to step 9, which is the one program named below.
 
 The new code is outside the delay loop. The period stays the step-1
 line. The HyperRAM formula `103*N+142` is not this board.
 
 ## Locked rate, from simulation only
 
-`sim/run_ddr3_standin.sh`, default eye (center 10, both lanes 10,
-`HOLD`, `WLOADN`, no pin mask). Recorded before synthesis.
+`sim/run_ddr3_standin.sh`, this route's eye (`+ddr3_place_fetch`,
+both lanes at step 9, `HOLD`, `WLOADN`, no pin mask). The period and
+the first edge are the same numbers the center-10 eye printed,
+because offset 0 returns the same bytes. The loaded step-10 pair is
+not this table. It is the prologue hold under "What a DDR3 miss looks like".
 
 | N | period | first edge | mask | R5 | R9 |
 | --- | ---: | ---: | --- | --- | --- |
@@ -73,28 +77,29 @@ hold, the reader hold, or one of the two compare spins.
 
 ## What a DDR3 miss looks like on this image
 
-The fetch program does not change the prologue misses. Default eye
-passes. These two still name the earlier places, and both hold at
-`0x1394` with mask `F0` and 0 edges:
+The fetch program does not change the prologue misses. With
+`+ddr3_place_fetch` and the lanes left at 10, the loaded bitstream's
+pair holds at `0x1394` with R5 `AAAAAAAA`, R9 `55555536`, mask `F0`,
+and 0 edges. `+ddr3_center=9` prints that same line. These two still
+name other places, and both hold at `0x1394` with mask `F0` and 0
+edges:
 
 | plusargs | R5 | R9 |
 | --- | --- | --- |
 | `+ddr3_pin_even=20FF +ddr3_odd_clear=2` | `DFAADFAA` | `20532036` |
-| `+ddr3_center=9` (lanes still 10) | `AAAAAAAA` | `55555536` |
 
-`55555554` remains the one-column miss one step below the eye.
-
-A board line in that set, or any sum the stand-in does not print for
-the default eye, is a DDR3 miss on the new place. Stop. Restore the
-ALU bitstream. Do not walk `WSTEP`. The stand-in is what gets
-redesigned.
+`+ddr3_center=9` with the lanes left at 10 is this route's loaded
+pair, not a second place. `55555554` remains the one-column miss one
+step below the eye. A sum the stand-in does not print for the
+programmed pair is a stop. Do not walk `WSTEP`.
 
 ## Pass line, before the load
 
-Calibration `C`, hold `.`, PC in the delay loop, mask
-`FFFFFFFFFF`, R5 `00000000`, R9 `FFFFFFE1`, both programmed steps
-`000A`. Then L14 at 0.320373 Hz, counted from raw frames, not from
-the tool headline.
+This was the reader's center, written down before the load. It is
+not this route. Calibration `C`, hold `.`, PC in the delay loop,
+mask `FFFFFFFFFF`, R5 `00000000`, R9 `FFFFFFE1`, both programmed
+steps `000A`. Then L14 at 0.320373 Hz, counted from raw frames, not
+from the tool headline.
 
 ```
 openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
@@ -126,13 +131,31 @@ The CPU never left the prologue, so the fetch did not run. L14 stayed
 dark. The webcam was not used.
 
 `sim/run_ddr3_standin.sh` prints that PC class, mask, R5, and R9 for
-`+ddr3_center=9` with both lanes left at 10. It prints a pass for the
-default eye, which is the pair this bitstream programs. Step 3's
-place at those same steps was the pass. This place is the one-column
-miss one step above the eye.
+`+ddr3_place_fetch` with both lanes left at 10, and for
+`+ddr3_center=9`. Step 3's place at those same steps was the pass.
+This place is the one-column miss one step above the eye.
 
-No second bitstream was loaded to move `WSTEP`. That would be another
-bounce. The Dock was put back on `ddr3fixup_n262144.fs`. A fresh line
+The command stream is not what moved. The prologue is the reader's
+prologue, and the CPU never left it, so the stored BL did not run.
+Both lanes were the same absolute codes that passed on the reader
+route. The burst neighbor is `A5A5A5A5`: the even word was copied
+onto the next column on both lanes. That is the whole-column offset
++1, not the earlier pin split (`DFAADFAA`, neighbor `25A5`). The
+center is the routed write clock against the DRAM. TNS 0 says the
+FPGA's own constraints are met. It does not keep DLL step 10 on a
+new route's eye.
+
+`+ddr3_place_fetch +ddr3_lane0=9 +ddr3_lane1=9` is the pass: period
+3668, first edge 33550, mask `3FFFFFFFFFF`, R5 `00000000`, R9
+`FFFFFFE1`, PC in the delay loop. `DDR3_FETCH` now programs that
+pair. One rebuild, one SRAM load. The expected line is calibration
+`C`, PC in the delay loop, UART mask `FFFFFFFFFF`, R5 `00000000`,
+R9 `FFFFFFE1`, both steps `0009`, then L14 at 0.320373 Hz. If that
+trial is `55555554`, or any sum this model does not print for step
+9, stop. Do not walk `WSTEP`.
+
+No second bitstream was loaded to move `WSTEP` on the step-10 image.
+The Dock was put back on `ddr3fixup_n262144.fs`. A fresh line
 from that image:
 
 ```
