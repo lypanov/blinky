@@ -10,6 +10,7 @@
 #   FPGA_IMAGE=blink2 tools/gowin_build.sh       # old Blink2hw small IMEM
 #   FPGA_IMAGE=hyperram tools/gowin_build.sh     # Nano 4K HyperRAM data port + Blink3
 #   FPGA_IMAGE=fixup tools/gowin_build.sh        # HyperRAM plus the step-2 ALU prologue
+#   FPGA_IMAGE=rsc tools/gowin_build.sh          # HyperRAM plus LDB/STB and the .rsc reader
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,6 +26,9 @@ if [[ "$FPGA_IMAGE" == "hyperram" && -z "${BLINK3_IMEM:-}" ]]; then
 fi
 if [[ "$FPGA_IMAGE" == "fixup" && -z "${BLINK3_IMEM:-}" ]]; then
   BLINK3_IMEM="$ROOT/sim/visualizer/imem/fixup.words"
+fi
+if [[ "$FPGA_IMAGE" == "rsc" && -z "${BLINK3_IMEM:-}" ]]; then
+  BLINK3_IMEM="$ROOT/sim/visualizer/imem/rsc.words"
 fi
 BLINK3_IMEM="${BLINK3_IMEM:-$ROOT/sim/visualizer/imem/blink3.words}"
 export FPGA_IMAGE BLINK3_IMEM
@@ -52,13 +56,22 @@ mhi_hex() {
   python3 -c "print(f'{(0x60000000 | (int($1) >> 16)):08x}')"
 }
 
-if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" ]]; then
+if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" ]]; then
   if [[ "$BOARD" != "nano4k" && "$BOARD" != "tangnano4k" ]]; then
     echo "error: HyperRAM images load the Tang Nano 4K only (BOARD=$BOARD)" >&2
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "fixup" ]]; then
+if [[ "$FPGA_IMAGE" == "rsc" ]]; then
+  echo "==> RSC IMEM (HyperRAM prologue, ALU, byte reader at 0x1800, maxIterations=$BLINK3_MAXITER)"
+  python3 "$ROOT/sim/build_rsc_imem.py" \
+    --max-iter "$BLINK3_MAXITER" \
+    --pad 2048 \
+    --out "$BLINK3_IMEM"
+  EXPECT_MHI="$(mhi_hex "$BLINK3_MAXITER")"
+  GOWIN_OUT_NAME="rsc_n${BLINK3_MAXITER}"
+  GOWIN_TCL="$ROOT/gowin/gowin_build_hyperram.tcl"
+elif [[ "$FPGA_IMAGE" == "fixup" ]]; then
   echo "==> Fixup IMEM (HyperRAM prologue, ALU prologue at 0x1400, maxIterations=$BLINK3_MAXITER)"
   python3 "$ROOT/sim/build_fixup_imem.py" \
     --max-iter "$BLINK3_MAXITER" \
@@ -117,7 +130,7 @@ else
   exit 1
 fi
 
-if [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" ]]; then
+if [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" ]]; then
   echo "==> Checking Blink3 trampoline / BL Toggle encodings"
   for word in f7000409 f7000410 f7ffffdc; do
     if grep -qi "$word" "$IMEM_HEX"; then
@@ -129,7 +142,7 @@ if [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" 
   done
 fi
 
-if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" ]]; then
+if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" ]]; then
   echo "==> Checking prologue entry MOV R0, 0x1200"
   if grep -qi '40001200' "$IMEM_HEX"; then
     echo "    found 40001200"
@@ -138,7 +151,7 @@ if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" ]]; then
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "fixup" ]]; then
+if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" ]]; then
   echo "==> Checking sign-extended MOV R1, -1"
   if grep -qi '5100ffff' "$IMEM_HEX"; then
     echo "    found 5100ffff"
@@ -146,6 +159,17 @@ if [[ "$FPGA_IMAGE" == "fixup" ]]; then
     echo "error: sign-extended MOV 5100ffff not in $IMEM_HEX" >&2
     exit 1
   fi
+fi
+if [[ "$FPGA_IMAGE" == "rsc" ]]; then
+  echo "==> Checking LDB R1, [R3] and STB R1, [R3]"
+  for word in 91300000 b1300000; do
+    if grep -qi "$word" "$IMEM_HEX"; then
+      echo "    found $word"
+    else
+      echo "error: $word not in $IMEM_HEX (byte op missing)" >&2
+      exit 1
+    fi
+  done
 fi
 
 echo "==> Gowin_SP instances (expect 2)"

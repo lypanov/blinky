@@ -19,6 +19,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 from build_hyperram_imem import (  # noqa: E402
     Asm,
+    cond_branch,
     f0,
     f1,
     hyperram_imem,
@@ -124,7 +125,7 @@ def _not_taken(a: Asm, cond: int, bad: str, done: str) -> None:
     a.label(done)
 
 
-def assemble_alu(break_slot: int | None) -> tuple[list[int], dict[int, int]]:
+def assemble_alu(break_slot: int | None = None, success: int = 0) -> tuple[list[int], dict[int, int]]:
     exp = expected_map()
     if set(exp) != set(range(EXTRA_CHECKS)):
         raise SystemExit(f"expected {EXTRA_CHECKS} checks, got {sorted(exp)}")
@@ -264,7 +265,9 @@ def assemble_alu(break_slot: int | None) -> tuple[list[int], dict[int, int]]:
 
     a.word(f1(9, 0, 10, 0))
     a.branch("hold", 9)             # BNE
-    a.at(lambda pc: ((0xE7 << 24) | (((0 - (pc + 4)) // 4) & 0xFFFFFF)))
+    # Default target is address 0, which is the step-2 image. Step 3 passes
+    # the reader. The encoding for target 0 is unchanged.
+    a.at(lambda pc, success=success: cond_branch(pc, success, 7))
     a.label("hold")
     a.word(f1(8, 1, 1, 1))
     a.branch("hold", ALWAYS)

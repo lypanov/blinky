@@ -43,6 +43,7 @@ class HyperRamBridge extends Module {
     val cpuWriteData = Input(UInt(32.W))
     val cpuWrite = Input(Bool())
     val cpuRead = Input(Bool())
+    val cpuByte = Input(Bool())
     val cpuReadData = Output(UInt(32.W))
     val memStall = Output(Bool())
     val hr = new HyperRamUserBundle
@@ -52,6 +53,8 @@ class HyperRamBridge extends Module {
   val state = RegInit(sIdle)
 
   val isWrite = RegInit(false.B)
+  val byteOp = RegInit(false.B)
+  val lane = Reg(UInt(2.W))
   val lineAddr = Reg(UInt(22.W))
   val slot = Reg(UInt(2.W))
   val wdata = Reg(UInt(32.W))
@@ -70,9 +73,17 @@ class HyperRamBridge extends Module {
   io.hr.data_mask := 0xF.U
 
   def driveBeat(b: UInt): Unit = {
+    // data_mask bit 0 low writes wr_data[7:0]. A word store clears all
+    // four bits of the selected beat. A byte store clears one.
+    val byteMask = MuxLookup(lane, "b1110".U(4.W))(Seq(
+      0.U -> "b1110".U(4.W),
+      1.U -> "b1101".U(4.W),
+      2.U -> "b1011".U(4.W),
+      3.U -> "b0111".U(4.W)
+    ))
     when(isWrite && b === slot) {
       io.hr.wr_data := wdata
-      io.hr.data_mask := 0.U
+      io.hr.data_mask := Mux(byteOp, byteMask, 0.U)
     }
   }
 
@@ -92,6 +103,8 @@ class HyperRamBridge extends Module {
         val lineByte = io.cpuAddr & ~15.U(32.W)
         lineAddr := lineByte(22, 1)
         slot := io.cpuAddr(3, 2)
+        lane := io.cpuAddr(1, 0)
+        byteOp := io.cpuByte
         wdata := io.cpuWriteData
         isWrite := io.cpuWrite
         got := false.B
