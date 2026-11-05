@@ -533,9 +533,11 @@ module blinky_top_ddr3 (
   // Cold prologue. Both lanes get one absolute step. The controller
   // reset drops DDR3_nRESET, so the array does not keep the previous
   // trial. After read calibration the step is loaded, with the CPU
-  // still reset, and only then does the prologue store. R5 FFFFFFFF
-  // or a full mask parks (center). AAAAAAAA steps both lanes down one,
-  // 55555554 steps them up one. Any other sum parks on that one pair.
+  // still reset, and only then does the prologue store. The first
+  // trial is step 10, the pin-split line. DFAADFAA then cold-tries
+  // step 9, the center the stand-in names when the pin mask is off.
+  // FFFFFFFF or a full mask parks. AAAAAAAA steps both lanes down
+  // one, 55555554 steps them up one. Any other sum parks.
   localparam [2:0] C_RST = 3'd0, C_INIT = 3'd1, C_ARM = 3'd2,
                    C_RUN = 3'd3, C_HOLD = 3'd4;
   reg [2:0] cst = C_RST;
@@ -613,7 +615,11 @@ module blinky_top_ddr3 (
             ct <= 27'd0;
             if (mask_full || r5_s == 32'hFFFFFFFF)
               cst <= C_HOLD;
-            else if (ctry != 2'd2 && r5_s == 32'hAAAAAAAA && cstep != 8'd0) begin
+            else if (ctry == 2'd0 && r5_s == 32'hDFAADFAA) begin
+              cstep <= 8'd9;
+              ctry <= 2'd1;
+              cst <= C_RST;
+            end else if (ctry != 2'd2 && r5_s == 32'hAAAAAAAA && cstep != 8'd0) begin
               cstep <= cstep - 8'd1;
               ctry <= ctry + 2'd1;
               cst <= C_RST;
