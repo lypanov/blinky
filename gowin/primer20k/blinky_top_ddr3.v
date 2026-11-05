@@ -31,8 +31,8 @@
 // lane 1 with its edge minus 3. On the build on the Dock those
 // codes are 000B and 0007. The edge moved between builds, so the
 // stand-in takes the programmed steps and not the edge. DDR3_PD
-// uses that same backoff. Both that pair and one code further
-// back printed the even-word alias. The ALU
+// uses that same backoff. Three P/D loads, through edge-5, printed
+// the same even-word alias. The ALU
 // place stays on lane 0 at step 10 and lane 1 on the write-level
 // result. The delay loop is unchanged.
 
@@ -678,10 +678,9 @@ module blinky_top_ddr3 (
   localparam [7:0] WLEVEL_BACKOFF = 8'd1;
   localparam [7:0] WLEVEL_BACKOFF1 = 8'd3;
 `elsif DDR3_PD
-  // Same backoff as the accepted fetch image. The first P/D place
-  // printed AAAAAAAA at 000B/0007. Backoff 2 and 4 then printed
-  // AAAAAAAA at 000B/0006: lane 0's edge moved from 000C to 000D
-  // and lane 1's edge stayed 000A. Neither pair is the eye.
+  // Same backoff as the fetch image. P/D loads at backoff 1/3,
+  // 2/4, and 3/5 printed AAAAAAAA at 000B/0007, 000B/0006, and
+  // 000A/0005. The code moved and the bytes did not. Not an eye.
   localparam [7:0] WLEVEL_BACKOFF = 8'd1;
   localparam [7:0] WLEVEL_BACKOFF1 = 8'd3;
 `else

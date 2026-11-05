@@ -58,10 +58,11 @@ run "$EYE" +ddr3_fetch_eye +ddr3_lane0=10 +ddr3_lane1=7
 run "$EYE" +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
 run "$EYE" +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=6
 run "$EYE" +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=8
-# P/D place. Lane 0 at 11 with lane 1 at 7, and lane 1 at 6, are
-# both the even-word alias. The flag names no eye.
+# P/D place. Lane 0 at 10 and 11, lane 1 at 5, 6, and 7, are the
+# even-word alias. The flag names no eye.
 run "$EYE" +ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=7
 run "$EYE" +ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=6
+run "$EYE" +ddr3_pd_eye +ddr3_lane0=10 +ddr3_lane1=5
 # Cold prologue, both lanes programmed to step 10 after reset.
 # Lane 0 is the even-word alias. Lane 1 stays on the column except DQ5
 # (bit 13 of the mask). DQ1 (odd-clear bit 1) still clears the high
@@ -299,8 +300,9 @@ run sim/obj_dir/ddr3_cpu_ddr3fetch_rom/ddr3_cpu --cycles 80000 --edges 0 \
 # P/D chain on the same DDR3 port. The chain runs outside the delay
 # loop, so once the column is right the period stays 576*N+788 and
 # the first edge is 38626 at N=5. That column is not a Dock step:
-# the two measured pairs are the even-word alias. Bare
-# +ddr3_fetch_eye is the fetch centers with the lanes left at 10.
+# lane 0 at 10 and 11, and lane 1 at 5, 6, and 7, are the even-word
+# alias. Bare +ddr3_fetch_eye is the fetch centers with the lanes
+# left at 10.
 python3 sim/build_pdchain_imem.py --mov-iter 5 --pad 2048 \
   --out sim/obj_dir/ddr3pd_n5.words
 python3 sim/build_pdchain_imem.py --mov-iter 8 --pad 2048 \
@@ -314,13 +316,16 @@ write_hex sim/obj_dir/ddr3pd_n5.words
 CPU ddr3pd --cycles 80000 --edges 0 --pc 1390 \
   --r5 00544054 --r9 00a9c18c --mask 30 \
   +ddr3_fetch_eye
-# Dock rows. Lane 1 at 7 and at 6 are the same alias. No eye.
+# Dock rows. Lane 0 at 10 and 11, lane 1 at 5, 6, and 7. No eye.
 CPU ddr3pd --cycles 80000 --edges 0 --pc 1390 \
   --r5 aaaaaaaa --r9 55555536 --mask f0 \
   +ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=7
 CPU ddr3pd --cycles 80000 --edges 0 --pc 1390 \
   --r5 aaaaaaaa --r9 55555536 --mask f0 \
   +ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=6
+CPU ddr3pd --cycles 80000 --edges 0 --pc 1390 \
+  --r5 aaaaaaaa --r9 55555536 --mask f0 \
+  +ddr3_pd_eye +ddr3_lane0=10 +ddr3_lane1=5
 # Column aligned. These steps are not a Dock pair.
 CPU ddr3pd --cycles 120000 --edges 2 --period 3668 --first 38626 \
   --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff

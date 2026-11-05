@@ -39,13 +39,13 @@
 // +ddr3_fetch_split is an earlier image's pin split (DQ1 one column
 // early, DQ13 in the even-word alias, R5 DFFFDFFF). That image
 // printed the same codes 000B/0007. It is not offset 0.
-// +ddr3_pd_eye is the P/D-chain place. Two builds printed the
-// even-word alias. Lane 0 was step 11 both times. Lane 1 was 7,
-// then 6. Both rows are offset +1 (R5 AAAAAAAA, R9 55555536,
-// mask F0). Lane 1 at 6 and at 7 are the same row. No eye is
-// named: the flag cannot return offset 0. There is no write-level
-// input. Lane 0's edge was 000C on the first build and 000D on
-// the second. Lane 1's edge stayed 000A.
+// +ddr3_pd_eye is the P/D-chain place. The prologue sum runs before
+// the chain, on the same BC4 writes as the fetch image. The pins
+// agree. Lane 0 steps 10 and 11, and lane 1 steps 5, 6, and 7, are
+// the whole-column even-word alias (R5 AAAAAAAA, R9 55555536, mask
+// F0). No measured code is offset 0. There is no write-level input.
+// The edges on the last two loads were 000D and 000A. Lane 0's
+// edge was 000C on the first load.
 //
 // Forcing both lanes to 9 on the rebuilt reader place is not this
 // offset 0. The Dock read the sentinel as 0x2505A5A5 (DQ5, DQ7 and DQ15
@@ -403,18 +403,22 @@ module Ddr3UserModel (
         c0 = 11;
         c1 = 7;
       end
+      if ($test$plusargs("ddr3_pd_eye")) begin
+        // Display reference only. The measured codes are forced
+        // below, and none of them is this center.
+        c0 = 11;
+        c1 = 7;
+      end
       if ($test$plusargs("ddr3_place_fetch") &&
           !$test$plusargs("ddr3_fetch_eye") &&
           !$test$plusargs("ddr3_pd_eye")) begin
         off0 = (s0 == 9 || s0 == 10) ? 1 : (s0 - 10);
         off1 = (s1 == 9 || s1 == 10) ? 1 : (s1 - 10);
       end else if ($test$plusargs("ddr3_pd_eye")) begin
-        // Measured plateau. Step 11 on lane 0, and steps 6 and 7 on
-        // lane 1, are offset +1. The special case covers the code
-        // that step-minus-center would have called 0, so this flag
-        // has no eye.
-        off0 = (s0 == 11) ? 1 : (s0 - 11);
-        off1 = (s1 == 6 || s1 == 7) ? 1 : (s1 - 7);
+        // Measured Dock codes, all offset +1. Unmeasured codes are
+        // not a Dock result.
+        off0 = (s0 == 10 || s0 == 11) ? 1 : (s0 - 11);
+        off1 = (s1 == 5 || s1 == 6 || s1 == 7) ? 1 : (s1 - 7);
       end else begin
         off0 = s0 - c0;
         off1 = s1 - c1;

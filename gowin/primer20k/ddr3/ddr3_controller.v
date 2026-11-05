@@ -234,7 +234,11 @@ reg [3:0] wlevel_cnt = 3'b0;
 // neighbour column. Each lane stops on its own DQ feedback.
 assign write_level_done = wlevel_done;
 
-// Read calibration. 
+// Read calibration.
+// Commits the first rburst. It does not compare dq_in, so a place
+// that accepts the next RCLKSEL (1/4 CK) stays on the neighbour beat.
+// WSTEP delays DQSW0 and DQSW270 by the same taps, so backoff cannot
+// move DQ against DQS. The P/D image needs the data compare here.
 // Note there's no read eye diagram testing yet.
 reg [3:0] dqs_read = 4'b0;
 reg dqs_hold = 1'b0;

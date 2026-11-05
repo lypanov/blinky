@@ -15,11 +15,24 @@ so the period stays `576*N+788`. At N=262144 that is one edge every
 150995732 `pclk` cycles, 0.640747 Hz, a full blink of 0.320373 Hz,
 93.641 frames at 30 fps. The rate is not adjusted to a camera.
 
-DDR3 programming starts from the accepted fetch backoff: lane 0
-minus 1, lane 1 minus 3. The stand-in has no write-level input.
-`+ddr3_pd_eye` is this place's measured plateau, not an eye. Lane 0
-at 11 with lane 1 at 7, and lane 0 at 11 with lane 1 at 6, are both
-the even-word alias. The flag has no offset-0 pair.
+The pattern sum is the shared prologue, before the chain runs. The
+controller, the BC4 write (`A[12]=0`), and the column address are
+the same RTL as the fetch image. `ddr3_controller.v` has no
+`DDR3_PD` branch. Three SRAM loads programmed different write steps
+and printed one even-word alias. Lane 0 steps 10 and 11, and lane 1
+steps 5, 6, and 7, are that bin. `+ddr3_pd_eye` names those codes
+and has no offset-0 pair. The stand-in has no write-level input.
+
+`WSTEP` is not the missing eye. The Gowin `DQS` model, `X4` mode,
+is a 25 ps tap (`del = 0.025` in `prim_sim.v`). `DQSW0` is
+`dqsw0_dly_in[WSTEP]`. `DQSW270` is the inversion of the tap at
+`DLLSTEP+WSTEP`. One code slides both clocks and leaves DQ against
+DQS where it was. `fclk` in the timing report is 2.584 ns, so one
+beat is 1.292 ns, about 52 taps. Read calibration commits the first
+`rburst` and does not compare `dq_in`. `RCLKSEL` moves that pulse
+by 1/4 CK. A place that accepts the next quarter-cycle keeps the
+neighbour beat, and write-level backoff cannot put it back. The
+change this image needs is that compare.
 
 ## Simulation, before the load
 
@@ -33,9 +46,9 @@ the even-word alias. The flag has no offset-0 pair.
 
 3668, 5396, and 19220 are `576*N+788`. The first edge is 5076 cycles
 later than the stored-BL image. Those rows are the column-aligned
-case, default steps 10 and 10, which is not a Dock pair. The pass
-line there is PC `0x101C`, R5 `00000000`, R9 `00000008`, mask
-`1fffffffffff`. The two Dock pairs print R5 `AAAAAAAA`, R9
+case, default steps 10 and 10, which is not a Dock pair. The line
+there is PC `0x101C`, R5 `00000000`, R9 `00000008`, mask
+`1fffffffffff`. The three Dock pairs print R5 `AAAAAAAA`, R9
 `55555536`, mask `F0`, PC `0x1390`.
 
 Bare `+ddr3_fetch_eye` leaves both lanes at 10. It holds at
@@ -90,12 +103,67 @@ Same sums, steps `0006` `000B`. Lane 1 is `0006` and lane 0 is
 moved to `000D` (`000B` plus 2), so the extra backoff did not move
 lane 0's programmed step. Lane 1 at 6 and lane 1 at 7 are the same
 alias while lane 0 stays at 11.
-`+ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=6` prints this line. A
-repeated `AAAAAAAA` does not name the next step. No further WSTEP
-change. The constants are back at backoff 1 and 3.
+`+ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=6` prints this line.
 
-The accepted fetch bitstream was loaded back. This reload's lane 0
-edge is `000D`, so the steps are `0007` `000C`, and the line is the
-fetch pass: delay-loop PC, mask `FFFFFFFFFF`, R5 `00000000`, R9
-`FFFFFFE1`. The Dock is on that image. No webcam. Nothing was
-written to flash. The Nano 4K was not loaded. Step 6 is not started.
+The accepted fetch bitstream was loaded back before the next try.
+That reload's lane 0 edge was `000D`, so the steps were `0007`
+`000C`, and the line was the fetch pass.
+
+## Backoff 3 and 5
+
+One named load. Lane 0 backoff 3, lane 1 backoff 5. TNS is 0.000 on
+`pclk` and `cpu_clk`, setup and hold, 0 failing endpoints. The line
+repeats:
+
+```
+CH1390 00000000F0 AAAAAAAA 000003F9 A5A5A5A5 000003EF 00000000 55555536 0005 000A
+```
+
+Steps `0005` `000A`. Lane 1 is `0005` and lane 0 is `000A`. The
+edges stayed `000A` and `000D` (`0005` plus 5, `000A` plus 3). The
+column, the beats, the write address, and both sums match the two
+earlier lines. The programmed code moved. The bytes did not.
+`+ddr3_pd_eye +ddr3_lane0=10 +ddr3_lane1=5` prints this line.
+
+## No WSTEP is this eye
+
+The first P/D load used the fetch backoff and the fetch edges, so
+its steps were the fetch eye, `0007` and `000B`. The fetch bitstream
+passes at those steps. The P/D bitstream at those steps is the
+alias. Both images present the same `wstep_run` / `wstep1_run` to
+the same DQS primitive (`WSTEP(i0 == 0 ? wstep_run : wstep1_run)`).
+
+The controller's own comment is the primitive's split: `DQSW0` is
+`fclk` delayed by `WSTEP`, and `DQSW270` is `fclk` delayed by
+`WSTEP+DLLSTEP` plus 180 degrees. The vendor `DQS` model (`X4`)
+implements that as one 25 ps line, index `WSTEP` for `DQSW0` and
+index `DLLSTEP+WSTEP` for the 270-degree clock. A different backoff
+does not make the DQ-to-DQS phase the fetch image had, because the
+fetch image's phase did not depend on `WSTEP` either. The three
+measured codes are inside one beat: half of the 2.584 ns `fclk` is
+1.292 ns, and 1.292 / 0.025 is about 52 taps.
+
+`tDQSS` is a quarter of `tCK`, here about 26 taps either side of
+the write-level trip. The samples are within five taps of that
+trip, on the same side the fetch pass occupies. Walking out to the
+quarter-cycle boundary would leave the write window. It would not
+reproduce the fetch column, which already sits inside the window.
+
+Read calibration is the search that does differ by place. It issues
+a BL8 read and commits the first `rclksel` / `rclkpos` with `rburst`
+set, `RCALIB_COUNT` times. It never looks at `dq_in`. `RCLKSEL`
+shifts the read pulse by 1/4 CK, and one miss of `rburst` because
+the route into the sample register changed takes the neighbour
+quarter-cycle. That is a beat, not a 25 ps tap. The backoff
+parameters only subtract from `WSTEP`. They cannot center it.
+
+The change is in `READ_CALIB`: write a known pattern, then advance
+`rclksel` and `rclkpos` until the captured word matches, and do not
+commit on `rburst` alone. The backoff constants are back at 1 and
+3, which is the fetch pair and not this eye.
+
+The accepted fetch bitstream was loaded back. This reload's steps
+are `0007` `000C`, and the line is the fetch pass: delay-loop PC,
+mask `FFFFFFFFFF`, R5 `00000000`, R9 `FFFFFFE1`. The Dock is on
+that image. No webcam. Nothing was written to flash. The Nano 4K
+was not loaded. Step 6 is not started.
