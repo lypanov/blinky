@@ -423,7 +423,57 @@ trial returned R5 `FFFFFFFF`, `AAAAAAAA`, or `55555554`.
 | lane 1 `000B`, lane 0 `0006`..`000F` | `0000000000` | `39852DF4` / `38952DF4` | `844E914B` |
 | lane 1 `000B`, lane 0 `0010` | `0000000030` | `384A2DAA` | `85399236` |
 
-Lane 0's step, anywhere in 6..16, does not change the sum while lane
-1 stays at `000A` or at `0009`. The sums are not the whole-column
-pair the stand-in names, and no plusarg prints them. The Dock was
-put back on `ddr3fixup_n262144.fs`. Steps 4–8 were not started.
+Lane 0's step does not move the sum while lane 1 stays at `000A`
+(lane 0 from 6 through 16) or at `0009` (lane 0 from 6 through 15).
+Lane 0 at `0010` does move it when lane 1 is `0009` (`AFF5AFF4`) or
+`000B` (`384A2DAA`). The Dock was put back on
+`ddr3fixup_n262144.fs`. Steps 4–8 were not started.
+
+## The sweep table is not a plusarg target
+
+No plusarg was added. The board was not loaded for the check.
+
+Both lanes at step 10 are two rows. Phase 0, both lanes equal, steps
+7 through 10: mask `70`, R5 `0C0D0D9D`, R9 `0054FFE1`. Phase 1, lane 1
+held at the write-level result `000A` and lane 0 anywhere in 6..16,
+which includes lane 0 at 10: mask `F0`, R5 `54F854F7`, R9 `AA87AA69`.
+Same programmed codes, two UARTs. One command-port trial has one
+result for one pair of steps. The sweep leaves the controller and the
+array up, so a trial that misses the columns the prologue reads keeps
+the previous trial's bytes. Phase 1 prints phase 0's step-16 line for
+every lane 0 code. A miss of those columns would do that. It is not
+a separate measurement of lane 1 at `000A`.
+
+`WLOADN` is held low between commands, which is the state that loads
+`WSTEP`, so a trial's stores do use the step programmed for that
+trial. The disagreement is the array, not a one-trial delay lag.
+
+The bands that do change were checked on a zeroed array and with the
+array kept across the sweep order. Centers 0..20, each lane its own
+center, the whole-column eye and a pure shift. A per-beat column grab
+of ±8. A per-pin grab of one column either way. A remix of the four
+BC4 beats, including writing a beat as zero. A per-byte map whose
+each bit passes, clears, forces, or flips. A permutation of the eight
+bits of a byte, same permutation on both lanes. None of those produce
+`0C0D0D9D` / `0054FFE1`, `610D629D` / `AB54AAE1`, `54F854F7` /
+`AA87AA69`, `AFF7AFF7` / `2F7B2F69`, or `39852DF4` / `844E914B`.
+
+Lane 1 at 9 is the band that rewrites the pattern and then sits
+still across lane 0 in 6..15: R5 `AFF7AFF7`, R9 `2F7B2F69`, mask
+`F0`. That pair is a real change from the previous line, and it is
+still outside the models above. The low half of `AFF7AFF7` is
+`FFFF` minus bits 3, 12 and 14, with no carry out of the half. A
+byte map that only clears those DQ pins (`DQ3`, lane 1 `DQ4` and
+`DQ6`) does make that pattern sum, and it also clears bit 4 of the
+alias byte `11`, so the alias word stops reading as `11111111`.
+Mask `F0` says the alias matched. Clearing those pins is not this
+band.
+
+A cold prologue is the measurement this model can be aimed at.
+Reset the DDR3 controller, or clear the 8 KiB the prologue reads,
+program one pair, and let that pair's `WSTEP` load before the
+stores. R5 `FFFFFFFF` is a center. `AAAAAAAA` or `55555554` is the
+one-column miss already in `sim/run_ddr3_standin.sh`. A line from
+this sweep will not match. If a cold prologue at one pair still
+prints one of these sums, that single UART is a target. The mixed
+table is not.
