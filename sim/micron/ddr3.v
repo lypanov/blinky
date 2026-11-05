@@ -2469,9 +2469,10 @@ module ddr3 (
         tm_odt = $time;
     end
 
+    // Icarus 12 rejects a scalar task port redeclared as a vector.
+    // The width is the same as the reg that was here.
     task cmd_addr_timing_check;
-    input i;
-    reg [4:0] i;
+    input [4:0] i;
     begin
         if (rst_n_in && prev_cke) begin
             if ((i == 0) && ($time - tm_ck_pos < TIH))	               // always check tIH for CS#
@@ -2513,9 +2514,9 @@ module ddr3 (
     always @(addr_in[16]) cmd_addr_timing_check(23);
 
     // Processes to check setup and hold of data signals
+    // Icarus 12: port width is declared on the input.
     task dm_timing_check;
-    input i;
-    reg [4:0] i;
+    input [4:0] i;
     begin
         if (dqs_in_valid) begin
             if ($time - tm_dqs[i] < TDH) 
@@ -2564,9 +2565,9 @@ module ddr3 (
     always @(dm_in[30]) dm_timing_check(30);
     always @(dm_in[31]) dm_timing_check(31);
 
+    // Icarus 12: port width is declared on the input.
     task dq_timing_check;
-    input i;
-    reg [6:0] i;
+    input [6:0] i;
     begin
         if (dqs_in_valid) begin
             if ($time - tm_dqs[i/(`DQ_PER_DQS)] < TDH) 
@@ -2711,9 +2712,9 @@ module ddr3 (
     always @(dq_in[126]) dq_timing_check(126);
     always @(dq_in[127]) dq_timing_check(127);
    
+    // Icarus 12: port width is declared on the input.
     task dqs_pos_timing_check;
-    input i;
-    reg [5:0] i;
+    input [5:0] i;
     reg [4:0] j;
     begin
         if (write_levelization && i<32) begin
@@ -2846,9 +2847,9 @@ module ddr3 (
     always @(negedge dqs_in[62]) if (!dqs_in[62]) dqs_pos_timing_check(62);
     always @(negedge dqs_in[63]) if (!dqs_in[63]) dqs_pos_timing_check(63);
    
+    // Icarus 12: port width is declared on the input.
     task dqs_neg_timing_check;
-    input i;
-    reg [5:0] i;
+    input [5:0] i;
     reg [4:0] j;
     begin
         if (write_levelization && i<32) begin

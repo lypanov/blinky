@@ -15,4 +15,11 @@ and speed are not baked into `ddr3.v`.
 - `ddr3.v` includes `1024Mb_ddr3_parameters.vh` when `den1024Mb` is
   defined.
 - The body matches the classic v1.74 file apart from not defining
-  `den2048Mb`. See `VERDICT.md`.
+  `den2048Mb`, and apart from five task ports whose width is now
+  on the input. Icarus 12 rejects `input i; reg [N:0] i;`. The
+  tasks are `cmd_addr_timing_check` (`[4:0]`), `dm_timing_check`
+  (`[4:0]`), `dq_timing_check` (`[6:0]`), `dqs_pos_timing_check`
+  (`[5:0]`), and `dqs_neg_timing_check` (`[5:0]`). See `VERDICT.md`.
+- `sim/run_ddr3_phy.sh` is the Icarus bench against
+  `ddr3_controller`. `docs/primer20k/ddr3-phy-sim.md` says what
+  that run does and does not prove.
