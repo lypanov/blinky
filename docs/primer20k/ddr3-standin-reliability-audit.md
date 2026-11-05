@@ -169,8 +169,18 @@ The step 5 note then says the fetch bitstream was loaded back and
 passes at `0007` `000C`. This audit did not open the Dock, so that
 third line is their report. `+ddr3_pd_eye` now forces offset +1 for
 lane 0 at 10 or 11 and lane 1 at 5, 6, or 7. The flag still has no
-offset 0 on a measured code. The script's blink rows still use
-default lanes 10 and 10 and still expect the delay-loop pass.
+offset 0 on a measured code.
+
+`4f703bb` stops the false green on that blink. The `ddr3pd` section
+does not run default lanes 10 and 10. A blink whose lane pair is not
+in the loaded-pass list sets `FAIL`. `PD_PASS_PAIRS` is empty, and
+the script then prints `stand-in matches refused` and exits 1 even
+when the replays matched. Those replays use `--pc-exact`, one
+address. The old `--pc` window of eight bytes is still there for
+other rows. The `READ_CALIB` edit in that tip is a comment. The
+search still commits on `rburst`. `16'hA55A` / `16'h5A5A` is the
+sequence the comment calls missing. It is not the RTL. A full review
+of the tip is not this note.
 
 ## What the stand-in actually does
 
@@ -361,33 +371,133 @@ the command port, the bridge, and the CPU, and keep its column
 result labeled as the last accepted place. LiteDRAM is a different
 controller. Do not switch to it. Do not retune this design to CL11.
 
-## Modules take
+## ChatGPT note, checked
 
-For The FPGA Lab. Not sent to the sim agent. The Dock was not opened
-for this note.
+The text was in the request. The shared-box path was not mounted.
+The recommendations were checked against this controller, NESTang
+`v0.4`'s `ddr3_controller.v`, and the published
+`nand2mario/ddr3-tang-primer-20k` `simulation/` directory. A claim
+that failed a check is not a fact for the stand-in.
 
-The part on the core is a 1Gb x16 DDR3 at SSTL15, A13 unused. Do not
-write H5TQ1G63EFR-PBC into a model parameter until a schematic, a
-BOM line, or the chip photo is in hand. The speed we run is 387 MHz,
-CL6, not the -PB bin's 1600. The nCK waits already clear that bin's
-minimums. There is no timing bug there to tune.
+### Verified, and kept
 
-The controller is the soft nand2mario PHY, not the Gowin IP. The
-stand-in stays a command-port model. Do not replace it with the
-Micron-plus-`prim_sim` bench and do not switch the CPU onto LiteDRAM.
-`prim_sim.v` already shows why another backoff is the wrong knob:
-`DQSW0` and `DQSW270` both move with `WSTEP`. The reported third
-load, steps `000A`/`0005`, is the same `AAAAAAAA` line. Stop fitting
-`+ddr3_pd_eye` centers. The script's green blink at default lanes
-10 and 10 is still not a Dock pair, and `stand-in matches` still
-follows it.
+Stop adding Dock-shaped plusargs to `Ddr3UserModel`. `AAAAAAAA` on
+the P/D image is a UART result. It is not yet a cause. A model that
+grows a center or a pin mask so that one line matches has not
+explained the line. That is the same rule as the closed list above.
 
-A data compare in `READ_CALIB` is an unproven controller change.
-The two bitstreams share that code today, and the UART does not show
-the read-gate code that each place committed. If that RTL is edited,
-the first UART of the new bitstream is the result. The stand-in does
-not get a new center ahead of that load, and this audit does not ask
-for the load.
+Three different questions stay separate. The fast Verilator stand-in
+answers whether the CPU, the bridge, and the command port do the
+right thing when the column is the last accepted place. An Icarus
+run of the real controller against a DRAM model answers whether
+commands, bursts, DM, and calibration traffic are legal. The Dock
+answers whether this bitstream's column is the eye. The stand-in
+does not get to answer the third question.
+
+The published bench is real. `simulation/Makefile` runs Icarus with
+`-D SIM -D den1024Mb -D sg25 -D x16`, `prim_sim.v`, and a Micron
+`ddr3.v` that the README tells you to download (Verilog model
+v1.74). `prim_sim.v` for GW2A is on this machine. `ddr3.v` is not.
+The README names Icarus 11. This machine has not run that bench.
+
+`` `ifdef SIM `` in our controller is a different machine from the
+chip, and the differences are in the source:
+
+| Under `SIM` | On the chip (`DDR3_800`) |
+|---|---|
+| `dout` is `dq_in[4]` | `dout` is `dq_in[0]` |
+| `dllstep` fixed at 25, `dlllock` tied high, no `DLL` | `DLL` with `CODESCAL("101")` |
+| write leveling starts at `wstep`/`wstep1` = `8'h18` | both start at 0 |
+| `WLEVEL_COUNT` 2, `RCALIB_COUNT` 2 | `WLEVEL_COUNT` 1, `RCALIB_COUNT` 16 |
+| reset and ZQ waits shortened (`tick_counter` 1, then 19, ZQ 2) | 500 µs class waits, ZQ `512+2` |
+
+Write-level confirmation is not reduced in simulation. It is raised
+from 1 to 2. Read calibration is reduced, from 16 to 2. The search
+still runs. It starts from a forced seed.
+
+NESTang `v0.4` drives both `DQS` lanes from the one `wstep` port.
+Our controller drives lane 0 from `wstep_run` and lane 1 from
+`wstep1_run`. An unmodified copy of that older bench does not
+exercise the per-lane backoff this Dock uses.
+
+The -PB bin numbers used in the note match the EFR family sheet
+already checked: tRCD and tRP 13.75 ns, tRC 48.75 ns, tRAS 35 ns.
+The controller's own write-level parameter is `WLMRD` 44, against a
+comment that cites the 40 nCK minimum. `tCK` of 2.5 ns is the
+header's DDR3-800 assumption. This PLL is 387 MHz, 2.584 ns, CL6.
+The core-versus-carrier split is right: the DDR3 device is on the
+core, and moving that core from a Lite carrier to the Dock does not
+by itself reroute those balls.
+
+`4f703bb` does the script half of "do not call a green blink a Dock
+pass." It does not do the controller half. `READ_CALIB` still
+commits on `rburst`.
+
+### Not accepted
+
+The ordering code H5TQ1G63EFR-PBC is still not a fact for this unit.
+Neither is the 96-ball package, which this check did not read off a
+1Gb datasheet, nor C8 versus I7, which this check did not read off
+the package. The project file names `GW2A-LV18PG256C8/I7`.
+
+A place-and-route-calibrated picosecond I/O model is not the next
+build. The same note later says not to start by reproducing the
+write eye, and to leave eye validity on the Dock. The two
+disagreements are resolved in favor of the smaller one. The eye
+moves when the imem is placed again. A delay model fitted to the
+last route does not name the next one.
+
+A Dock sweep for a conservative WSTEP window is not the next load.
+Three nearby codes on the P/D place were already the alias, and the
+fetch place passes at the pair the first P/D load used. This note
+does not ask for another SRAM load.
+
+The published bench is not a proof of this tree. It compiles the
+upstream controller, which does not have our second lane step, and
+the Micron source is not here. Pointing it at our controller is a
+later integration test. It is not a reason to retire the fast
+stand-in, and it is not a witness for the next column.
+
+LiteDRAM stays a different controller. The Gowin DDR3 IP stays out.
+Verilator stays the fast path. The published instructions are
+Icarus. This check did not compile the Micron model under either
+tool, so a claim that Verilator cannot run it is not a result from
+this machine.
+
+The `16'hA55A` / `16'h5A5A` read-gate search stays unbuilt. The
+ChatGPT note says a lax model must not invent a mechanism for
+`AAAAAAAA`. That search is such a mechanism. It is a comment in
+`4f703bb`, not a fix.
+
+### Combined Modules take
+
+For The FPGA Lab. Not sent to the sim agent. The Dock was not
+opened for this note.
+
+Keep `Ddr3UserModel` for the CPU and the bridge. Do not add another
+image center to it. `+ddr3_pd_eye` may replay the three alias rows.
+It does not name an offset 0, and `4f703bb` no longer lets a default
+10/10 blink turn the script green. The script exits 1 on `ddr3pd`
+until a loaded pair is a pass.
+
+The part on the core is a 1Gb x16 DDR3 at SSTL15, A13 unused. The
+ordering code stays out of the model until a schematic, a BOM line,
+or the photo is in hand. The clock is 387 MHz, CL6. There is no
+-PB timing bug to tune.
+
+An Icarus run of this controller against the Micron x16 `sg25` model
+and `prim_sim.v` is the integration test to add when the model file
+is actually here. Until then it is a recipe, not a result. The first
+run has to say which `SIM` shortcuts are still on, because `dout`
+from `dq_in[4]`, a tied-high DLL lock, and `RCALIB_COUNT` 2 are not
+the chip. The upstream bench's single `wstep` is not our chip
+either. That test does not choose the next WSTEP, and this note
+does not ask for a sweep.
+
+A data compare in `READ_CALIB` is still an unproven edit. The UART
+does not print `rclksel`. The fetch place passes with the compare-less
+search. Building that search is a new bitstream. The stand-in does
+not get a center ahead of it.
 
 ## What the 4K path did that this does not
 
