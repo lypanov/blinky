@@ -2,7 +2,9 @@
 
 The Dock stays on the accepted fetch image. This note does not load a
 bitstream and does not start step 6. Step 5 remains with the stand-in
-agent until a bitstream and this model agree. The audit is what has
+agent until a bitstream and this model agree. This is the full audit:
+the closed UART list, what the user-port model already does, why a
+green script is three files agreeing with each other, and what has
 to change before a later Modules.Load step can trust `stand-in matches`.
 
 The commits are read together with the sim agent's transcript
