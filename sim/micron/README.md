@@ -1,5 +1,8 @@
 # Micron DDR3 Verilog model
 
+Not a drop-in. See `VERDICT.md`. Do not hand this tree to the sim
+agent until the port shell is restored.
+
 Upstream Micron SDRAM DDR3 model **version 1.74**.
 Copyright 2003 Micron Technology, Inc. All rights reserved.
 
