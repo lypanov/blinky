@@ -6,10 +6,40 @@ import _root_.circt.stage.ChiselStage
 import java.io.{File, PrintWriter}
 import gcd.Logger
 
+// Clocked instruction ROM. A combinational case statement is LUT logic, and
+// the fixup image does not fit the Nano 4K that way. Gowin maps this array
+// plus the posedge read onto BSRAM, which has its own budget. The Verilog is
+// written next to the hex file; it is not emitted into the Chisel output,
+// because firtool's inline-blackbox trailer is not valid Verilog.
+class InstrRom(depth: Int, addrBits: Int, hexPath: String) extends BlackBox {
+  override def desiredName = "InstrRom"
+  val io = IO(new Bundle {
+    val clk = Input(Clock())
+    val addr = Input(UInt(addrBits.W))
+    val data = Output(UInt(32.W))
+  })
+  private val romFile = new File("generated/InstrRom.v")
+  romFile.getParentFile.mkdirs()
+  val romWriter = new PrintWriter(romFile)
+  romWriter.write(
+    s"""module InstrRom(
+       |  input clk,
+       |  input [${addrBits - 1}:0] addr,
+       |  output reg [31:0] data
+       |);
+       |  reg [31:0] mem [0:${depth - 1}];
+       |  initial $$readmemh("${hexPath}", mem);
+       |  always @(posedge clk) data <= mem[addr];
+       |endmodule
+       |""".stripMargin)
+  romWriter.close()
+}
+
 class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
                  customMemoryImage: Option[Seq[String]] = None,
                  waitForStores: Boolean = false,
-                 requireMemCheck: Boolean = false) extends Module {
+                 requireMemCheck: Boolean = false,
+                 extraChecks: Int = 0) extends Module {
   val io = IO(new Bundle {
     val r0 = Output(UInt(32.W))  // Output register R0 for testing
     val r1 = Output(UInt(32.W))  // Output register R1 for testing
@@ -55,15 +85,22 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val memoryTargetReg = RegInit(0.U(4.W))
   val memoryIsLoad = RegInit(false.B)
   // HyperRAM prologue stores each compare-difference to 0x7C0+4*slot.
-  // The LED follows Blink3 only after all eight stores were zero.
-  val checkMask = if (requireMemCheck) Some(RegInit(0.U(8.W))) else None
+  // The LED follows Blink3 only after every one of those stores was zero.
+  // extraChecks are the step-2 ALU compares, stored at 0x800+4*slot.
+  val memSlots = if (requireMemCheck) 8 else 0
+  val totalChecks = memSlots + extraChecks
+  val checkMask = if (totalChecks > 0) Some(RegInit(0.U(totalChecks.W))) else None
   
-  // Instead of always constructing memory based on instructionHexStrings,
-  // use the provided customMemoryImage if available.
-  val instructionMemory = customMemoryImage match {
-    case Some(mem) => VecInit(mem.map(hex => s"h$hex".U(32.W)))
-    case None =>
-      {
+  // Instruction words. A combinational case-ROM of the fixup image did not
+  // fit the GW1NSR-4C. This is a synchronous read so synthesis can use BSRAM
+  // (the LUT budget does not count those blocks). The address presented this
+  // cycle is the next PC, and reset presents 0x80, so the registered output
+  // is the instruction at the current PC. That keeps the old one-instruction-
+  // per-cycle timing, including the load stall.
+  val imemWords: Seq[String] = {
+    val raw = customMemoryImage match {
+      case Some(mem) => mem
+      case None =>
         val userProgEndAddr = 0x80 / 4
         val setupStartAddr = 0x80 / 4
         val setupEndAddr = 0xB0 / 4
@@ -93,18 +130,34 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         val setupBeefFiller = Seq.fill(setupBeefCount)("0000BEEF")
         val haltCount = haltEndAddr - haltStartAddr
         val haltFiller = Seq.fill(haltCount)("E7FFFFFF")
-        val fullProgram = instructionHexStrings ++ userBeefFiller ++ setupInstructions ++ setupBeefFiller ++ haltFiller
-        VecInit(fullProgram.map(hex => s"h$hex".U(32.W)))
-      }
+        instructionHexStrings ++ userBeefFiller ++ setupInstructions ++ setupBeefFiller ++ haltFiller
+    }
+    raw.map { token =>
+      val hex = token.trim.stripPrefix("0x").stripPrefix("0X").stripPrefix("h").stripPrefix("H")
+      val value = java.lang.Long.parseLong(hex, 16) & 0xffffffffL
+      f"$value%08x"
+    }
   }
-  
-  // Instruction fetch
-  val instructionAddr = (pc >> 2).asUInt  // Divide by 4 to get word address
-  // Use a safe index to avoid out-of-bounds access
-  val addrBits = log2Ceil(instructionMemory.length).max(1)
-  val safeAddr = WireDefault(0.U(addrBits.W))
-  safeAddr := instructionAddr(addrBits-1, 0)  // Take only the necessary LSBs
-  val instruction = instructionMemory(safeAddr)
+  val imemDepth = 1 << log2Ceil(imemWords.length.max(1))
+  val imemPadded = imemWords.padTo(imemDepth, "0000beef")
+  private val imemHexFile = new File("generated/imem_inline.hex")
+  imemHexFile.getParentFile.mkdirs()
+  private val imemWriter = new PrintWriter(imemHexFile)
+  imemPadded.foreach(imemWriter.println)
+  imemWriter.close()
+  // Next PC is also the fetch address. Default holds PC, which is what a
+  // memory stall does: the next instruction stays fetched and is not executed.
+  val pcNext = Wire(UInt(32.W))
+  pcNext := pc
+  pc := pcNext
+  val addrBits = log2Ceil(imemDepth).max(1)
+  val fetchWord = Mux(reset.asBool,
+    (0x80.U(32.W) >> 2)(addrBits - 1, 0),
+    (pcNext >> 2)(addrBits - 1, 0))
+  val instructionRom = Module(new InstrRom(imemDepth, addrBits, imemHexFile.getAbsolutePath))
+  instructionRom.io.clk := clock
+  instructionRom.io.addr := fetchWord
+  val instruction = instructionRom.io.data
   
   // Instruction decode
   val format = instruction(31, 28)
@@ -184,14 +237,20 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       val takeBranch = Wire(Bool())
       takeBranch := false.B
       
-      // Decode branch condition
-      switch (cond) {
-        is("b0001".U) { takeBranch := z }                   // EQ
-        is("b1001".U) { takeBranch := !z }                  // NE
-        is("b0101".U) { takeBranch := n ^ v }               // LT (Less Than)
-        is("b0111".U) { takeBranch := true.B }              // Always
-        is("b1111".U) { takeBranch := false.B }             // Never (BF)
-      }
+      // RISC5.v: cond = IR[27] xor the low condition. IR[27] is cond(3).
+      val cc = cond(2, 0)
+      val sflag = n ^ v
+      val ccTrue = MuxLookup(cc, false.B)(Seq(
+        0.U -> n,             // MI / PL
+        1.U -> z,             // EQ / NE
+        2.U -> c,             // CS / CC
+        3.U -> v,             // VS / VC
+        4.U -> (c || z),      // LS / HI
+        5.U -> sflag,         // LT / GE
+        6.U -> (sflag || z),  // LE / GT
+        7.U -> true.B         // always / never
+      ))
+      takeBranch := cond(3) ^ ccTrue
       
       when (takeBranch) {
         // ISA: v=1 (format bit 0) is BL — plant LNK, then jump.
@@ -207,7 +266,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
           val targetReg = c_reg
           
           // Make sure the low 2 bits are 0 (word-aligned)
-          pc := regs(targetReg) & ~(3.U(32.W))
+          pcNext := regs(targetReg) & ~(3.U(32.W))
           
           // Debug output for branch to register
           printf(p"BT R$targetReg: Branching to address ${regs(targetReg) & ~(3.U(32.W))} vs ${regs(targetReg)}\n")
@@ -215,17 +274,17 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
           // Calculate branch target address: PC + 4 + off * 4
           // For a 24-bit signed offset, extend sign to 32 bits
           val signedOff = Cat(Fill(8, off(23)), off)
-          pc := pc + 4.U + (signedOff << 2)
+          pcNext := pc + 4.U + (signedOff << 2)
           
           // Debug output for branch with offset
           printf(p"Branch with offset: PC + 4 + (${signedOff} << 2) = ${pc + 4.U + (signedOff << 2)}\n")
         } .otherwise {
           // Invalid branch format
           printf(p"WARNING: Invalid branch format detected: ${format}\n")
-          pc := nextPC
+          pcNext := nextPC
         }
       } .otherwise {
-        pc := nextPC
+        pcNext := nextPC
       }
     }
   } .elsewhen (isMemory) {
@@ -277,11 +336,22 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         // Block RAM returns in the same cycle. HyperRAM waits out Tcmd.
         memoryIsLoad := false.B
         memoryAccessPending := waitForStores.B
-        // Eight zero-differences at 0x7C0, 0x7C4, ... 0x7DC arm the LED.
+        // A store of zero at 0x7C0+4*slot arms one memory check.
+        // Step 2 adds the same at 0x800+4*slot. Any missing zero keeps the LED dark.
         checkMask.foreach { mask =>
-          when (effectiveAddr(31, 5) === (0x7C0 >> 5).U && regs(regA) === 0.U) {
-            val slot = effectiveAddr(4, 2)
-            mask := mask | (1.U(8.W) << slot)(7, 0)
+          when (regs(regA) === 0.U && effectiveAddr(1, 0) === 0.U) {
+            val memDelta = effectiveAddr - 0x7C0.U
+            when (memDelta < (memSlots * 4).U) {
+              val slot = memDelta(4, 2)
+              mask := mask | (1.U(totalChecks.W) << slot)
+            }
+            if (extraChecks > 0) {
+              val aluDelta = effectiveAddr - 0x800.U
+              when (aluDelta < (extraChecks * 4).U) {
+                val slot = aluDelta(6, 2) + memSlots.U
+                mask := mask | (1.U(totalChecks.W) << slot)
+              }
+            }
           }
         }
       } .otherwise {
@@ -291,15 +361,32 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     
     // For memory operations, we only advance PC after completing the operation
     when (!memoryAccessPending) {
-      pc := nextPC
+      pcNext := nextPC
     }
   } .elsewhen (isF1Format || (format(3, 2) === "b00".U)) {
     // Unified handling for immediate (F1) and register (F0) operations
     // Determine if we are using the immediate operand (F1) or register operand (F0).
     val useImmediate = isF1Format
-    // Select the second operand: immediate if F1, else register from 'c' if F0.
-    val operand = Mux(useImmediate, imm, regs(regC))
-    
+    // F1 v=1 sign-extends the 16-bit immediate (ORG.Put1 when im < 0).
+    // v=0 zero-extends, which is what every existing blink immediate uses.
+    val imm32 = Mux(format(0), Cat(Fill(16, imm(15)), imm), Cat(0.U(16.W), imm))
+    val operand = Mux(useImmediate, imm32, regs(regC))
+    val shamt = operand(4, 0)
+    val bval = regs(regB)
+    // One 5-stage barrel for LSL, ASR and ROR. Three Verilog shifts did not
+    // fit the GW1NSR-4C (4992 logic cells, limit 4608). A shift of 0 leaves
+    // the register unchanged because no stage is selected.
+    val shiftRight = (op === 2.U) || (op === 3.U)
+    val shiftRotate = op === 3.U
+    val shiftResult = (0 until 5).foldLeft(bval) { (cur, i) =>
+      val amt = 1 << i
+      val wrapped = cur(amt - 1, 0)
+      val rightFill = Mux(shiftRotate, wrapped, Fill(amt, bval(31)))
+      val righted = Cat(rightFill, cur(31, amt))
+      val lefted = Cat(cur(31 - amt, 0), 0.U(amt.W))
+      Mux(shamt(i), Mux(shiftRight, righted, lefted), cur)
+    }
+
     switch(op) {
       is(0.U) { // MOV - Move immediate value to register / MHI special-case
         when(useImmediate && (format === "b0110".U)) {
@@ -325,7 +412,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         n := operand(31)
         
         // IMPORTANT: After executing the instruction, update the PC.
-        pc := nextPC
+        pcNext := nextPC
       }
       
       is(6.U) { // IOR - Bitwise OR with immediate/register operand
@@ -342,7 +429,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         printf(p"IOR: R$regA = R$regB(${regs(regB)}) | ${operand} = $result\n")
         
         // IMPORTANT: After executing the instruction, update the PC.
-        pc := nextPC
+        pcNext := nextPC
       }
       
       is(7.U) { // XOR - Exclusive OR with immediate/register operand
@@ -356,7 +443,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         z := result === 0.U
         
         // IMPORTANT: After executing the instruction, update the PC.
-        pc := nextPC
+        pcNext := nextPC
       }
       
       is(8.U) { // ADD - Add immediate/register operand
@@ -364,8 +451,13 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         regWrite := true.B
         regWriteAddr := regA
         regWriteData := result
+        val sa = result(31)
+        val sb = bval(31)
+        val sc = operand(31)
+        // RISC5.v cx/vv for ADD.
+        c := (!sb && sc && !sa) || (sb && sc && sa) || (sb && !sa)
+        v := (sa && !sb && !sc) || (!sa && sb && sc)
         
-        // Set flags
         n := result(31)
         z := result === 0.U
         
@@ -373,7 +465,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         printf(p"ADD: R$regA = R$regB(${regs(regB)}) + ${operand} = $result\n")
         
         // IMPORTANT: After executing the instruction, update the PC.
-        pc := nextPC
+        pcNext := nextPC
       }
       
       is(9.U) { // SUB - Subtract immediate/register operand
@@ -381,25 +473,61 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         regWrite := true.B
         regWriteAddr := regA
         regWriteData := result
+        val sa = result(31)
+        val sb = bval(31)
+        val sc = operand(31)
+        // RISC5.v cx/vv for SUB. sa is the result sign, sb is Rb, sc is the operand.
+        c := (!sb && sc && !sa) || (sb && sc && sa) || (!sb && sa)
+        v := (sa && !sb && sc) || (!sa && sb && !sc)
         
-        // Set flags
         n := result(31)
         z := result === 0.U
         
-        // Debug output: differentiate between register (F0) and immediate (F1) SUB
         when(!useImmediate) {
           printf(p"F0 SUB: R$regB(${regs(regB)}) - R$regC(${regs(regC)}) = $result, Z=$z\n")
         } .otherwise {
           printf(p"SUB: R$regB(${regs(regB)}) - ${imm} = $result\n")
         }
         
-        // IMPORTANT: After executing the instruction, update the PC.
-        pc := nextPC
+        pcNext := nextPC
+      }
+
+      is(1.U) { // LSL
+        regWrite := true.B
+        regWriteAddr := regA
+        regWriteData := shiftResult
+        pcNext := nextPC
+      }
+      is(2.U) { // ASR
+        regWrite := true.B
+        regWriteAddr := regA
+        regWriteData := shiftResult
+        pcNext := nextPC
+      }
+      is(3.U) { // ROR
+        regWrite := true.B
+        regWriteAddr := regA
+        regWriteData := shiftResult
+        pcNext := nextPC
+      }
+      is(4.U) { // AND
+        val result = bval & operand
+        regWrite := true.B
+        regWriteAddr := regA
+        regWriteData := result
+        pcNext := nextPC
+      }
+      is(5.U) { // ANN  Ra = Rb & ~operand
+        val result = bval & (~operand)
+        regWrite := true.B
+        regWriteAddr := regA
+        regWriteData := result
+        pcNext := nextPC
       }
     }
   } .otherwise {
     // For any other format (not implemented), just increment PC
-    pc := nextPC
+    pcNext := nextPC
   }
   
   // Register write logic
@@ -416,7 +544,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   
   // Special halt condition for simulation
   // We'll halt when pc points beyond our instruction memory
-  when (instructionAddr >= instructionMemory.length.U) {
+  when ((pc >> 2) >= imemWords.length.U) {
     halted := true.B
   }
   
@@ -433,7 +561,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   io.r2 := regs(2)
   io.r3 := regs(3)
   io.halted := halted
-  io.led := checkMask.map(m => ledState && (m === 0xFF.U)).getOrElse(ledState)
+  io.led := checkMask.map { m =>
+    val armed = ((BigInt(1) << totalChecks) - 1).U(totalChecks.W)
+    ledState && (m === armed)
+  }.getOrElse(ledState)
   io.pc := pc  // Connect the program counter to the output
 }
 
@@ -489,9 +620,13 @@ object CPUSubset0 {
     // Default FPGA image is Blink3 (linked LightToggle + AMMT, trampoline at 0).
     // FPGA_IMAGE=blink2 restores the old Blink2hw small-IMEM path.
     val fpgaImage = sys.env.getOrElse("FPGA_IMAGE", "blink3")
-    val hyper = fpgaImage == "hyperram"
+    val fixup = fpgaImage == "fixup"
+    val hyper = fpgaImage == "hyperram" || fixup
+    // 20 matches sim/build_fixup_imem.py EXTRA_CHECKS. A mismatch leaves
+    // the LED dark, because a slot that is never stored stays clear.
+    val extra = if (fixup) 20 else 0
     val (programInstructions, customMemoryImage) = fpgaImage match {
-      case "blink3" | "hyperram" =>
+      case "blink3" | "hyperram" | "fixup" =>
         val imemArg = sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
         val imemFile = new File(imemArg)
         val imemPath =
@@ -503,7 +638,7 @@ object CPUSubset0 {
             s"Blink3 IMEM empty at $imemPath — run sim/build_blink3_imem.py first"
           )
         }
-        println(s"FPGA image: ${if (hyper) "HyperRAM prologue + Blink3" else "Blink3"} custom IMEM ${words.length} words from $imemPath")
+        println(s"FPGA image: ${if (fixup) "fixup ALU + HyperRAM" else if (hyper) "HyperRAM prologue + Blink3" else "Blink3"} custom IMEM ${words.length} words from $imemPath")
         (Seq.empty[String], Some(words))
       case _ =>
         val blink2hwCodePath = new File(projectRoot, "tests/Blink2hw.code").getAbsolutePath
@@ -524,7 +659,8 @@ object CPUSubset0 {
         programInstructions,
         customMemoryImage = customMemoryImage,
         waitForStores = hyper,
-        requireMemCheck = hyper
+        requireMemCheck = hyper,
+        extraChecks = extra
       ),
       firtoolOpts = firtoolOpts
     )
@@ -535,7 +671,8 @@ object CPUSubset0 {
         useRealGowin = true,
         programInstructions = programInstructions,
         customMemoryImage = customMemoryImage,
-        memBackend = if (hyper) "hyperram" else "blockram"
+        memBackend = if (hyper) "hyperram" else "blockram",
+        extraChecks = extra
       ),
       firtoolOpts = firtoolOpts
     )
@@ -546,7 +683,8 @@ object CPUSubset0 {
         useRealGowin = false,
         programInstructions = programInstructions,
         customMemoryImage = customMemoryImage,
-        memBackend = if (hyper) "hyperram" else "blockram"
+        memBackend = if (hyper) "hyperram" else "blockram",
+        extraChecks = extra
       ),
       firtoolOpts = firtoolOpts
     )

@@ -9,6 +9,7 @@ set OUT  [file join $ROOT gowin]
 set_device -name GW1NSR-4C GW1NSR-LV4CQN48PC6/I5
 
 add_file -type verilog [file join $OUT src CPUMinimalWrapper.v]
+add_file -type verilog [file join $ROOT generated InstrRom.v]
 add_file -type verilog [file join $OUT blinky_top.v]
 add_file -type verilog [file join $OUT ip gowin_sp.v]
 add_file -type verilog [file join $OUT ip gowin_pllvr.v]

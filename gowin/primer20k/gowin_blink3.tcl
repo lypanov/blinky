@@ -11,6 +11,7 @@ set GOWIN [file join $ROOT gowin]
 set_device -name GW2A-18C GW2A-LV18PG256C8/I7
 
 add_file -type verilog [file join $GOWIN src CPUMinimalWrapper.v]
+add_file -type verilog [file join $ROOT generated InstrRom.v]
 add_file -type verilog [file join $HERE blink3_top.v]
 add_file -type verilog [file join $GOWIN ip gowin_sp.v]
 add_file -type cst     [file join $HERE primer20k.cst]

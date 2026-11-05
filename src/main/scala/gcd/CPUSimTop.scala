@@ -16,7 +16,8 @@ class CPUSimTop(
     programInstructions: Seq[String],
     customMemoryImage: Option[Seq[String]] = None,
     memBackend: String = "blockram",
-    hyperFirstValid: Int = 12
+    hyperFirstValid: Int = 12,
+    extraChecks: Int = 0
 ) extends Module {
   val hyper = memBackend == "hyperram"
   val io = IO(new Bundle {
@@ -37,7 +38,8 @@ class CPUSimTop(
     programInstructions,
     customMemoryImage = customMemoryImage,
     waitForStores = hyper,
-    requireMemCheck = hyper
+    requireMemCheck = hyper,
+    extraChecks = extraChecks
   ))
   if (hyper) {
     val bridge = Module(new HyperRamBridge)
@@ -127,24 +129,33 @@ object CPUSimTop {
           s"$targetDir/CPUSimTopBlink3.v",
           "blink3"
         )
-      case "hyperram" =>
+      case "hyperram" | "fixup" =>
         val imemPath = new File(
           projectRoot,
-          sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/hyperram.words")
+          sys.env.getOrElse(
+            "BLINK3_IMEM",
+            if (image == "fixup") "sim/visualizer/imem/fixup.words"
+            else "sim/visualizer/imem/hyperram.words"
+          )
         ).getAbsolutePath
         val words = loadInstructionsFromFile(imemPath)
-        println(s"CPUSimTop: HyperRAM IMEM ${words.length} words from $imemPath")
-        val firstValid = sys.env.get("HYPER_FIRST_VALID").map(_.toInt).getOrElse(12)
-        println(s"CPUSimTop: HyperRAM FIRST_VALID=$firstValid (12 pre-load, 13 fitted)")
+        val fixup = image == "fixup"
+        // 12 is the pre-load model. The fixup image is simulated against the
+        // fitted read latency unless HYPER_FIRST_VALID overrides it.
+        val firstValid = sys.env.get("HYPER_FIRST_VALID").map(_.toInt).getOrElse(if (fixup) 13 else 12)
+        val extra = if (fixup) 20 else 0
+        println(s"CPUSimTop: ${if (fixup) "fixup" else "HyperRAM"} IMEM ${words.length} words from $imemPath")
+        println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra")
         (
           () => new CPUSimTop(
             Seq.empty,
             customMemoryImage = Some(words),
             memBackend = "hyperram",
-            hyperFirstValid = firstValid
+            hyperFirstValid = firstValid,
+            extraChecks = extra
           ),
           s"$targetDir/CPUSimTopHyper.v",
-          "hyperram"
+          image
         )
       case _ =>
         val defaultCode = new File(projectRoot, "tests/Blink2test.code").getAbsolutePath
