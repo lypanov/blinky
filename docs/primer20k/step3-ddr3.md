@@ -400,3 +400,30 @@ programmed step that comes back as R5 `FFFFFFFF` is a center the
 model can name. A step that comes back as `AAAAAAAA` or `55555554`
 is the whole-column miss the model already has (`+ddr3_center` one
 below or one above that step). A second split-pin UART will not.
+
+## Step sweep on one place (stop)
+
+The reader image now walks programmed steps after read calibration
+and reruns the prologue from CPU reset. The controller stays up, so
+the place does not move between trials. Steps 6..16, four lane-1
+choices: both lanes equal, lane 1 left on its write-level result,
+and lane 1 one below and one above that result. A full mask would
+have parked. None did. UART on this image prints programmed lane 1
+then programmed lane 0. Write leveling put lane 1 at `000A`. No
+trial returned R5 `FFFFFFFF`, `AAAAAAAA`, or `55555554`.
+
+| programmed steps | mask | R5 | R9 |
+| --- | --- | --- | --- |
+| both lanes `0007`..`000A` | `0000000070` | `0C0D0D9D` | `0054FFE1` |
+| both lanes `000B`..`000F` | `0000000070` | `610D629D` | `AB54AAE1` |
+| both lanes `0010` | `00000000F0` | `54F854F7` | `AA87AA69` |
+| lane 1 `000A`, lane 0 `0006`..`0010` | `00000000F0` | `54F854F7` | `AA87AA69` |
+| lane 1 `0009`, lane 0 `0006`..`000F` | `00000000F0` | `AFF7AFF7` | `2F7B2F69` |
+| lane 1 `0009`, lane 0 `0010` | `0000000000` | `AFF5AFF4` | `225B2F4B` |
+| lane 1 `000B`, lane 0 `0006`..`000F` | `0000000000` | `39852DF4` / `38952DF4` | `844E914B` |
+| lane 1 `000B`, lane 0 `0010` | `0000000030` | `384A2DAA` | `85399236` |
+
+Lane 0's step, anywhere in 6..16, does not change the sum while lane
+1 stays at `000A` or at `0009`. The sums are not the whole-column
+pair the stand-in names, and no plusarg prints them. The Dock was
+put back on `ddr3fixup_n262144.fs`. Steps 4–8 were not started.
