@@ -192,7 +192,7 @@ def _fold_diff(a: Asm, acc: int, expected: int, slot: int) -> None:
     a.word(stw(0, 11, 0))          # store the difference; zero arms this slot
 
 
-def assemble_prologue() -> list[int]:
+def assemble_prologue(success: int = 0) -> list[int]:
     c = expected_constants()
     a = Asm()
     # R12 (MT = 0x10) and R14 (SP) stay as setup left them.
@@ -258,7 +258,7 @@ def assemble_prologue() -> list[int]:
     _fold_diff(a, 7, c["sentinel"], 7)
     a.word(f1(9, 0, 10, 0))        # SUB R0, R10, 0
     a.branch("hold", 9)            # BNE hold when any difference was non-zero
-    a.at(lambda pc: cond_branch(pc, 0, 7))
+    a.at(lambda pc, success=success: cond_branch(pc, success, 7))
     a.label("hold")
     a.word(f1(8, 1, 1, 1))
     a.branch("hold", 7)
@@ -270,6 +270,7 @@ def hyperram_imem(
     max_iter: int | None = None,
     mov_iter: int | None = None,
     pad: int | None = None,
+    success: int = 0,
 ) -> list[int]:
     if max_iter is not None and mov_iter is not None:
         raise ValueError("pass only one of max_iter and mov_iter")
@@ -280,7 +281,7 @@ def hyperram_imem(
         if not 0 < mov_iter <= 0xFFFF:
             raise ValueError(mov_iter)
         words[BLINK3_MAXITER_PC // 4] = mov_imm(0, mov_iter)
-    prog = assemble_prologue()
+    prog = assemble_prologue(success)
     base = PROLOGUE // 4
     end = base + len(prog)
     if end * 4 > 0x2000:
