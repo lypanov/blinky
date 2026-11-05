@@ -286,6 +286,7 @@ def fixup_imem(
         max_iter=max_iter,
         mov_iter=mov_iter,
         success=ALU,
+        hold_scan=False,
     )
     prog, _exp = assemble_alu(break_slot)
     base = ALU // 4
