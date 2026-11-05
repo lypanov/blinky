@@ -21,7 +21,9 @@
 //   512 pclk: the Micron model rejects later commands otherwise.
 // - Write leveling starts at 8'h18 instead of 0.
 // - Read calibration starts at rclkpos 1, rclksel 6, and commits
-//   on rburst. It does not compare dq_in.
+//   on rburst. It does not compare dq_in. In sim the first
+//   rburst is the trailing edge, where dq_in[0] is X. The commit
+//   then steps back one CK.
 // - WLEVEL_COUNT and RCALIB_COUNT are 2.
 // - dm_out is cleared with a nonblocking assign. A blocking
 //   default is visible to OSER8_MEM on this same pclk, and the
@@ -649,6 +651,18 @@ always @(posedge pclk) begin
                 if (rcalib_cnt == NIB'(RCALIB_COUNT - 1)) begin
                     // read calibration is achieved
                     rcalib_done <= 1'b1;
+`ifdef SIM
+                    // SIM shortcut. The first rburst is the trailing
+                    // edge of the strobe: dq_in[0] is X there, and the
+                    // written word is one CK (4 steps of 1/4 CK)
+                    // earlier. Silicon commits on the rburst it found.
+                    if (rclksel >= 3'd4)
+                        rclksel <= rclksel - 3'd4;
+                    else begin
+                        rclksel <= rclksel + 3'd4;
+                        rclkpos <= rclkpos - 2'd1;
+                    end
+`endif
                     {nRAS[0], nCAS[0], nWE[0]} <= CMD_PreCharge;    // precharge
                     BA[0] <= 0; A[0] <= 0;                          // bank 0, row 0
                     // exit read calib

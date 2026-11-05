@@ -37,7 +37,7 @@ fi
 # Private sparse-memory files. The model defaults to /tmp/%m, and a
 # second bench would share those files.
 mkdir -p /tmp/ddr3-phy-model
-if ! stdbuf -oL -eL vvp "$OUT" +model_data+/tmp/ddr3-phy-model >"$LOG" 2>&1; then
+if ! stdbuf -oL -eL vvp "$OUT" +model_data+/tmp/ddr3-phy-model "$@" >"$LOG" 2>&1; then
   echo "FAIL vvp" >&2
   tail -40 "$LOG" >&2
   exit 1
