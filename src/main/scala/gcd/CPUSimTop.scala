@@ -134,12 +134,13 @@ object CPUSimTop {
           s"$targetDir/CPUSimTopBlink3.v",
           "blink3"
         )
-      case "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" =>
+      case "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" | "files" =>
         val imemPath = new File(
           projectRoot,
           sys.env.getOrElse(
             "BLINK3_IMEM",
-            if (image == "moddesc") "sim/visualizer/imem/moddesc.words"
+            if (image == "files") "sim/visualizer/imem/files.words"
+            else if (image == "moddesc") "sim/visualizer/imem/moddesc.words"
             else if (image == "pdchain") "sim/visualizer/imem/pdchain.words"
             else if (image == "fetchbl") "sim/visualizer/imem/fetchbl.words"
             else if (image == "rsc") "sim/visualizer/imem/rsc.words"
@@ -154,6 +155,7 @@ object CPUSimTop {
           if (image == "hyperram") 12 else 13
         )
         val extra = image match {
+          case "files" => 40
           case "moddesc" => 40
           case "pdchain" => 37
           case "fetchbl" => 34
@@ -165,7 +167,7 @@ object CPUSimTop {
         val fetchStored = image == "fetchbl" && sys.env.getOrElse("FETCH_STORED", "1") != "0"
         // CHAIN_FIX=0 is the same words with no patch table and no ROM read
         // of the code window. The walk loads zeros and the pin stays dark.
-        val chainFix = (image == "pdchain" || image == "moddesc") && sys.env.getOrElse("CHAIN_FIX", "1") != "0"
+        val chainFix = (image == "pdchain" || image == "moddesc" || image == "files") && sys.env.getOrElse("CHAIN_FIX", "1") != "0"
         println(s"CPUSimTop: $image IMEM ${words.length} words from $imemPath")
         println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix")
         (
