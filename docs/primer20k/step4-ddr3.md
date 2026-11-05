@@ -162,4 +162,24 @@ from that image:
 C.106C 0FFFFFFF FFFFFFFF 0000000D 00700000 00000039 00000003 FFFFFFE1 000D 000A
 ```
 
+## Step 9 trial
+
+One rebuild of `ddr3fetch_n262144.fs` at `878b767`, TNS 0.000 on
+`pclk` and `cpu_clk`. One SRAM load on bus 003 device 078. The
+repeating line is the same whole-column miss, with the programmed
+steps now `0009`:
+
+```
+CH1390 00000000F0 AAAAAAAA 000003F9 A5A5A5A5 000003EF 00000000 55555536 0009 0009
+```
+
+`+ddr3_place_fetch +ddr3_lane0=9 +ddr3_lane1=9` prints R5
+`00000000`, not `AAAAAAAA`. The model does not print this sum for
+step 9. No further step was loaded. The webcam was not used. The
+Dock is back on the ALU image:
+
+```
+C.106C 0FFFFFFF FFFFFFFF 0000000D 00700000 00000039 00000003 FFFFFFE1 000D 000A
+```
+
 Step 5 is not started.
