@@ -162,18 +162,15 @@ the same backoff was the alias at edges `000C` and `000A`. Backoff
 2 and 4 was still the alias, and lane 0's edge moved with the
 rebuild so its programmed step stayed `000B`.
 
-The working tree on `cursor/ddr3-pdchain-e003`, not in `89fd0ae`,
-names the next guess in every copy of the story. Centers are 10 and
-5. `WLEVEL_BACKOFF` / `WLEVEL_BACKOFF1` are 3 and 5, which program
-steps `000A` and `0005` if the edges stay `000D` and `000A`. The eye
-harness has a row for that pair, and the CPU blink rows pass
-`+ddr3_pd_eye +ddr3_lane0=10 +ddr3_lane1=5` and expect the delay-loop
-pass. The top of `docs/primer20k/step5-ddr3.md` calls that pair the
-eye. The Dock section of the same file still says the constants were
-put back to backoff 1 and 3, no further step was loaded, and the
-fetch image is on the Dock. Lane 1 at 6 and at 7 were both the alias.
-One code below a two-code bin is the step-9 guess: both lanes at 10
-and both lanes at 9 were `AAAAAAAA`.
+Commit `774db85`, after `89fd0ae`, reports the load this note had
+called the next guess. Backoff 3 and 5, edges still `000D` and
+`000A`, steps `000A` and `0005`, banner `CH1390`, R5 `AAAAAAAA`.
+The step 5 note then says the fetch bitstream was loaded back and
+passes at `0007` `000C`. This audit did not open the Dock, so that
+third line is their report. `+ddr3_pd_eye` now forces offset +1 for
+lane 0 at 10 or 11 and lane 1 at 5, 6, or 7. The flag still has no
+offset 0 on a measured code. The script's blink rows still use
+default lanes 10 and 10 and still expect the delay-loop pass.
 
 ## What the stand-in actually does
 
@@ -247,10 +244,11 @@ may not move the green blink onto a pair that is not in this list.
 | Same fetch bitstream, reloaded | `0007` `000C` | pass. Lane 0's edge moved to `000D`. The column followed the edge. |
 | P/D, backoff 1 and 3 | `0007` `000B` | `AAAAAAAA`, mask `F0`, banner `CH1394`. Same steps as the fetch pass, other column. |
 | P/D, backoff 2 and 4 | `0006` `000B` | `AAAAAAAA` again. Lane 0's edge moved to `000D`, so its step stayed `000B`. |
+| P/D, backoff 3 and 5 (`774db85`) | `0005` `000A` | Reported `AAAAAAAA`, banner `CH1390`. Edges stayed `000A` and `000D`. Not re-read here. |
 
-The pair `000A` `0005` is not in that list. `+ddr3_fetch_eye` with
-lanes 12 and 7 is the image on the Dock now, and under the centers
-from `4dfd5d8` it is offset +1 on lane 0.
+`+ddr3_fetch_eye` with lanes 12 and 7 is the image the step 5 note
+says is on the Dock now. Under the centers from `4dfd5d8` that pair
+is offset +1 on lane 0.
 
 ## What 4K-level means here
 
@@ -276,6 +274,119 @@ UART. Until then a trustworthy script has all of the following:
   `CH1390` and `CH1394` does not.
 - A pair that has not been loaded does not appear as offset 0 in the
   eye harness, the CPU rows, or the step note.
+
+## Researcher pack, checked
+
+The write-up path and the photo were not on this machine. The four
+headline claims were checked against the Sipeed wiki, the Hynix EFR
+speed-bin table, `gowin/primer20k/ddr3/ddr3_controller.v`,
+`sim/Ddr3UserModel.v`, `ddr3.cst`, `ddr3_pll.v`, `Ddr3Bridge.scala`,
+and `simlib/gw2a/prim_sim.v`. A claim that failed a check is not a
+fact for the stand-in.
+
+### Verified
+
+The memory is on the core board. Sipeed's wiki lists 128MB DDR3 for
+the Primer 20K core, and the Dock page's "SODIMM DDR3" is the
+connector the core plugs into. Our `ddr3.cst` matches the ball list
+Sipeed publishes for that memory (A13 at C8, nCS at P5, SSTL15,
+1.5 V banks). `DDR3_A[13]` is tied to 0 in `blinky_top_ddr3.v`. The
+controller uses 13 row bits, 10 column bits, and 3 bank bits, which
+is the organization of a 1Gb x16 part and matches the wiki's 128MB.
+The build script does not instantiate Gowin's DDR3 Memory Interface
+IP. The PHY in `ddr3_controller.v` is `OSER8_MEM`, `IDES8_MEM`, and
+`DQS`. `Ddr3UserModel` has no PHY. Its header says so.
+
+The nand2mario header's -PB timing matches the Hynix EFR family
+sheet: speed bin -PB is DDR3-1600 11-11-11, tRCD and tRP 13.75 ns,
+tRC 48.75 ns. That sheet's 1Gb refresh row is 88 nCK at 1600, which
+is 110 ns. The controller does not run that bin. `ddr3_pll.v` is
+27 MHz × 43 / 3 = 387 MHz, so tCK is 2.584 ns, and `` `DDR3_800 ``
+programs CL 6 and CWL 5. At this tCK those counts are still above
+the bin minimums: RP and RCD are 6 × 2.584 ns = 15.5 ns, RC is
+20 × 2.584 ns = 51.7 ns. The header's "48.25 ns" comment is the
+wrong minimum; the wait itself clears 48.75 ns. Micron `sg25` is a
+2.5 ns model. It matches the controller's intended clock. It does
+not match a DDR3-1600, CL11 run. The bridge then waits 16 controller
+clocks, 165 ns, after `busy` falls. That covers the 110 ns tRFC.
+The controller's own refresh `busy` is `tRC`, not `tRFC`.
+
+`774db85` is right about the primitive model. In
+`simlib/gw2a/prim_sim.v` the `DQS` delay line is `#0.025`. For
+`X4`, `DQSW0` is tap `WSTEP` and `DQSW270` is the inversion of tap
+`DLLSTEP+WSTEP`. One code slides both clocks and leaves the
+DQ-to-DQS offset inside that model where it was. Read calibration
+in `ddr3_controller.v` commits when both lanes have seen `rburst`,
+`RCALIB_COUNT` times. It does not compare `dq_in`. The controller
+has no `DDR3_PD` branch. Fetch and the P/D image use that same
+search. The reported third load is the same alias at a third step
+pair, so the 10/5 guess is not an eye.
+
+### Not accepted
+
+The ordering code **H5TQ1G63EFR-PBC** is not accepted for this unit.
+The wiki does not print it. The photo was not here. The nand2mario
+header says that part was what he tested, and a forum post says the
+same mark was on one board. A reseller lists `H5TC1G63EFR`, which is
+the DDR3L name. The passing images show a 1.5 V x16 part of 1Gb
+organization. They do not show the suffix.
+
+The 25 ps figure is the simulation model's delay. It is not a
+silicon measurement. "No WSTEP in the window can be the eye" is
+stronger than the three loads. Those loads sit within a few taps of
+each other. JEDEC tDQSS is about a quarter of tCK, ~26 of those sim
+taps, and that range was not walked.
+
+"The P/D image needs a data compare in `READ_CALIB`" is a hypothesis.
+The UART does not print `rclksel` or `rclkpos`, so a different read
+gate on the two places is not a measured fact. One `RCLKSEL` step is
+a quarter of CK in the controller's own comment, not a number this
+board has been shown to equal one column. The fetch place passes
+with the same compare-less calibration. Changing `READ_CALIB` is a
+new bitstream and a new place. It is not a plusarg, and a stand-in
+that assumes the new compare cannot be the witness for the bitstream
+that has not been built.
+
+HOLD and WLOADN are not the difference between the fetch pass and
+the P/D alias. Both images instance the same `DQS` ports.
+
+### Sims
+
+Do not point the CPU tests at the nand2mario iverilog bench, the
+Micron `sg25` model, and `prim_sim.v` in order to find the next eye.
+That bench can replay the primitive relationship already read out of
+`prim_sim.v`. It does not contain this place-and-route, so it cannot
+say which step the next build will print. Keep `Ddr3UserModel` for
+the command port, the bridge, and the CPU, and keep its column
+result labeled as the last accepted place. LiteDRAM is a different
+controller. Do not switch to it. Do not retune this design to CL11.
+
+## Modules take
+
+For bc-5a35e67c. The Dock was not opened for this note.
+
+The part on the core is a 1Gb x16 DDR3 at SSTL15, A13 unused. Do not
+write H5TQ1G63EFR-PBC into a model parameter until a schematic, a
+BOM line, or the chip photo is in hand. The speed we run is 387 MHz,
+CL6, not the -PB bin's 1600. The nCK waits already clear that bin's
+minimums. There is no timing bug there to tune.
+
+The controller is the soft nand2mario PHY, not the Gowin IP. The
+stand-in stays a command-port model. Do not replace it with the
+Micron-plus-`prim_sim` bench and do not switch the CPU onto LiteDRAM.
+`prim_sim.v` already shows why another backoff is the wrong knob:
+`DQSW0` and `DQSW270` both move with `WSTEP`. The reported third
+load, steps `000A`/`0005`, is the same `AAAAAAAA` line. Stop fitting
+`+ddr3_pd_eye` centers. The script's green blink at default lanes
+10 and 10 is still not a Dock pair, and `stand-in matches` still
+follows it.
+
+A data compare in `READ_CALIB` is an unproven controller change.
+The two bitstreams share that code today, and the UART does not show
+the read-gate code that each place committed. If that RTL is edited,
+the first UART of the new bitstream is the result. The stand-in does
+not get a new center ahead of that load, and this audit does not ask
+for the load.
 
 ## What the 4K path did that this does not
 
@@ -326,12 +437,13 @@ every later step.
   been loaded.
 - Loading that inferred center as the next bitstream and calling the
   script a prediction. Both lanes at 9 were that prediction. The Dock
-  still printed `AAAAAAAA`. Backoff 3 and 5, for steps `000A` and
-  `0005`, is the same guess under `ddr3pd`.
+  still printed `AAAAAAAA`. Backoff 3 and 5 was loaded, and the step
+  5 note reports the same alias at `000A` `0005`.
 - Modules accepting `stand-in matches` without running the witness at
   the steps the UART prints. That check is what rejected `0cd9710`.
-  The image on the Dock right now prints `0007` `000C` and passes.
-  `+ddr3_fetch_eye` at those steps holds with R5 `FFAAFFAA`.
+  The step 5 note says the restored fetch image prints `0007` `000C`
+  and passes. `+ddr3_fetch_eye` at those steps holds with R5
+  `FFAAFFAA`.
 - Treating `--pc 1390` as the Dock banner. The window is eight bytes,
   and `CH1394` passes it. Step 4 already printed those two banners
   with different sums.
