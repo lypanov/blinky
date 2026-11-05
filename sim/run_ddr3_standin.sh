@@ -47,6 +47,12 @@ run "$EYE" +ddr3_center=9 +ddr3_lane0=9
 # is the step-sweep table (54F854F7 / AFF7AFF7 / 0C0D0D9D). Both lanes at
 # step 10 are two rows of that table and they disagree.
 run "$EYE" +ddr3_center=9 +ddr3_lane0=9 +ddr3_lane1=9
+# Cold prologue, both lanes programmed to step 10 after reset.
+# Lane 0 is the even-word alias. Lane 1 stays on the column except DQ5
+# (bit 13 of the mask). DQ1 (odd-clear bit 1) still clears the high
+# half of an odd column. That is R5 DFAADFAA / R9 20532036, not the
+# whole-column AAAAAAAA of +ddr3_center=9.
+run "$EYE" +ddr3_pin_even=20FF +ddr3_odd_clear=2
 run "$EYE" +ddr3_lane0=9 +ddr3_lane1=9
 run "$EYE" +ddr3_lane1=9
 run "$EYE" +ddr3_lane0=9
@@ -123,6 +129,12 @@ CPU ddr3rsc --cycles 80000 --edges 2 --period 3668 --first 32902 \
 CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
   --r5 aaaaaaaa --r9 55555536 --mask f0 \
   +ddr3_center=9
+# Cold prologue after a controller reset, both lanes at step 10.
+# Pin mask 20FF is DQ0-DQ7 and DQ13 on the even-word alias. Odd-clear
+# bit 1 lets a 0 on DQ1 clear the high half of the odd word.
+CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
+  --r5 dfaadfaa --r9 20532036 --mask f0 \
+  +ddr3_pin_even=20FF +ddr3_odd_clear=2
 # Same place, lane 0 programmed down onto the eye. Lane 1 stays aliased.
 CPU ddr3rsc --cycles 40000 --edges 0 --pc 1390 \
   --r5 aaffaaff --r9 550054e1 --mask f0 \
