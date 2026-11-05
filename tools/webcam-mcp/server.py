@@ -1335,9 +1335,10 @@ def measure_blink(
     """Measure blink rate. Named boards use the shared LED detector.
 
     nano4k / primer20k: the headline Hz is the classified blinking LED's own
-    chroma trace (edge period when it agrees with that LED's blink-band FFT).
-    A padded-box mean is not measured; it can lock onto slow drift (~0.18 Hz)
-    while the LED itself is ~1 Hz. If the board is in frame but no LED is
+    chroma trace. The blink band starts at 0.2 Hz. A regular edge period in
+    that band wins over the FFT, so a 0.5 Hz square wave is not reported as
+    its 1.5 Hz harmonic. A padded-box mean is not measured; it can lock onto
+    slow drift (~0.18 Hz) while the LED itself is faster. If the board is in frame but no LED is
     blinking, the result is status 'board present but not blinking' — not an
     exception. If the board is missing, status is '<board> not in frame'.
 

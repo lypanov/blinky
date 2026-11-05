@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -350,6 +351,42 @@ class HeadlineTests(unittest.TestCase):
         self.assertAlmostEqual(box_hz, 0.185, delta=0.03)
         self.assertGreater(abs(headline["frequency_hz"] - box_hz), 0.5)
         self.assertEqual(headline["source"], "blinking-led")
+
+    def test_half_hertz_square_is_the_edge_not_the_third_harmonic(self) -> None:
+        fps = 30.0
+        values = np.array(
+            [200.0 if (i / fps) % 2.0 < 1.0 else 5.0 for i in range(480)],
+            dtype=np.float64,
+        )
+        headline = measure_chroma_trace(values, fps)
+        self.assertEqual(headline["state"], "blinking")
+        self.assertAlmostEqual(headline["frequency_hz"], 0.5, delta=0.03)
+        self.assertEqual(headline["trusted_method"], "edge")
+        self.assertNotAlmostEqual(headline["frequency_hz"], 1.5, delta=0.05)
+
+    def test_regular_edges_win_when_fft_is_the_harmonic(self) -> None:
+        fps = 30.0
+        values = np.array(
+            [200.0 if (i / fps) % 2.0 < 1.0 else 5.0 for i in range(480)],
+            dtype=np.float64,
+        )
+        with patch("led_detect.fft_peak_hz", return_value=(1.5, 40.0)):
+            headline = measure_chroma_trace(values, fps)
+        self.assertAlmostEqual(headline["frequency_hz"], 0.5, delta=0.03)
+        self.assertEqual(headline["trusted_method"], "edge")
+        self.assertEqual(headline["fft_frequency_hz"], 1.5)
+        self.assertIn("regular", headline["trusted_reason"])
+
+    def test_regular_drift_below_the_band_is_not_its_harmonic(self) -> None:
+        fps = 30.0
+        period = 1.0 / 0.18
+        values = np.array(
+            [180.0 if (i / fps) % period < period / 2 else 8.0 for i in range(600)],
+            dtype=np.float64,
+        )
+        headline = measure_chroma_trace(values, fps)
+        self.assertIsNone(headline["frequency_hz"])
+        self.assertNotEqual(headline["state"], "blinking")
 
     def test_saved_clip_detector_matches_fixture(self) -> None:
         if not CLIP_210057.is_file():
