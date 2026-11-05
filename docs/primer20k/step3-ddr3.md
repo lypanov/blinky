@@ -1,4 +1,4 @@
-# Step 3: LDB/STB and the .rsc reader on the Primer 20K (not proven)
+# Step 3: LDB/STB and the .rsc reader on the Primer 20K
 
 `FPGA_IMAGE=ddr3rsc` is the DDR3 prologue, the fixup ALU, then the
 byte reader at `0x1800`, then Blink3. `FPGA_IMAGE=ddr3` stays the
@@ -512,6 +512,45 @@ whole-column `AAAAAAAA` / `55555536` line. The CPU beat of the
 sentinel stays `A5A5`. The Dock's next burst beat is `25A5`; the
 array keeps the partner column as `20A5` (only DQ5 spilled). That
 beat is not what the CPU summed.
+
+## Cold center on this place
+
+`sim/run_ddr3_standin.sh` was run before the load and printed
+`stand-in matches`. The default eye, no pin mask, both lanes at step
+10, is the pass: mask `FFFFFFFFFF`, R5 `00000000` after the reader
+reuses it, R9 `FFFFFFE1`, PC in the blink loop. The same script still
+prints R5 `DFAADFAA` for `+ddr3_pin_even=20FF +ddr3_odd_clear=2`.
+That plusarg is the earlier place. It is not this one.
+
+This image resets the controller, then programs both lanes to step
+10 and loads that step while the CPU is held. The mask was already
+full, so it did not take the step-9 trial. The line repeats, with
+the PC moving through the delay loop (`0x1074`, `0x1080`, `0x1084`):
+
+```
+C.1080 FFFFFFFFFF 00000000 00000038 0001C39B 00000039 00000001 FFFFFFE1 000A 000A
+```
+
+Not `0x1390`, not `0x1B44`. Both programmed steps are `000A`. The
+delay word is `60000004`. Place-and-route TNS is 0 on `pclk` and
+`cpu_clk`. N stays 262144, so the locked full blink is 0.320373 Hz.
+
+The clip is `blink-measure/20261105-111246` from the Logitech at
+`/dev/video2` (`measure_blink.sh`, `roi=primer20k`, `duration=20`,
+`warmup=2`, 721 frames, 29.984 fps). The tool's 0.31954 Hz headline
+is not the measurement. Raw red at (335, 117) starts with 3 low
+frames and then the complete on+off runs are 48+46, 48+46, 47+46,
+48+46, 48+46, 48+46, 47+46. Those seven periods are 94, 94, 93, 94,
+94, 94, 93. Mean 93.714 frames, 0.319949 Hz. At this fps the locked
+length is 93.590 frames. The pixel at (321, 143) does not follow
+that period. The lower LED near (244, 268) has 30-frame halves, the
+Nano 4K's 0.5 Hz. A clip opened on `/dev/video0` (the UGREEN camera)
+is not this measurement.
+
+The Dock was put back on `ddr3fixup_n262144.fs`. Its line is
+`C.106C`, mask `0FFFFFFF`, R5 `FFFFFFFF`, R9 `FFFFFFE1`,
+`wstep_run` `000A`. The Nano 4K was not loaded. No flash write.
+Step 4 was not started.
 
 ## Remaining step-3 plan
 
