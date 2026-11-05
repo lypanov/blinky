@@ -58,6 +58,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val memWrite = Output(Bool())
     val memRead = Output(Bool())
     val memStall = Input(Bool())
+    // v=1. The HyperRAM bridge writes one lane; a word access leaves this low
+    // so the whole beat is written, which is the step-1 and step-2 path.
+    val memByte = Output(Bool())
 
     // Logger boilerplate
     val messageCode = Output(UInt(4.W))
@@ -84,9 +87,12 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val memoryAccessPending = RegInit(false.B)
   val memoryTargetReg = RegInit(0.U(4.W))
   val memoryIsLoad = RegInit(false.B)
+  val memoryIsByte = RegInit(false.B)
+  val memoryLane = Reg(UInt(2.W))
   // HyperRAM prologue stores each compare-difference to 0x7C0+4*slot.
   // The LED follows Blink3 only after every one of those stores was zero.
-  // extraChecks are the step-2 ALU compares, stored at 0x800+4*slot.
+  // extraChecks are the step-2 ALU compares plus, on the step-3 image, the
+  // byte and .rsc header compares. Both live at 0x800+4*slot.
   val memSlots = if (requireMemCheck) 8 else 0
   val totalChecks = memSlots + extraChecks
   val checkMask = if (totalChecks > 0) Some(RegInit(0.U(totalChecks.W))) else None
@@ -202,6 +208,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   io.memWriteData := 0.U
   io.memWrite := false.B
   io.memRead := false.B
+  io.memByte := false.B
 
   // Logger boilerplate
   io.messageCode := 0.U
@@ -220,10 +227,19 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   when (memoryAccessPending) {
     when (!io.memStall) {
       when (memoryIsLoad) {
+        // RISC5 inbus1: LDB zero-extends the lane adr[1:0] selects.
+        // LDW returns the word. Same completion cycle either way.
+        val loaded = io.memReadData
+        val loadedByte = MuxLookup(memoryLane, loaded(7, 0))(Seq(
+          0.U -> loaded(7, 0),
+          1.U -> loaded(15, 8),
+          2.U -> loaded(23, 16),
+          3.U -> loaded(31, 24)
+        ))
         regWrite := true.B
         regWriteAddr := memoryTargetReg
-        regWriteData := io.memReadData
-        printf(p"LDW: Completed load to R${memoryTargetReg}, value: ${io.memReadData}\n")
+        regWriteData := Mux(memoryIsByte, Cat(0.U(24.W), loadedByte), loaded)
+        printf(p"Load complete R${memoryTargetReg} byte=${memoryIsByte} lane=${memoryLane} word=${loaded}\n")
       }
       memoryAccessPending := false.B
     }
@@ -294,22 +310,16 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val signExtOffset = Cat(Fill(12, memOffset(19)), memOffset)
     val effectiveAddr = regs(regB) + signExtOffset
     
-    when (isLoad) {  // Load instructions
-        when (!isByte) {  // LDW - Load Word
-          // Start a memory read operation
-          io.memAddr := effectiveAddr
-          io.memRead := true.B
-          
-          // Set up state for memory completion next cycle
-          memoryAccessPending := true.B
-          memoryIsLoad := true.B
-          memoryTargetReg := regA
-          
-          // Debug output
-          printf(p"LDW: Starting load from address ${effectiveAddr} to R${regA}\n")
-        } .otherwise {
-          // LDB - Load Byte not implemented yet
-        }
+    when (isLoad) {  // LDW and LDB. The byte extract is on the completion cycle.
+        io.memAddr := effectiveAddr
+        io.memRead := true.B
+        io.memByte := isByte
+        memoryAccessPending := true.B
+        memoryIsLoad := true.B
+        memoryIsByte := isByte
+        memoryLane := effectiveAddr(1, 0)
+        memoryTargetReg := regA
+        printf(p"Load start ${effectiveAddr} -> R${regA} byte=${isByte}\n")
     } .otherwise {  // Store instructions
       when (!isByte) {  // STW - Store Word
         // Start a memory write operation
@@ -335,6 +345,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         
         // Block RAM returns in the same cycle. HyperRAM waits out Tcmd.
         memoryIsLoad := false.B
+        memoryIsByte := false.B
         memoryAccessPending := waitForStores.B
         // A store of zero at 0x7C0+4*slot arms one memory check.
         // Step 2 adds the same at 0x800+4*slot. Any missing zero keeps the LED dark.
@@ -348,14 +359,36 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
             if (extraChecks > 0) {
               val aluDelta = effectiveAddr - 0x800.U
               when (aluDelta < (extraChecks * 4).U) {
-                val slot = aluDelta(6, 2) + memSlots.U
+                // Slot 31 is address 0x87C. 31+8 memory slots is 39, so the
+                // add has to keep the carry. A wrapping add would arm the
+                // wrong bit and a correct reader would stay dark.
+                val slot = aluDelta(6, 2) +& memSlots.U
                 mask := mask | (1.U(totalChecks.W) << slot)
               }
             }
           }
         }
       } .otherwise {
-        // STB - Store Byte not implemented yet
+        // STB. RISC5 outbus puts A[7:0] in the lane and zeros the other
+        // three bytes of the bus. The bridge's data_mask is what keeps the
+        // neighbours. A full-word write here would fail the lane test.
+        val lane = effectiveAddr(1, 0)
+        val low = regs(regA)(7, 0)
+        val placed = MuxLookup(lane, Cat(0.U(24.W), low))(Seq(
+          0.U -> Cat(0.U(24.W), low),
+          1.U -> Cat(0.U(16.W), low, 0.U(8.W)),
+          2.U -> Cat(0.U(8.W), low, 0.U(16.W)),
+          3.U -> Cat(low, 0.U(24.W))
+        ))
+        io.memAddr := effectiveAddr
+        io.memWriteData := placed
+        io.memWrite := true.B
+        io.memByte := true.B
+        memoryIsLoad := false.B
+        memoryIsByte := true.B
+        memoryLane := lane
+        memoryAccessPending := waitForStores.B
+        printf(p"STB: R${regA} byte ${low} lane ${lane} address ${effectiveAddr}\n")
       }
     }
     
@@ -621,12 +654,14 @@ object CPUSubset0 {
     // FPGA_IMAGE=blink2 restores the old Blink2hw small-IMEM path.
     val fpgaImage = sys.env.getOrElse("FPGA_IMAGE", "blink3")
     val fixup = fpgaImage == "fixup"
-    val hyper = fpgaImage == "hyperram" || fixup
-    // 20 matches sim/build_fixup_imem.py EXTRA_CHECKS. A mismatch leaves
-    // the LED dark, because a slot that is never stored stays clear.
-    val extra = if (fixup) 20 else 0
+    val rsc = fpgaImage == "rsc"
+    val hyper = fpgaImage == "hyperram" || fixup || rsc
+    // 20 matches sim/build_fixup_imem.py. 32 matches sim/build_rsc_imem.py
+    // (those 20, plus 12 byte and header compares). A mismatch leaves the
+    // LED dark, because a slot that is never stored stays clear.
+    val extra = if (rsc) 32 else if (fixup) 20 else 0
     val (programInstructions, customMemoryImage) = fpgaImage match {
-      case "blink3" | "hyperram" | "fixup" =>
+      case "blink3" | "hyperram" | "fixup" | "rsc" =>
         val imemArg = sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
         val imemFile = new File(imemArg)
         val imemPath =
@@ -638,7 +673,12 @@ object CPUSubset0 {
             s"Blink3 IMEM empty at $imemPath — run sim/build_blink3_imem.py first"
           )
         }
-        println(s"FPGA image: ${if (fixup) "fixup ALU + HyperRAM" else if (hyper) "HyperRAM prologue + Blink3" else "Blink3"} custom IMEM ${words.length} words from $imemPath")
+        val imageName =
+          if (rsc) "step-3 byte/.rsc reader + HyperRAM"
+          else if (fixup) "fixup ALU + HyperRAM"
+          else if (hyper) "HyperRAM prologue + Blink3"
+          else "Blink3"
+        println(s"FPGA image: $imageName custom IMEM ${words.length} words from $imemPath")
         (Seq.empty[String], Some(words))
       case _ =>
         val blink2hwCodePath = new File(projectRoot, "tests/Blink2hw.code").getAbsolutePath

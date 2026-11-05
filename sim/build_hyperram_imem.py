@@ -90,6 +90,20 @@ def ldw(ra: int, rb: int, off: int) -> int:
     return 0x80000000 | ((ra & 0xF) << 24) | ((rb & 0xF) << 20) | off
 
 
+def ldb(ra: int, rb: int, off: int) -> int:
+    """LDB is LDW with v=1 (ORG Put2(Ldr+1, ...))."""
+    if not 0 <= off < (1 << 20):
+        raise ValueError(off)
+    return 0x90000000 | ((ra & 0xF) << 24) | ((rb & 0xF) << 20) | off
+
+
+def stb(ra: int, rb: int, off: int) -> int:
+    """STB is STW with v=1 (ORG Put2(Str+1, ...))."""
+    if not 0 <= off < (1 << 20):
+        raise ValueError(off)
+    return 0xB0000000 | ((ra & 0xF) << 24) | ((rb & 0xF) << 20) | off
+
+
 def cond_branch(pc: int, target: int, cond: int) -> int:
     off = (target - (pc + 4)) // 4
     if off < -(1 << 23) or off >= (1 << 23):

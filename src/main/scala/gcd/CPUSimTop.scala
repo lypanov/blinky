@@ -48,6 +48,7 @@ class CPUSimTop(
     bridge.io.cpuWriteData := cpu.io.memWriteData
     bridge.io.cpuWrite := cpu.io.memWrite
     bridge.io.cpuRead := cpu.io.memRead
+    bridge.io.cpuByte := cpu.io.memByte
     cpu.io.memReadData := bridge.io.cpuReadData
     cpu.io.memStall := bridge.io.memStall
     model.io.clk := clock
@@ -129,22 +130,28 @@ object CPUSimTop {
           s"$targetDir/CPUSimTopBlink3.v",
           "blink3"
         )
-      case "hyperram" | "fixup" =>
+      case "hyperram" | "fixup" | "rsc" =>
         val imemPath = new File(
           projectRoot,
           sys.env.getOrElse(
             "BLINK3_IMEM",
-            if (image == "fixup") "sim/visualizer/imem/fixup.words"
+            if (image == "rsc") "sim/visualizer/imem/rsc.words"
+            else if (image == "fixup") "sim/visualizer/imem/fixup.words"
             else "sim/visualizer/imem/hyperram.words"
           )
         ).getAbsolutePath
         val words = loadInstructionsFromFile(imemPath)
-        val fixup = image == "fixup"
-        // 12 is the pre-load model. The fixup image is simulated against the
-        // fitted read latency unless HYPER_FIRST_VALID overrides it.
-        val firstValid = sys.env.get("HYPER_FIRST_VALID").map(_.toInt).getOrElse(if (fixup) 13 else 12)
-        val extra = if (fixup) 20 else 0
-        println(s"CPUSimTop: ${if (fixup) "fixup" else "HyperRAM"} IMEM ${words.length} words from $imemPath")
+        // 12 is the pre-load model. fixup and rsc simulate the fitted read
+        // latency unless HYPER_FIRST_VALID overrides it.
+        val firstValid = sys.env.get("HYPER_FIRST_VALID").map(_.toInt).getOrElse(
+          if (image == "hyperram") 12 else 13
+        )
+        val extra = image match {
+          case "rsc" => 32
+          case "fixup" => 20
+          case _ => 0
+        }
+        println(s"CPUSimTop: $image IMEM ${words.length} words from $imemPath")
         println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra")
         (
           () => new CPUSimTop(
