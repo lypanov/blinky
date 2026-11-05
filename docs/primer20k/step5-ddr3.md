@@ -45,22 +45,24 @@ change this image needs is that compare.
 | ddr3pd | 32 | 19220 | 54178 |
 
 3668, 5396, and 19220 are `576*N+788`. The first edge is 5076 cycles
-later than the stored-BL image. Those rows are the column-aligned
-case, default steps 10 and 10, which is not a Dock pair. The line
-there is PC `0x101C`, R5 `00000000`, R9 `00000008`, mask
-`1fffffffffff`. The three Dock pairs print R5 `AAAAAAAA`, R9
-`55555536`, mask `F0`, PC `0x1390`.
+later than the stored-BL image. Those numbers are the chain when
+the model column is aligned, at default steps 10 and 10. That pair
+is not a Dock program, and `sim/run_ddr3_standin.sh` does not run
+it. A `ddr3pd` blink fails the script unless its lane plusargs are
+a loaded pass. There is no such pass, so the script prints
+`stand-in replays matched` and refuses `stand-in matches`. The
+three Dock pairs print R5 `AAAAAAAA`, R9 `55555536`, mask `F0`.
+The sim samples that hold at PC `0x1394`.
 
 Bare `+ddr3_fetch_eye` leaves both lanes at 10. It holds at
 `0x1394` with R5 `00544054`, R9 `00A9C18C`, mask `30`, and 0 edges.
 That image is not loaded.
 
-`--break-slot 32` holds at `0x1D8C` / `0x1D90` with mask
-`1effffffffff`, R5 `00000000`, R9 `00000008`, and 0 edges.
-`CHAIN_FIX=0` holds on the same PC with R5 `FFFFFFF4`,
-R9 `00000008`, mask `ffffffffff` (the low 40 bits), and 0 edges.
-Neither image is loaded. A UART mask of `FFFFFFFFFF` with `H` and
-PC `1D8C` or `1D90` is one of those holds, not the blink.
+`--break-slot 32` and `CHAIN_FIX=0` are holds of that same aligned
+column (`0x1D8C` / `0x1D90`). The script does not run them: they
+reach the chain only when the column is the model's default, and
+that default is not on the Dock. A UART mask of `FFFFFFFFFF` with
+`H` and PC `1D8C` or `1D90` is one of those holds, not the blink.
 
 ## Dock, first SRAM load
 
@@ -157,10 +159,25 @@ the route into the sample register changed takes the neighbour
 quarter-cycle. That is a beat, not a 25 ps tap. The backoff
 parameters only subtract from `WSTEP`. They cannot center it.
 
-The change is in `READ_CALIB`: write a known pattern, then advance
-`rclksel` and `rclkpos` until the captured word matches, and do not
-commit on `rburst` alone. The backoff constants are back at 1 and
-3, which is the fetch pair and not this eye.
+The backoff constants stay at 1 and 3. Steps `000A` and `0005` were
+the next integer under the alias bin. That load is the line above,
+and it is the same bin. Another host backoff would be the same
+guess. The prologue is the compare at `0x1390`, before `0x1C00`,
+and the controller has no `DDR3_PD` branch that could give it a
+different eye.
+
+The change is in `READ_CALIB`, after write leveling has the edge
+and `wstep_run` has had the backoff subtracted. Write `16'hA55A`
+to column 0 and `16'h5A5A` to column 1. Then advance `rclksel` and
+`rclkpos` only while the read of column 0 is not `16'hA55A` or the
+read of column 1 is the even word. Commit after `RCALIB_COUNT`
+matches, and do not commit on `rburst` alone. If all 32 read gates
+miss, walk both lanes one code down from the edge, lane 1 kept two
+codes below lane 0, and repeat the read sweep. Stop at the first
+code where both columns match. If none match inside the `tDQSS`
+window, leave `read_calib_done` low. The constant
+`WLEVEL_BACKOFF` cannot see the route this place-and-route moved,
+and the prologue will keep holding until that search exists.
 
 The accepted fetch bitstream was loaded back. This reload's steps
 are `0007` `000C`, and the line is the fetch pass: delay-loop PC,

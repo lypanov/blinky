@@ -28,14 +28,16 @@
 // The model reads the lane numbers. Codes 9 and 10 were both
 // measured as offset +1 (R5 AAAAAAAA, R9 55555536, mask F0). The
 // model reads the step. Any other code on that image is step-10.
-// +ddr3_fetch_eye is the image on the Dock. It sets lane 0's center
-// to 11 and lane 1's center to 7. The pass is those two steps:
-// +ddr3_lane0=11 +ddr3_lane1=7. There is no write-level input. The
-// lane-0 edge was 000D on one build and 000C on the next, so a
-// backoff does not name the eye. Lane 0 at 10 with lane 1 at 7 is
-// one below (R5 00550054). Lane 1 at 6 with lane 0 at 11 is one
-// below on lane 1 (R5 550054FF). Lane 1 at 8 with lane 0 at 11 is
-// the even-word alias (R5 AAFFAAFF). Those are different rows.
+// +ddr3_fetch_eye is the fetch place. With no edge plusargs the
+// centers are lane 0 = 11 and lane 1 = 7, the calibration whose
+// edges were 000C and 000A. +ddr3_edge0 and +ddr3_edge1 move those
+// centers to edge minus the RTL backoff (1 and 3). The reload on
+// the Dock is edges 000D and 000A, steps 000C and 0007, and that
+// pair is offset 0 only when the edges are supplied. Without them
+// lane 0 at 12 is offset +1 (R5 FFAAFFAA). Lane 0 at 10 with lane 1
+// at 7 is one below (R5 00550054). Lane 1 at 6 with lane 0 at 11 is
+// one below on lane 1 (R5 550054FF). Lane 1 at 8 with lane 0 at 11
+// is the even-word alias (R5 AAFFAAFF). Those are different rows.
 // +ddr3_fetch_split is an earlier image's pin split (DQ1 one column
 // early, DQ13 in the even-word alias, R5 DFFFDFFF). That image
 // printed the same codes 000B/0007. It is not offset 0.
@@ -381,7 +383,7 @@ module Ddr3UserModel (
     if ($test$plusargs("ddr3_dm_lane1"))
       dm_mode = 2'd3;
     begin : eye_init
-      integer s0, s1, off0, off1, c0, c1;
+      integer s0, s1, off0, off1, c0, c1, e0, e1;
       s0 = 10;
       s1 = 10;
       center = 10;
@@ -402,6 +404,13 @@ module Ddr3UserModel (
       if ($test$plusargs("ddr3_fetch_eye")) begin
         c0 = 11;
         c1 = 7;
+        if ($value$plusargs("ddr3_edge0=%d", e0) &&
+            $value$plusargs("ddr3_edge1=%d", e1)) begin
+          // Same subtraction the bitstream uses. WLEVEL_BACKOFF is 1,
+          // WLEVEL_BACKOFF1 is 3.
+          c0 = e0 - 1;
+          c1 = e1 - 3;
+        end
       end
       if ($test$plusargs("ddr3_pd_eye")) begin
         // Display reference only. The measured codes are forced

@@ -235,10 +235,15 @@ reg [3:0] wlevel_cnt = 3'b0;
 assign write_level_done = wlevel_done;
 
 // Read calibration.
-// Commits the first rburst. It does not compare dq_in, so a place
-// that accepts the next RCLKSEL (1/4 CK) stays on the neighbour beat.
-// WSTEP delays DQSW0 and DQSW270 by the same taps, so backoff cannot
-// move DQ against DQS. The P/D image needs the data compare here.
+// Commits the first rburst. It does not compare dq_in. The P/D
+// prologue holds at 0x1390 on the even-word alias at the same
+// wstep_run as the fetch pass, and at the next codes down. WSTEP
+// delays DQSW0 and DQSW270 together, so another constant backoff
+// does not move DQ against DQS. The missing sequence is: write a
+// known word to column 0 and a different word to column 1, advance
+// RCLKSEL/rclkpos until those words come back, and if no gate
+// matches, step both lanes down from the write-level edge and
+// repeat. Do not commit on rburst alone.
 // Note there's no read eye diagram testing yet.
 reg [3:0] dqs_read = 4'b0;
 reg dqs_hold = 1'b0;

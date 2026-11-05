@@ -58,6 +58,11 @@ run "$EYE" +ddr3_fetch_eye +ddr3_lane0=10 +ddr3_lane1=7
 run "$EYE" +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
 run "$EYE" +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=6
 run "$EYE" +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=8
+# Reload on the Dock: edges 000D and 000A, steps 000C and 0007.
+run "$EYE" +ddr3_fetch_eye +ddr3_edge0=13 +ddr3_edge1=10 \
+  +ddr3_lane0=12 +ddr3_lane1=7
+# Fixed centers 11 and 7 call that lane 0 step a miss.
+run "$EYE" +ddr3_fetch_eye +ddr3_lane0=12 +ddr3_lane1=7
 # P/D place. Lane 0 at 10 and 11, lane 1 at 5, 6, and 7, are the
 # even-word alias. The flag names no eye.
 run "$EYE" +ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=7
@@ -121,9 +126,34 @@ elaborate() {
     sim/CpuClock.v sim/Ddr3UserModel.v sim/tb_ddr3_cpu.cpp
 }
 
+# Loaded P/D passes, "lane0,lane1". Empty: no P/D UART has a full mask.
+PD_PASS_PAIRS=""
 CPU() {
   local image=$1
   shift
+  if [[ "$image" == ddr3pd ]]; then
+    local edges=0 lane0="" lane1="" prev=""
+    for a in "$@"; do
+      case "$prev" in
+        --edges) edges=$a ;;
+      esac
+      case "$a" in
+        +ddr3_lane0=*) lane0=${a#*=} ;;
+        +ddr3_lane1=*) lane1=${a#*=} ;;
+      esac
+      prev=$a
+    done
+    if [[ "$edges" != 0 ]]; then
+      local pair="${lane0:-10},${lane1:-10}"
+      case ",${PD_PASS_PAIRS}," in
+        *",${pair},"*) ;;
+        *)
+          echo "FAIL ddr3pd blink at lanes ${pair} is not a loaded Dock pass" >&2
+          FAIL=1
+          ;;
+      esac
+    fi
+  fi
   run "sim/obj_dir/ddr3_cpu_${image}/ddr3_cpu" "$@"
 }
 
@@ -253,6 +283,15 @@ CPU ddr3fetch --cycles 80000 --edges 0 --pc 1390 \
 CPU ddr3fetch --cycles 80000 --edges 2 --period 3668 --first 33550 \
   --r5 00000000 --r9 ffffffe1 --mask 3ffffffffff --pc 101c \
   +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
+# Same bitstream, later calibration. Edges 000D and 000A, so the
+# backoff prints 000C and 0007. The fixed centers call lane 0 a miss.
+CPU ddr3fetch --cycles 80000 --edges 2 --period 3668 --first 33550 \
+  --r5 00000000 --r9 ffffffe1 --mask 3ffffffffff --pc 101c \
+  +ddr3_fetch_eye +ddr3_edge0=13 +ddr3_edge1=10 \
+  +ddr3_lane0=12 +ddr3_lane1=7
+CPU ddr3fetch --cycles 80000 --edges 0 --pc-exact 1394 \
+  --r5 ffaaffaa --r9 00550036 --mask f0 \
+  +ddr3_fetch_eye +ddr3_lane0=12 +ddr3_lane1=7
 write_hex sim/obj_dir/ddr3fetch_n8.words
 CPU ddr3fetch --cycles 80000 --edges 2 --period 5396 --first 35278 \
   --r5 00000000 --r9 ffffffe1 --mask 3ffffffffff \
@@ -297,66 +336,45 @@ run sim/obj_dir/ddr3_cpu_ddr3fetch_rom/ddr3_cpu --cycles 80000 --edges 0 \
   --pc 1f00 --r5 00000000 --r9 ffffffe1 --mask 1ffffffffff \
   +ddr3_fetch_eye +ddr3_lane0=11 +ddr3_lane1=7
 
-# P/D chain on the same DDR3 port. The chain runs outside the delay
-# loop, so once the column is right the period stays 576*N+788 and
-# the first edge is 38626 at N=5. That column is not a Dock step:
-# lane 0 at 10 and 11, and lane 1 at 5, 6, and 7, are the even-word
-# alias. Bare +ddr3_fetch_eye is the fetch centers with the lanes
-# left at 10.
+# P/D chain. Replays of loaded holds only. A blink at default lanes
+# 10 and 10 is not a Dock pair, and this section does not run one.
+# Bare +ddr3_fetch_eye leaves the lanes at 10. The three Dock pairs
+# are the even-word alias. The sim samples the hold at 0x1394; the
+# UART also prints 0x1390, the other instruction of that loop.
 python3 sim/build_pdchain_imem.py --mov-iter 5 --pad 2048 \
   --out sim/obj_dir/ddr3pd_n5.words
-python3 sim/build_pdchain_imem.py --mov-iter 8 --pad 2048 \
-  --out sim/obj_dir/ddr3pd_n8.words
-python3 sim/build_pdchain_imem.py --mov-iter 32 --pad 2048 \
-  --out sim/obj_dir/ddr3pd_n32.words
-python3 sim/build_pdchain_imem.py --mov-iter 5 --pad 2048 --break-slot 32 \
-  --out sim/obj_dir/ddr3pd_b32.words
 elaborate ddr3pd sim/obj_dir/ddr3pd_n5.words
 write_hex sim/obj_dir/ddr3pd_n5.words
-CPU ddr3pd --cycles 80000 --edges 0 --pc 1390 \
+CPU ddr3pd --cycles 80000 --edges 0 --pc-exact 1394 \
   --r5 00544054 --r9 00a9c18c --mask 30 \
   +ddr3_fetch_eye
 # Dock rows. Lane 0 at 10 and 11, lane 1 at 5, 6, and 7. No eye.
-CPU ddr3pd --cycles 80000 --edges 0 --pc 1390 \
+CPU ddr3pd --cycles 80000 --edges 0 --pc-exact 1394 \
   --r5 aaaaaaaa --r9 55555536 --mask f0 \
   +ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=7
-CPU ddr3pd --cycles 80000 --edges 0 --pc 1390 \
+CPU ddr3pd --cycles 80000 --edges 0 --pc-exact 1394 \
   --r5 aaaaaaaa --r9 55555536 --mask f0 \
   +ddr3_pd_eye +ddr3_lane0=11 +ddr3_lane1=6
-CPU ddr3pd --cycles 80000 --edges 0 --pc 1390 \
+CPU ddr3pd --cycles 80000 --edges 0 --pc-exact 1394 \
   --r5 aaaaaaaa --r9 55555536 --mask f0 \
   +ddr3_pd_eye +ddr3_lane0=10 +ddr3_lane1=5
-# Column aligned. These steps are not a Dock pair.
-CPU ddr3pd --cycles 120000 --edges 2 --period 3668 --first 38626 \
-  --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff
-write_hex sim/obj_dir/ddr3pd_n8.words
-CPU ddr3pd --cycles 100000 --edges 2 --period 5396 --first 40354 \
-  --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff
-write_hex sim/obj_dir/ddr3pd_n32.words
-CPU ddr3pd --cycles 160000 --edges 2 --period 19220 --first 54178 \
-  --pc 101c --r5 00000000 --r9 00000008 --mask 1fffffffffff
-write_hex sim/obj_dir/ddr3pd_b32.words
-CPU ddr3pd --cycles 80000 --edges 0 --pc 1d8c \
-  --r5 00000000 --r9 00000008 --mask 1effffffffff
-write_hex sim/obj_dir/ddr3pd_n5.words
-say "elaborate ddr3pd CHAIN_FIX=0"
-if ! CHAIN_FIX=0 SIM_IMAGE=ddr3pd \
-    BLINK3_IMEM=sim/obj_dir/ddr3pd_n5.words \
-    mill chisel-blinky.runMain gcd.CPUSimTop; then
-  echo "FAIL elaborate ddr3pd CHAIN_FIX=0" >&2
-  exit 1
+
+# The image's backoff. A blink is not armed from these constants:
+# the Dock at this backoff was the alias, and default lanes 10/10
+# are not the programmed steps.
+bo0=$(awk '/Not an eye/{p=1} p && $3=="WLEVEL_BACKOFF"{split($5,a,"d"); print a[2]+0; exit}' \
+  gowin/primer20k/blinky_top_ddr3.v)
+bo1=$(awk '/Not an eye/{p=1} p && $3=="WLEVEL_BACKOFF1"{split($5,a,"d"); print a[2]+0; exit}' \
+  gowin/primer20k/blinky_top_ddr3.v)
+if [[ "$bo0" != 1 || "$bo1" != 3 ]]; then
+  echo "FAIL DDR3_PD backoff is ${bo0:-?}/${bo1:-?}, not the loaded 1/3" >&2
+  FAIL=1
 fi
-build ddr3pd-rom verilator "${VFLAGS[@]}" -DPRINTF_COND=0 \
-  --top-module CPUSimTop --Mdir sim/obj_dir/ddr3_cpu_ddr3pd_rom -o ddr3_cpu \
-  -CFLAGS "-std=c++17 -O2" \
-  generated/CPUSimTopDdr3.v generated/InstrRom.v \
-  sim/CpuClock.v sim/Ddr3UserModel.v sim/tb_ddr3_cpu.cpp
-write_hex sim/obj_dir/ddr3pd_n5.words
-run sim/obj_dir/ddr3_cpu_ddr3pd_rom/ddr3_cpu --cycles 80000 --edges 0 \
-  --pc 1d8c --r5 fffffff4 --r9 00000008 --mask ffffffffff
 
 if [[ "$FAIL" -ne 0 ]]; then
   echo "stand-in mismatches" >&2
   exit 1
 fi
-echo "stand-in matches"
+echo "stand-in replays matched"
+echo "ddr3pd: no Dock pass (backoff ${bo0}/${bo1}). stand-in matches refused"
+exit 1

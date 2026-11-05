@@ -63,9 +63,12 @@ int main(int argc, char** argv) {
     } else if (!std::strcmp(argv[i], "--mask")) {
       expect_mask = std::strtoull(need("--mask"), nullptr, 16);
       expect_mask_set = 1;
-    }     else if (!std::strcmp(argv[i], "--pc")) {
+    } else if (!std::strcmp(argv[i], "--pc")) {
       expect_pc_lo = std::strtol(need("--pc"), nullptr, 16);
       expect_pc_hi = expect_pc_lo + 8;
+    } else if (!std::strcmp(argv[i], "--pc-exact")) {
+      expect_pc_lo = std::strtol(need("--pc-exact"), nullptr, 16);
+      expect_pc_hi = expect_pc_lo + 1;
     } else if (!std::strcmp(argv[i], "--first")) {
       expect_first = std::atoi(need("--first"));
     } else if (argv[i][0] == '+') {
