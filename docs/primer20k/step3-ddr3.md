@@ -198,4 +198,47 @@ prologue and ALU checks stay zero. Bit 38 (reader slot 30) stays
 clear, the mask is `BFFFFFFFFF`, and the CPU stays in the reader
 hold with 0 LED edges.
 
-The board was not loaded.
+The board was not loaded for the model change itself.
+
+## Fidelity check (2026-11-05, stop)
+
+`sim/run_ddr3_standin.sh` on `9f370e6` printed `stand-in matches`.
+The default eye (both lanes at step 10, `HOLD`, `WLOADN`) predicts a
+pass for `ddr3rsc`: mask `FFFFFFFFFF`, R9 `FFFFFFE1`, R5 `00000000`
+once the reader has reused it, PC in the Blink3 loop, full blink
+0.320373 Hz. The odd-column signature is a different plusarg,
+`+ddr3_lane0=9 +ddr3_lane1=9`: prologue hold, mask `F0`, R5
+`AAAAAAAA`, R9 `55555536`.
+
+The accepted ALU bitstream, sampled before the step-3 load, matched
+the word-path pass. UART (8 hex digits, the older print):
+
+```
+C.1084 0FFFFFFF FFFFFFFF 0000003B 2F520004 00000039 00000002 FFFFFFE1 000C 000A
+```
+
+Mask `0FFFFFFF`, R5 `FFFFFFFF`, R9 `FFFFFFE1`, PC in the delay loop,
+`wstep_run` `000A`.
+
+The step-3 bitstream was rebuilt from this tree
+(`ddr3rsc_n262144.fs`, 09:26, delay word `60000004`, setup and hold
+TNS 0 on `pclk` and `cpu_clk`) and SRAM-loaded on bus 003 device 078.
+The controller still forces lane 0 to step 10. After the boot line,
+every UART line was:
+
+```
+CH1390 00000000F0 AAAAAAAA 000003F9 A5A5A5A5 000003EF 00000000 55555536 000D 000A
+```
+
+| | model, no plusarg | board, `wstep_run` `000A` |
+| --- | --- | --- |
+| PC | Blink3 loop | `0x1390` prologue hold |
+| mask | `FFFFFFFFFF` | `00000000F0` |
+| R5 | `00000000` in the loop | `AAAAAAAA` |
+| R9 | `FFFFFFE1` | `55555536` |
+| raw wstep | | `000D` |
+
+The board at the model's passing step shows the signature the model
+only emits for both lanes at step 9. The reader never started. No
+webcam. The locked rate was not changed. The Dock was put back on
+`ddr3fixup_n262144.fs`. Steps 4–8 were not started.
