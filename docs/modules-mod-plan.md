@@ -6,6 +6,76 @@ Sources cited below live in [`oberon/src/`](../oberon/src/). Provenance and lice
 
 The steady blink stays the Blink3 delay loop: `15N+18` cycles per LED edge at 27 MHz, **3.433 Hz** at `N = 262144` and **6.866 Hz** at `N = 131072`. Prologue checks run once, before that loop. A step that edits the loop publishes a new count from the Verilator trace before the webcam result is trusted.
 
+## Work from this tip
+
+The fifteen step headings under "## The steps" are still the original full bring-up. "## Where we are" is the baseline that plan was written against: Blink3, a ROM vector, and the 64-word aliasing SPRAM. From `533d878` the work is the seven proofs below. The order is those seven. It is not a first step that moves every fetch into DRAM.
+
+What landed is the reduced ladder `docs/hyperram/step1` through `docs/hyperram/step8`, and the same software on the Primer 20K DDR3 ladder. The tip is `533d878`. That tip has a hand-built `Modules.Init` and a hand-built `Load` of Blink5, a 4 KB reserve, and an in-memory Files table. Unmodified Project Oberon 2013 `Modules.Mod`, `Modules.Check`, and the sector path of original steps 11–15 are still ahead. Nothing under `oberon/src` was edited.
+
+Fetch is the instruction pROM. Data loads and stores go to HyperRAM on the Nano 4K and to DDR3 on the Dock. The same numeric address is a different word in those two memories. The files block occupies the low pROM (`0x00C0` through `0x06A4`) while the byte table at `0x600` is data. A store is not a later fetch, except the two cases below.
+
+Reduced step 4 fetches one `BL`. The prologue stores the FixP word `0xF7FFFF3F` at `0x1F00` and the CPU reads that address as an instruction. The ROM at `0x1F00` is the hold `ADD R1, R1, 1`. Every other PC keeps the ROM read.
+
+From step 5 the delay loop stays in the pROM. Ten sites in page `0x10` are overlaid onto the ROM output: `0x100C`, `0x1034`, `0x1054`, `0x1068`, `0x108C`, `0x1094`, `0x10AC`, `0x10B0`, `0x10C0`, `0x10C4`. A general 12-entry table of 32-bit address compares was 5367 logic cells (4720 LUT, 647 ALU) on the GW1NSR-4C. The limit is 4608. That netlist was not loaded.
+
+The hand-built files have a code count of 0 and `fixorgT` of 0, for `AMemoryMappedToggle` and for Blink5. There is no code section to copy and no type chain to walk. `Load` ends at `BT R1` (`0xC7000001`) with R1 = `0x1048`. The next cycle is the ROM delay loop at `0x1048`.
+
+The hand-built `Init` subtracts `1000H`, which is 4 KB. Address 16 reads back `0x0C00` (AllocPtr). Address 20 reads back `0x0020` (root). Address 24 reads back `0x2000` (stack origin). `DEC(limit, 1000H)` leaves `0x1000`. R14 is `0x2000`. The reserve is `0x1000` through `0x2000`. The delay loop's link `STW` lands at `0x1FFC`, from PC `0x104C`. The behavioural model is 8 KB, and this reserve is the top half of it. The Nano part is the embedded W956x8MKY, 8 MB. R12 is `0x10`. There is no trap at `MT[0]`.
+
+The ALU executes `MOV`, `MHI`, `IOR`, `XOR`, `ADD`, `SUB`, `AND`, `ANN`, `LSL`, `ASR`, and `ROR`, plus `LDW`, `STW`, `LDB`, and `STB`. `N`, `Z`, `C`, and `V` update. MI is already a condition, from the step-2 prologue. `DIV`, `MUL`, and `MOV` from `H` are absent.
+
+The in-memory Files table is a two-entry directory at `0x600`. `AMemoryMappedToggle.rsc` is 72 bytes at `0x620`. `Blink5.rsc` is 83 bytes at `0x670`. `Files.Old` here matches a name word. It is not the disk `Old`.
+
+An eight-item remaining list that starts by fetching Blink5 from the external copy is out of order. At this tip the success path is the ROM loop at `0x1048`, not a body that was copied into external memory. A full fetch move first would run the DDR3 eye trainer and the UART from DRAM before training. A fetch before training reads garbage. `SYSTEM.BIT` stays in the DIV prologue, and `Search` stays with `GetSector` and `ReadString`. Those seven are the list. They are not split back into eight.
+
+```mermaid
+flowchart TD
+  tip["533d878: ROM loop at 0x1048"]
+  p1["1 32 KB reserve"]
+  p2["2 DIV, H, SYSTEM.BIT"]
+  p3["3 Trap at MT 0"]
+  p4["4 Modules.Check"]
+  p5["5 Place Blink5 and fetch the body"]
+  p6["6 GetSector, Search, ReadString"]
+  p7["7 Modules.Init and Load Blink5"]
+  tip --> p1 --> p2 --> p3 --> p4 --> p5 --> p6 --> p7
+```
+
+Each proof is taken in the prove-ladder order. Icarus first, and the Micron `ddr3.v` when the step touches DDR3. Then the Tang Nano 4K. Then the Primer 20K Dock. A step is done only when sim, 4K, and 20K agree. A dark LED is a fail. A step that edits the loop publishes a new count from the trace before the webcam result is trusted.
+
+### Proof 1 — the 32 KB reserve
+
+This is the first proof. The immediate becomes `8000H`. One store lands at each end of that gap, and both words read back. There is no new fetch path. The delay loop stays the pROM loop at `0x1048`.
+
+The behavioural model grows past 8 KB. The chips already have the space. `FileDir.Init`'s `ARRAY 2000 OF DiskAdr` is 8000 bytes, and that frame is the later consumer. The published source subtracts `8000H`. A smaller constant means editing `Modules.Mod`, which these proofs do not do.
+
+### Proof 2 — `DIV`, `H`, and `SYSTEM.BIT`
+
+`DIV` and `H` are multi-cycle. The circuit is a multi-cycle divider. The prologue is `58 DIV 29 = 2` and `58 MOD 29 = 0`, then `SYSTEM.BIT` of a known word: `LDW`, `ROR` by `bit + 1`, tested with MI. MI is already in the condition unit. This proof does not add one. A failed predicate holds the LED before the delay loop.
+
+### Proof 3 — the trap at `MT[0]`
+
+R12 becomes `20H`. `Kernel.Install` writes the branch at `20H`, which is `MT[0]`. The blink image never enters `Trap`. A separate trace runs `ASSERT(FALSE)` and holds the LED. The boards load the blink image.
+
+### Proof 4 — compiled `Modules.Check` on the ROM loop
+
+Norebo compiles unmodified `Kernel`, `FileDir`, `Files`, and `Modules` in one session. The device runs real `Modules.Check("Blink5")` and real `Modules.Check("9bad")`. The first returns `res = 0`. The second returns `res = 1`. Those words replace the hand-built Modules encodings. The delay loop is still the ROM loop. `Check` does not need `DIV` or the trap, and it comes after both. The tail stays 40 checks. The 44-check netlist stays unloaded.
+
+### Proof 5 — place Blink5 and fetch that body
+
+This is the hard step, and it is the missing piece of original step 10. It is one placed body, not a move of every fetch. The image copies Blink5 into external memory, walks one real type-chain entry, and fetches that placed body. Reset, training, and the loader stay in the pROM. The body has its own addresses. It does not land on the data table. A fetch before training reads garbage.
+
+The Nano is the harder board. `modules_n262144` has +0.040 ns of setup slack on `clkdiv`, CLS at 97%, and the slow corner already misses 27 MHz (Fmax 26.117 MHz). HyperRAM will not start a command more often than every 15 clocks. Paying that on every instruction of the placed delay loop, on top of `103*N+142`, pushes `N = 262144` near the webcam floor of 0.2 Hz. The Dock has timing room (`pclk` Fmax 98.0 MHz against 96.7, zero violated endpoints). The Dock rate `576*N+788` moves once the body is fetched from DDR3. The new count is the trace's count.
+
+### Proof 6 — one sector step
+
+`GetSector`, `Search`, and `ReadString` land together. Directory sector 29 holds `AMemoryMappedToggle` and Blink5. That page replaces the in-memory two-entry table at `0x600`. Sector numbers stay multiples of 29. The SPI window is the negative addresses, data `-48` and control `-44`. There is no card. The window stays off the Dock UART and off the training path. Splitting `Search` back out is optional once `GetSector` returns a page.
+
+### Proof 7 — real `Modules.Init` and `Modules.Load("Blink5")`
+
+This is last. It is the first proof that uses the reserve, the trap, the compiled module, and the sector reader together. Reset enters the real `Modules` body. The image copies the one string `Oberon` to `Blink5`. `oberon/src/Modules.Mod` stays unmodified. `Files.Init` runs real `Kernel.Init` and `FileDir.Init` once, before any load of Blink5. `Kernel.Init` installs the trap over `MT[0]`. `FileDir.Init` heapsorts the two sector numbers. `Init` subtracts `8000H` again. Addresses 12, 16, 20, and 24 hold `MemLim`, `AllocPtr`, `root`, and the stack origin. `Load` reads the file through real `Files`. Blink5 does not return, so `LED(res)` stays unreached. On the Nano this is feasible only if the netlist stays inside the current check width and the blink stays above the webcam floor.
+
+
 ## Where we are
 
 Blink3 is `tests/LightToggle.Mod` importing `tests/AMemoryMappedToggle.Mod`, compiled by the pinned Norebo ORP (`tools/norebo.pin`). `tools/module_loader.py` is a host-side reading of `Modules.Load`: it walks imports, assigns `mod.num`, and runs the P, D, and T fixup chains in `tools/rsc_parser.py`. It does not build a `ModDesc`, does not call a module body, and does not read files on the device.
