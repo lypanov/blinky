@@ -54,7 +54,10 @@ module HyperRamUserModel (
   input  [3:0]  data_mask
 );
 
-  localparam integer WORDS = 2048;
+  // 10240 words is 40 KB: the original 8 KB map plus the 32 KB
+  // reserve from 0x2000 through 0xA000. The last word is 0x9FFC.
+  // 2048 words was 8 KB and rejected that store.
+  localparam integer WORDS = 10240;
   localparam integer INIT_CYCLES = 64;
   // See the header. 12 is the pre-load model. 13 is the post-measurement fit.
   parameter integer FIRST_VALID = 12;

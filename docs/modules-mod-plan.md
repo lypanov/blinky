@@ -10,7 +10,7 @@ The steady blink stays the Blink3 delay loop: `15N+18` cycles per LED edge at 27
 
 The fifteen step headings under "## The steps" are still the original full bring-up. "## Where we are" is the baseline that plan was written against: Blink3, a ROM vector, and the 64-word aliasing SPRAM. From `533d878` the work is the seven proofs below. The order is those seven. It is not a first step that moves every fetch into DRAM.
 
-What landed is the reduced ladder `docs/hyperram/step1` through `docs/hyperram/step8`, and the same software on the Primer 20K DDR3 ladder. The tip is `533d878`. That tip has a hand-built `Modules.Init` and a hand-built `Load` of Blink5, a 4 KB reserve, and an in-memory Files table. Unmodified Project Oberon 2013 `Modules.Mod`, `Modules.Check`, and the sector path of original steps 11–15 are still ahead. Nothing under `oberon/src` was edited.
+What landed is the reduced ladder `docs/hyperram/step1` through `docs/hyperram/step8`, and the same software on the Primer 20K DDR3 ladder. The tip is `533d878`. That tip has a hand-built `Modules.Init` and a hand-built `Load` of Blink5, and an in-memory Files table. Proof 1 replaces that tip's 4 KB reserve. Unmodified Project Oberon 2013 `Modules.Mod`, `Modules.Check`, and the sector path of original steps 11–15 are still ahead. Nothing under `oberon/src` was edited.
 
 Fetch is the instruction pROM. Data loads and stores go to HyperRAM on the Nano 4K and to DDR3 on the Dock. The same numeric address is a different word in those two memories. The files block occupies the low pROM (`0x00C0` through `0x06A4`) while the byte table at `0x600` is data. A store is not a later fetch, except the two cases below.
 
@@ -20,7 +20,7 @@ From step 5 the delay loop stays in the pROM. Ten sites in page `0x10` are overl
 
 The hand-built files have a code count of 0 and `fixorgT` of 0, for `AMemoryMappedToggle` and for Blink5. There is no code section to copy and no type chain to walk. `Load` ends at `BT R1` (`0xC7000001`) with R1 = `0x1048`. The next cycle is the ROM delay loop at `0x1048`.
 
-The hand-built `Init` subtracts `1000H`, which is 4 KB. Address 16 reads back `0x0C00` (AllocPtr). Address 20 reads back `0x0020` (root). Address 24 reads back `0x2000` (stack origin). `DEC(limit, 1000H)` leaves `0x1000`. R14 is `0x2000`. The reserve is `0x1000` through `0x2000`. The delay loop's link `STW` lands at `0x1FFC`, from PC `0x104C`. The behavioural model is 8 KB, and this reserve is the top half of it. The Nano part is the embedded W956x8MKY, 8 MB. R12 is `0x10`. There is no trap at `MT[0]`.
+The hand-built `Init` subtracts `8000H`, which is 32 KB. Address 16 reads back `0x0C00` (AllocPtr). Address 20 reads back `0x0020` (root). Address 24 reads back `0xA000` (stack origin). `DEC(limit, 8000H)` leaves `0x2000`. R14 is `0xA000`. The reserve is `0x2000` through `0xA000`. The low end sits above page `0x10`, because a word load from `0x1000` through `0x10FF` returns the pROM. The delay loop's link `STW` lands at `0x9FFC`, from PC `0x104C`. The behavioural model is 40 KB (10240 words), and `0x9FFC` is its last word. The Nano part is the embedded W956x8MKY, 8 MB. R12 is `0x10`. There is no trap at `MT[0]`.
 
 The ALU executes `MOV`, `MHI`, `IOR`, `XOR`, `ADD`, `SUB`, `AND`, `ANN`, `LSL`, `ASR`, and `ROR`, plus `LDW`, `STW`, `LDB`, and `STB`. `N`, `Z`, `C`, and `V` update. MI is already a condition, from the step-2 prologue. `DIV`, `MUL`, and `MOV` from `H` are absent.
 
@@ -49,6 +49,36 @@ This is the first proof. The immediate becomes `8000H`. One store lands at each 
 
 The behavioural model grows past 8 KB. The chips already have the space. `FileDir.Init`'s `ARRAY 2000 OF DiskAdr` is 8000 bytes, and that frame is the later consumer. The published source subtracts `8000H`. A smaller constant means editing `Modules.Mod`, which these proofs do not do.
 
+Done. The stack origin at address 24 is `0xA000`. `DEC(limit, 8000H)` leaves `0x2000`. The body stores `0xA11A` at `0x2000` and `0xE11D` at `0x9FFC`, and both words read back. The low end is `0x2000` because a word load in page `0x10` returns the pROM word, not the stored mark. The delay loop stays the pROM loop at `0x1048`. Its link `STW` from PC `0x104C` lands on `0x9FFC` and the saved link is `0x1FC4`. The behavioural model is 10240 words. AllocPtr stays `0x0C00`, so the span from AllocPtr to the limit crosses page `0x10`. This proof does not allocate a module block. A later placed body stays off that page.
+
+Verilator of the modules image, `FIRST_VALID` 13, chainFix on:
+
+| N | cycles between edges | first edge |
+|---:|---:|---:|
+| 5 | 657 | 13207 |
+| 6 | 760 | 13310 |
+| 8 | 966 | 13516 |
+
+Those edges are 13207, 13864, 14521, then 13310, 14070, 14830, then 13516, 14482, 15448, 16414. The period is still `103*N+142`. The first edge is 87 cycles later than the 4 KB image (13120, 13223, 13429). `--break-dec` holds at `0x1D8C` with R14 still `0xA000` and does not fetch `0x1048`. `--skip-slot 40` reaches the delay loop (PC `0x1074`) and the LED stays dark. `CHAIN_FIX=0` holds with R5 `0xFFFFFFF4` and R9 `8`. `tools/run_verilator_sim.sh` reports six Blink2 edges at a mean of 84 cycles (98, 182, 266, 350, 434, 518). `IMAGE=ddr3modules sim/run_ddr3_cpu_phy.sh` prints `PHY_SCORE pass`: period 3668, first edge 60546, PC `0000101c`, R5 `00000000`, R9 `00000000`, mask `ffffffffff`. That period is still `576*5+788`. The loop was not edited. The full blink stays 0.499982 Hz on the Nano and 0.320373 Hz on the Dock.
+
+`modules_n262144` placed at 23:30 (Europe/Amsterdam). Logic 3845/4608 (84%; 3637 LUT and 208 ALU), CLS 2146/2304 (94%, 158 free), registers 1491/3612, 6/10 BSRAM. Slow corner 1.14 V 85 C on `clkdiv`: 302 setup endpoints, 0 hold, TNS -453.319, worst slack -4.984 ns, Fmax 23.797 MHz against 27.000 MHz. The 27 MHz `clkdiv` constraint is the one already on this image. SRAM load was bus 3 address 081 only. Idcode `0x100981b`, GW1NSR-4C. CRC check success. Device 078 was not loaded.
+
+```bash
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/impl/pnr/modules_n262144.fs
+```
+
+Webcam `measure_blink`, `roi=nano4k`, duration 20, warmup 2: `blink-measure/20261106-233300-mcp`, status blinking, edge 0.499 Hz, FFT 0.5 Hz, trusted method edge, confidence 1.0, 661 frames, 29.991 fps, `/dev/video2`. The expected full blink is 0.499982 Hz.
+
+`ddr3modules_n262144` placed at 23:34 (Europe/Amsterdam). 0 setup and 0 hold endpoints. `pclk` Fmax 98.031 MHz against 96.749. Worst listed setup slack is +0.135 ns. `cpu_clk` is 24.187 MHz. SRAM load was bus 3 address 078 only. Idcode `0x81b`, GW2A-18. The Nano 4K was not opened for that load. UART on FTDI channel B, 115200 8N1, reopened after the load. The boot line is `..0080`. The settled lines are `C.` (not held). PC stays in the delay loop (`1074`, `107C`, `1084`, `1088`). Mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. The trained steps on this boot are lane 1 `000C` and lane 0 `0008`. Pattern 0 at the write-level edge and the last pattern-0 read both came back `A55A`. `F` is `AB`. Locked backoff is `C0 00`, `C1 06`, `BO 07`.
+
+```bash
+openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
+  gowin/primer20k/impl/pnr/ddr3modules_n262144.fs
+```
+
+`measure_blink`, `roi=primer20k`, duration 30, warmup 2: `blink-measure/20261106-233717-mcp`, status blinking, edge 0.321 Hz, FFT 0.312 Hz, trusted method edge, confidence 1.0, 961 frames, 29.973 fps, `/dev/video2`. The expected full blink is 0.320373 Hz. The same clip shows the Nano at 0.499 Hz.
+
 ### Proof 2 — `DIV`, `H`, and `SYSTEM.BIT`
 
 `DIV` and `H` are multi-cycle. The circuit is a multi-cycle divider. The prologue is `58 DIV 29 = 2` and `58 MOD 29 = 0`, then `SYSTEM.BIT` of a known word: `LDW`, `ROR` by `bit + 1`, tested with MI. MI is already in the condition unit. This proof does not add one. A failed predicate holds the LED before the delay loop.
@@ -65,7 +95,7 @@ Norebo compiles unmodified `Kernel`, `FileDir`, `Files`, and `Modules` in one se
 
 This is the hard step, and it is the missing piece of original step 10. It is one placed body, not a move of every fetch. The image copies Blink5 into external memory, walks one real type-chain entry, and fetches that placed body. Reset, training, and the loader stay in the pROM. The body has its own addresses. It does not land on the data table. A fetch before training reads garbage.
 
-The Nano is the harder board. `modules_n262144` has +0.040 ns of setup slack on `clkdiv`, CLS at 97%, and the slow corner already misses 27 MHz (Fmax 26.117 MHz). HyperRAM will not start a command more often than every 15 clocks. Paying that on every instruction of the placed delay loop, on top of `103*N+142`, pushes `N = 262144` near the webcam floor of 0.2 Hz. The Dock has timing room (`pclk` Fmax 98.0 MHz against 96.7, zero violated endpoints). The Dock rate `576*N+788` moves once the body is fetched from DDR3. The new count is the trace's count.
+The Nano is the harder board. `modules_n262144` placed for Proof 1 has worst slack -4.984 ns on `clkdiv`, CLS 2146/2304 (94%), and the slow corner misses 27 MHz (Fmax 23.797 MHz). HyperRAM will not start a command more often than every 15 clocks. Paying that on every instruction of the placed delay loop, on top of `103*N+142`, pushes `N = 262144` near the webcam floor of 0.2 Hz. The Dock has timing room (`pclk` Fmax 98.0 MHz against 96.7, zero violated endpoints). The Dock rate `576*N+788` moves once the body is fetched from DDR3. The new count is the trace's count.
 
 ### Proof 6 — one sector step
 

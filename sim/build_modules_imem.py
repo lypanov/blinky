@@ -6,13 +6,15 @@ compiler, so this file emits the ORG encodings. Reset still begins
 at the setup block. The MOV at 0x9C enters this body instead of the
 memory prologue. The body is
 
-    GET(16); GET(20); GET(24); DEC(limit, 1000H); BT prologue
+    GET(16); GET(20); GET(24); DEC(limit, 8000H); BT prologue
 
-and the prologue's success path is still Load("Blink5"). The 4 KB
-reserve is that DEC. R14 becomes the stack origin that was read, and
-the delay loop's existing push lands inside the reserve. Nothing is
-added inside the delay loop. chainFix stays on. The tail does not
-grow: the proof word is XOR-ed into the step-7 store at the link slot.
+and the prologue's success path is still Load("Blink5"). The 32 KB
+reserve is that DEC. One store lands at each end of the gap and both
+words are read back into the same difference. R14 becomes the stack
+origin that was read, and the delay loop's existing push lands on
+the high end. Nothing is added inside the delay loop. chainFix stays
+on. The tail does not grow: the proof word is XOR-ed into the
+step-7 store at the link slot.
 """
 from __future__ import annotations
 
@@ -43,11 +45,16 @@ ADDR_ROOT = 20
 ADDR_LIMIT = 24
 ALLOC = 0x0C00
 MOD_ROOT = 0x0020
-# The behavioural HyperRAM is 8 KB. The reserve is the top 4 KB of
-# that, so the delay loop's push at R14-4 stays inside the model.
-STACK = 0x2000
-RESERVE = 0x1000
+# Page 0x10 (0x1000..0x10FF) is the code window: a word load there
+# returns the pROM, not HyperRAM. The reserve starts at 0x2000, above
+# that page and above the low map, and is the next 8000H bytes. The
+# stack origin is 0xA000. The delay loop's push at R14-4 is the last
+# word of the gap. sim/HyperRamUserModel.v covers it.
+STACK = 0xA000
+RESERVE = 0x8000
 LIMIT = STACK - RESERVE
+LOW_MARK = 0xA11A
+HIGH_MARK = 0xE11D
 PROOF = 0x05F0
 PROOF_SKIP = 0x05E0
 NONCE = 0xDEC0
@@ -96,6 +103,18 @@ def assemble_body(
     a.word(f1(9, 0, 3, MOD_ROOT))
     a.word(f0(6, 8, 8, 0))
     a.word(f1(9, 0, 4, LIMIT))
+    a.word(f0(6, 8, 8, 0))
+
+    # The low end is the limit, above the code page. The high end is
+    # the last word under R14, which is also where the delay loop's
+    # existing push lands.
+    _store_abs(a, LIMIT, LOW_MARK)
+    _store_abs(a, STACK - 4, HIGH_MARK)
+    _load_abs(a, LIMIT, 5)
+    _load_abs(a, STACK - 4, 6)
+    a.word(f1(9, 0, 5, LOW_MARK))
+    a.word(f0(6, 8, 8, 0))
+    a.word(f1(9, 0, 6, HIGH_MARK))
     a.word(f0(6, 8, 8, 0))
 
     # Power-up memory is 0. A skipped store must not look like success,
@@ -207,9 +226,13 @@ def check_image(words: list[int], labels: dict[str, int], prog_len: int) -> None
     if mov_imm(0, PROLOGUE) not in block or BT_R0 not in block:
         raise SystemExit("the body does not enter the prologue")
     if f1(9, 4, 4, RESERVE) not in block:
-        raise SystemExit("DEC(limit, 1000H) is missing")
-    if f1(9, 4, 4, 0x8000) in block:
-        raise SystemExit("the 32 KB reserve is in the image")
+        raise SystemExit("DEC(limit, 8000H) is missing")
+    if f1(9, 4, 4, 0x1000) in block:
+        raise SystemExit("the 4 KB reserve is in the image")
+    if mov_imm(1, LIMIT) not in block or mov_imm(1, STACK - 4) not in block:
+        raise SystemExit("the reserve ends are not both addressed")
+    if words[0x1048 // 4] != 0x4EE90004 or words[0x104C // 4] != 0xAFE00000:
+        raise SystemExit("the delay loop push moved")
     if mov_imm(1, PROOF) not in block:
         raise SystemExit("the proof word is not addressed")
     if words[labels["flush"] // 4] == stw(NAME_ACC, 11, 0):
@@ -230,7 +253,7 @@ def main() -> int:
     parser.add_argument("--skip-slot", type=int, default=None)
     parser.add_argument("--mode", choices=("all", "dir", "none"), default="all")
     parser.add_argument("--break-dec", action="store_true",
-                        help="Subtract 1001H instead of 1000H")
+                        help="Subtract 8001H instead of 8000H")
     parser.add_argument("--fall", action="store_true",
                         help="Replace the Init branch to the hold with MOV R1, R1")
     parser.add_argument("--skip-proof", action="store_true",
