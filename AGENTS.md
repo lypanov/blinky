@@ -1,5 +1,9 @@
 # Agent notes
 
+## Subagents
+
+Always use non-fast for subagents. Do not pass a model slug that ends in `-fast`.
+
 ## Merging
 
 Rebase. That is the maintainer's preference for landing pull requests. `main` stays a straight line: each branch commit is replayed, the patch stays the same, the SHA changes. PRs #41–#43 landed this way.
