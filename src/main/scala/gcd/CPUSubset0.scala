@@ -1013,7 +1013,8 @@ object CPUSubset0 {
         memBackend = if (ddr3) "ddr3" else if (hyper) "hyperram" else "blockram",
         extraChecks = extra,
         fetchStored = fetchbl || ddr3fetch,
-        chainFix = pdchain || moddesc || files || modules || ddr3pd || ddr3moddesc || ddr3files || ddr3modules
+        chainFix = pdchain || moddesc || files || modules || ddr3pd || ddr3moddesc || ddr3files || ddr3modules,
+        enableLogger = ddr3
       ),
       firtoolOpts = firtoolOpts
     )
@@ -1027,7 +1028,8 @@ object CPUSubset0 {
         memBackend = if (ddr3) "ddr3" else if (hyper) "hyperram" else "blockram",
         extraChecks = extra,
         fetchStored = fetchbl || ddr3fetch,
-        chainFix = pdchain || moddesc || files || modules || ddr3pd || ddr3moddesc || ddr3files || ddr3modules
+        chainFix = pdchain || moddesc || files || modules || ddr3pd || ddr3moddesc || ddr3files || ddr3modules,
+        enableLogger = ddr3
       ),
       firtoolOpts = firtoolOpts
     )
