@@ -399,6 +399,7 @@ sim/obj_dir_moddesc_split/
 sim/obj_dir_files_n5/
 sim/obj_dir_files_split/
 sim/obj_dir_modules_n5/
+sim/obj_dir_modules/
 sim/obj_dir_modules_split/
 sim/obj_dir_ddr3_n5/
 sim/obj_dir_ddr3_align/

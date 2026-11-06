@@ -276,6 +276,25 @@ if ! grep -q 'InstrRom' "$V"; then
   exit 1
 fi
 
+# The Logger is the 4K cut. DDR3 elaborations keep it. The Dock
+# training UART is ddr3_uart_tx and is not this module. Both tops
+# still connect io_uart_rx / io_uart_tx.
+if [[ "$FPGA_IMAGE" == ddr3* ]]; then
+  if ! grep -q '^module Logger' "$V"; then
+    echo "error: Dock elaboration dropped the Logger" >&2
+    exit 1
+  fi
+else
+  if grep -q '^module Logger' "$V"; then
+    echo "error: $FPGA_IMAGE elaboration still contains the Logger" >&2
+    exit 1
+  fi
+fi
+if ! grep -q 'io_uart_tx' "$V" || ! grep -q 'io_uart_rx' "$V"; then
+  echo "error: wrapper UART pins were removed" >&2
+  exit 1
+fi
+
 echo "==> Checking delay word 0x$EXPECT_MHI in the instruction ROM"
 if grep -qi "$EXPECT_MHI" "$IMEM_HEX"; then
   echo "    found $EXPECT_MHI in $IMEM_HEX"

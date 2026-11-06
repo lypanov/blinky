@@ -36,7 +36,10 @@ class CPUMinimalWrapper(
     hyperFirstValid: Int = 12,
     extraChecks: Int = 0,
     fetchStored: Boolean = false,
-    chainFix: Boolean = false
+    chainFix: Boolean = false,
+    // DDR3 elaborations keep the Logger. Nano 4K images leave it out.
+    // The Dock training UART is ddr3_uart_tx, not this module.
+    enableLogger: Boolean = false
 ) extends Module {
   val hyper = memBackend == "hyperram"
   val ddr3 = memBackend == "ddr3"
@@ -172,13 +175,19 @@ class CPUMinimalWrapper(
   io.deadbeef := ramController.io.value
   io.addr := ramController.io.addr
 
-  // Create and properly initialize the Logger module
-  val logger = Module(new Logger())
-  logger.io.clk := clock
-  logger.io.rst_n := ~reset.asBool
-  logger.io.uart_rx := io.uart_rx
-  logger.io.messageCode := cpu.io.messageCode
-  logger.io.trigger := cpu.io.trigger
-  logger.io.logByte := cpu.io.logByte
-  io.uart_tx := logger.io.uart_tx
+  // The wrapper ports stay so both board tops keep the same UART pins.
+  // On the 4K the pin is an idle mark and the Logger is not elaborated.
+  if (enableLogger) {
+    val logger = Module(new Logger())
+    logger.io.clk := clock
+    logger.io.rst_n := ~reset.asBool
+    logger.io.uart_rx := io.uart_rx
+    logger.io.messageCode := cpu.io.messageCode
+    logger.io.trigger := cpu.io.trigger
+    logger.io.logByte := cpu.io.logByte
+    io.uart_tx := logger.io.uart_tx
+  } else {
+    dontTouch(io.uart_rx)
+    io.uart_tx := true.B
+  }
 } 
