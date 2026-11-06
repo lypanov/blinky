@@ -2,9 +2,9 @@
 
 One item at a time, from the top. This file is an index. The write-up is in the file each item names.
 
-Next: 1.
+Next: 2.
 
-1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay.
+1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay. Done. The measured result is in the ledger.
 
 Ledger items 2–5 are not to-dos. If a later item cannot fit on the Nano 4K without an architecture change, name the next ledger item you would take. Do not take it in the same task.
 

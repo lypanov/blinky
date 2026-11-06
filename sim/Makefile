@@ -65,19 +65,19 @@ BIN3 := $(SIMDIR)/obj_dir_blink3/cpu_sim
 verilate-blink2: $(BIN2)
 verilate-blink3: $(BIN3)
 
-$(BIN2): $(GEN)/CPUSimTop.v $(TB)
+$(BIN2): $(GEN)/CPUSimTop.v $(GEN)/InstrRom.v $(TB)
 	@mkdir -p $(OUT)
 	$(VERILATOR) $(VERILATOR_FLAGS) \
 		--Mdir $(SIMDIR)/obj_dir_blink2 \
 		-o cpu_sim \
-		$(GEN)/CPUSimTop.v $(TB)
+		$(GEN)/CPUSimTop.v $(GEN)/InstrRom.v $(TB)
 
-$(BIN3): $(GEN)/CPUSimTopBlink3.v $(TB)
+$(BIN3): $(GEN)/CPUSimTopBlink3.v $(GEN)/InstrRom.v $(TB)
 	@mkdir -p $(OUT)
 	$(VERILATOR) $(VERILATOR_FLAGS) \
 		--Mdir $(SIMDIR)/obj_dir_blink3 \
 		-o cpu_sim \
-		$(GEN)/CPUSimTopBlink3.v $(TB)
+		$(GEN)/CPUSimTopBlink3.v $(GEN)/InstrRom.v $(TB)
 
 verilate: verilate-blink2
 
