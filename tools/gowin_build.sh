@@ -115,7 +115,7 @@ if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" =
   fi
 fi
 if [[ "$FPGA_IMAGE" == "modules" ]]; then
-  echo "==> Modules IMEM (Init with a 4 KB reserve, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
+  echo "==> Modules IMEM (Init with a 32 KB reserve, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
   python3 "$ROOT/sim/build_modules_imem.py" \
     --max-iter "$BLINK3_MAXITER" \
     --pad 2048 \
@@ -192,7 +192,7 @@ elif [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE"
     exit 1
   fi
   if [[ "$FPGA_IMAGE" == "ddr3modules" ]]; then
-    echo "==> DDR3 Modules IMEM (Init with a 4 KB reserve, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
+    echo "==> DDR3 Modules IMEM (Init with a 32 KB reserve, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
     python3 "$ROOT/sim/build_modules_imem.py" \
       --max-iter "$BLINK3_MAXITER" \
       --pad 2048 \
