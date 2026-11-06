@@ -13,9 +13,11 @@
 module tb_ddr3_cpu_phy;
     localparam integer PCLK_WAIT = 200000;
     localparam integer EXPECT_PERIOD = 3668; // 576*5+788, delay loop only
-    // The ModDesc block sits before that loop, so the period stays.
+    // ModDesc and Files both sit before that loop, so the period stays.
     localparam [31:0] EXPECT_R5 = 32'h00000000;
-    localparam [31:0] EXPECT_R9 = 32'h00000008;
+    // ModDesc leaves R9 at 8. Files uses R9 as the w accumulator and
+    // leaves 0. +expect_r9= overrides the ModDesc value.
+    localparam [31:0] EXPECT_R9_DEFAULT = 32'h00000008;
     localparam [39:0] EXPECT_MASK = 40'hffffffffff;
 
     reg        rst_n;
@@ -177,6 +179,7 @@ module tb_ddr3_cpu_phy;
 
     integer waits, cycle, edges, max_cycles, cmds, reads;
     integer first_edge, prev_edge, period;
+    reg [31:0] expect_r9;
     reg        prev_led;
     reg        saw_ready;
     reg [15:0] last_beat;
@@ -203,6 +206,9 @@ module tb_ddr3_cpu_phy;
         max_cycles = 500000;
         if (!$value$plusargs("max_pclk=%d", max_cycles))
             max_cycles = 500000;
+        expect_r9 = EXPECT_R9_DEFAULT;
+        if (!$value$plusargs("expect_r9=%h", expect_r9))
+            expect_r9 = EXPECT_R9_DEFAULT;
 
         #10000;
         @(negedge ck);
@@ -299,7 +305,7 @@ module tb_ddr3_cpu_phy;
         $display("END cycle=%0d edges=%0d first=%0d period=%0d pc=%h r5=%h r9=%h mask=%h reads=%0d",
                  cycle, edges, first_edge, period, pc, r5, r9, mask, reads);
         if (edges >= 2 && period == EXPECT_PERIOD &&
-            r5 === EXPECT_R5 && r9 === EXPECT_R9 && mask === EXPECT_MASK)
+            r5 === EXPECT_R5 && r9 === expect_r9 && mask === EXPECT_MASK)
             $display("PHY_SCORE pass");
         else
             $display("PHY_SCORE fail");

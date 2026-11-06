@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# ddr3moddesc (N=5) through ddr3_controller + Micron ddr3.v + gw2a prim_sim.
+# DDR3 CPU image (N=5) through ddr3_controller + Micron ddr3.v + gw2a prim_sim.
+# IMAGE=ddr3moddesc (default) is the step-6 module table.
+# IMAGE=ddr3files is the step-7 Files table. The period check is the
+# delay loop, which both images enter only after a zero compare.
 # Does not instantiate Ddr3UserModel and does not load either FPGA.
 # Exit 0 only when the bench prints PHY_SCORE pass and the log has no
 # Micron ERROR.
@@ -24,13 +27,23 @@ if ! command -v mill >/dev/null; then
   exit 1
 fi
 
-mkdir -p sim/obj_dir
-WORDS=sim/obj_dir/ddr3moddesc_n5.words
-echo "words $WORDS"
-python3 sim/build_moddesc_imem.py --mov-iter 5 --pad 2048 --out "$WORDS"
+IMAGE="${IMAGE:-ddr3moddesc}"
+case "$IMAGE" in
+  ddr3files) BUILD=sim/build_files_imem.py ;;
+  ddr3moddesc) BUILD=sim/build_moddesc_imem.py ;;
+  *)
+    echo "FAIL image $IMAGE (ddr3moddesc or ddr3files)" >&2
+    exit 1
+    ;;
+esac
 
-echo "elaborate ddr3moddesc"
-if ! SIM_IMAGE=ddr3moddesc DDR3_PHY=micron BLINK3_IMEM="$WORDS" \
+mkdir -p sim/obj_dir
+WORDS=sim/obj_dir/${IMAGE}_n5.words
+echo "words $WORDS"
+python3 "$BUILD" --mov-iter 5 --pad 2048 --out "$WORDS"
+
+echo "elaborate $IMAGE"
+if ! SIM_IMAGE="$IMAGE" DDR3_PHY=micron BLINK3_IMEM="$WORDS" \
     mill chisel-blinky.runMain gcd.CPUSimTop; then
   echo "FAIL elaborate" >&2
   exit 1
@@ -57,7 +70,12 @@ if ! iverilog -g2012 -s tb_ddr3_cpu_phy -o "$OUT" \
 fi
 
 mkdir -p /tmp/ddr3-cpu-phy-model
-if ! stdbuf -oL -eL vvp "$OUT" +model_data+/tmp/ddr3-cpu-phy-model "$@" >"$LOG" 2>&1; then
+# Files leaves R9 at 0. ModDesc leaves the module number 8.
+R9_ARG=()
+if [[ "$IMAGE" == "ddr3files" ]]; then
+  R9_ARG+=(+expect_r9=0)
+fi
+if ! stdbuf -oL -eL vvp "$OUT" +model_data+/tmp/ddr3-cpu-phy-model "${R9_ARG[@]}" "$@" >"$LOG" 2>&1; then
   echo "FAIL vvp" >&2
   tail -40 "$LOG" >&2
   exit 1
