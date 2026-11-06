@@ -13,6 +13,7 @@
 module tb_ddr3_cpu_phy;
     localparam integer PCLK_WAIT = 200000;
     localparam integer EXPECT_PERIOD = 3668; // 576*5+788, delay loop only
+    // The ModDesc block sits before that loop, so the period stays.
     localparam [31:0] EXPECT_R5 = 32'h00000000;
     localparam [31:0] EXPECT_R9 = 32'h00000008;
     localparam [39:0] EXPECT_MASK = 40'hffffffffff;

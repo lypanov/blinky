@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ddr3pd (N=5) through ddr3_controller + Micron ddr3.v + gw2a prim_sim.
+# ddr3moddesc (N=5) through ddr3_controller + Micron ddr3.v + gw2a prim_sim.
 # Does not instantiate Ddr3UserModel and does not load either FPGA.
 # Exit 0 only when the bench prints PHY_SCORE pass and the log has no
 # Micron ERROR.
@@ -25,12 +25,12 @@ if ! command -v mill >/dev/null; then
 fi
 
 mkdir -p sim/obj_dir
-WORDS=sim/obj_dir/ddr3pd_n5.words
+WORDS=sim/obj_dir/ddr3moddesc_n5.words
 echo "words $WORDS"
-python3 sim/build_pdchain_imem.py --mov-iter 5 --pad 2048 --out "$WORDS"
+python3 sim/build_moddesc_imem.py --mov-iter 5 --pad 2048 --out "$WORDS"
 
-echo "elaborate ddr3pd"
-if ! SIM_IMAGE=ddr3pd DDR3_PHY=micron BLINK3_IMEM="$WORDS" \
+echo "elaborate ddr3moddesc"
+if ! SIM_IMAGE=ddr3moddesc DDR3_PHY=micron BLINK3_IMEM="$WORDS" \
     mill chisel-blinky.runMain gcd.CPUSimTop; then
   echo "FAIL elaborate" >&2
   exit 1

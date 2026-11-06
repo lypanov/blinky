@@ -1,2 +1,2 @@
-// P/D-chain image. The write delay is the trained eye.
-`define DDR3_PD
+// ModDesc image. The write delay is the trained eye.
+`define DDR3_MODDESC

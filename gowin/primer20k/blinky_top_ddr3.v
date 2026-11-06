@@ -1,4 +1,11 @@
 `include "ddr3_eye.vh"
+// ModDesc uses the same holds as the P/D image. The new block is
+// not a spin. A failed compare still sits on 0x1D8C.
+`ifdef DDR3_MODDESC
+  `define DDR3_PD_HOLD
+`elsif DDR3_PD
+  `define DDR3_PD_HOLD
+`endif
 // Primer 20K Dock wrapper. Fetch stays in block RAM. Loads and stores
 // go through the DDR3 controller that already initializes the H5TQ1G63
 // on this board. The CPU and the bridge run on pclk (387 MHz / 4).
@@ -384,9 +391,9 @@ module blinky_top_ddr3 (
           || cpu_pc[15:0] == 16'h1C20 || cpu_pc[15:0] == 16'h1C24
           || cpu_pc[15:0] == 16'h1CD8 || cpu_pc[15:0] == 16'h1CDC)
       hold_seen <= 1'b1;
-`elsif DDR3_PD
+`elsif DDR3_PD_HOLD
     // Reader spins, and the chain compare spin. The chain prologue
-    // at 0x1C00 is real code, not a hold.
+    // at 0x1C00 and the ModDesc block at 0x1EF8 are real code.
     else if (cpu_pc[15:0] == 16'h1B44 || cpu_pc[15:0] == 16'h1B48
           || cpu_pc[15:0] == 16'h1D8C || cpu_pc[15:0] == 16'h1D90)
       hold_seen <= 1'b1;
@@ -466,8 +473,8 @@ module blinky_top_ddr3 (
 `elsif DDR3_FETCH
     // Stored-BL image: programmed lane 1, then programmed lane 0.
     hex16({8'h00, wstep1_run}), " ",
-`elsif DDR3_PD
-    // P/D-chain image: programmed lane 1, then programmed lane 0.
+`elsif DDR3_PD_HOLD
+    // P/D-chain and ModDesc: programmed lane 1, then programmed lane 0.
     hex16({8'h00, wstep1_run}), " ",
 `else
     hex16({8'h00, unused_wstep}), " ",
