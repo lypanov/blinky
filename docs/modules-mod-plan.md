@@ -41,7 +41,7 @@ flowchart TD
   tip --> p1 --> p2 --> p3 --> p4 --> p5 --> p6 --> p7
 ```
 
-Each proof is taken in the prove-ladder order. Icarus first, and the Micron `ddr3.v` when the step touches DDR3. Then the Tang Nano 4K. Then the Primer 20K Dock. A step is done only when sim, 4K, and 20K agree. A dark LED is a fail. A step that edits the loop publishes a new count from the trace before the webcam result is trusted.
+Each proof is taken in the prove-ladder order. Simulation first: Verilator for the Nano 4K image (`tools/run_verilator_sim.sh`), and Icarus with the Micron `ddr3.v` model (`sim/run_ddr3_cpu_phy.sh`) when the step touches DDR3. The Verilator stand-in does not close that check. Then the Tang Nano 4K. Then the Primer 20K Dock. A step is done only when sim, 4K, and 20K agree. A dark LED is a fail. A step that edits the loop publishes a new count from the trace before the webcam result is trusted.
 
 ### Proof 1 — the 32 KB reserve
 
