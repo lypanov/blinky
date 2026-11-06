@@ -13,10 +13,12 @@
 module tb_ddr3_cpu_phy;
     localparam integer PCLK_WAIT = 200000;
     localparam integer EXPECT_PERIOD = 3668; // 576*5+788, delay loop only
-    // ModDesc and Files both sit before that loop, so the period stays.
+    // ModDesc, Files, and Modules all sit before that loop, so the
+    // period stays. Init is not in the delay loop.
     localparam [31:0] EXPECT_R5 = 32'h00000000;
     // ModDesc leaves R9 at 8. Files uses R9 as the w accumulator and
-    // leaves 0. +expect_r9= overrides the ModDesc value.
+    // leaves 0. Modules still ends in that Load, so R9 is 0 there too.
+    // +expect_r9= overrides the ModDesc value.
     localparam [31:0] EXPECT_R9_DEFAULT = 32'h00000008;
     localparam [39:0] EXPECT_MASK = 40'hffffffffff;
 

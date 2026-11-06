@@ -1,7 +1,9 @@
 `include "ddr3_eye.vh"
-// ModDesc and Files use the same holds as the P/D image. The new
-// blocks are not spins. A failed compare still sits on 0x1D8C.
-`ifdef DDR3_FILES
+// ModDesc, Files, and Modules use the same holds as the P/D image.
+// The new blocks are not spins. A failed compare still sits on 0x1D8C.
+`ifdef DDR3_MODULES
+  `define DDR3_PD_HOLD
+`elsif DDR3_FILES
   `define DDR3_PD_HOLD
 `elsif DDR3_MODDESC
   `define DDR3_PD_HOLD
@@ -395,8 +397,8 @@ module blinky_top_ddr3 (
       hold_seen <= 1'b1;
 `elsif DDR3_PD_HOLD
     // Reader spins, and the chain compare spin. The chain prologue
-    // at 0x1C00, the ModDesc block at 0x1EF8, and the Files block at
-    // 0x00C0 are real code.
+    // at 0x1C00, the ModDesc block at 0x1EF8, the Files block at
+    // 0x00C0, and the Modules body at 0x06C0 are real code.
     else if (cpu_pc[15:0] == 16'h1B44 || cpu_pc[15:0] == 16'h1B48
           || cpu_pc[15:0] == 16'h1D8C || cpu_pc[15:0] == 16'h1D90)
       hold_seen <= 1'b1;
@@ -477,7 +479,7 @@ module blinky_top_ddr3 (
     // Stored-BL image: programmed lane 1, then programmed lane 0.
     hex16({8'h00, wstep1_run}), " ",
 `elsif DDR3_PD_HOLD
-    // P/D-chain, ModDesc, and Files: programmed lane 1, then lane 0.
+    // P/D-chain, ModDesc, Files, and Modules: programmed lane 1, then lane 0.
     hex16({8'h00, wstep1_run}), " ",
 `else
     hex16({8'h00, unused_wstep}), " ",
