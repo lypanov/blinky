@@ -24,15 +24,10 @@
 // A corrupt read, or one wrong header byte, leaves the pin dark.
 // Locked before the SRAM load.
 //
-// DDR3_READER is the cold step sweep. The place that passed
-// programmed both lanes to step 10. DDR3_FETCH does not reuse that
-// code: on its route, steps 9 and 10 are the same even-word alias.
-// This image loads lane 0 with its write-level edge minus 1 and
-// lane 1 with its edge minus 3. On the build on the Dock those
-// codes are 000B and 0007. The edge moved between builds, so the
-// stand-in takes the programmed steps and not the edge. The ALU
-// place stays on lane 0 at step 10 and lane 1 on the write-level
-// result. The delay loop is unchanged.
+// The controller trains the write delay from the write-level edge
+// and locks the center where every DQ bit matches. DDR3_READER can
+// still replace that delay with its cold sweep after calibration.
+// There is no fixed backoff.
 
 module blinky_top_ddr3 (
   input  Clock,
@@ -449,12 +444,11 @@ module blinky_top_ddr3 (
     end
   endfunction
 
-  // 82 bytes: calib, hold, PC, the 40-bit check mask, the pattern
-  // sum (R5), the last read column and one beat pair, the last write
-  // address and data, the complement sum (R9), then the raw write
-  // step and the step lane 0 actually uses. A missing zero leaves
-  // the pin dark.
-  localparam integer UBYTES = 82;
+  // 120 bytes. Tail: E0 is pattern 0 at backoff 0,0. G is the
+  // last pattern-0 read. C0/C1 are the locked backoffs. BO is the
+  // inner backoff where the scan stopped. F = {pass, bad, lock,
+  // rclkpos, rclksel}.
+  localparam integer UBYTES = 120;
   wire [UBYTES*8-1:0] msg = {
     read_calib_done ? "C" : ".",
     hold_sync[1] ? "H" : ".",
@@ -478,7 +472,13 @@ module blinky_top_ddr3 (
 `else
     hex16({8'h00, unused_wstep}), " ",
 `endif
-    hex16({8'h00, wstep_run}), "\n"
+    hex16({8'h00, wstep_run}),
+    " E0 ", hex16(unused_debug[63:48]),
+    " G ", hex16(unused_debug[47:32]),
+    " C0 ", hex8(unused_debug[31:24]),
+    " C1 ", hex8(unused_debug[23:16]),
+    " BO ", hex8(unused_debug[15:8]),
+    " F ", hex8(unused_debug[7:0]), "\n"
   };
   reg [UBYTES*8-1:0] snap = {UBYTES{8'h00}};
   reg [25:0] rep = 26'd0;
@@ -552,10 +552,6 @@ module blinky_top_ddr3 (
 `endif
 
 `ifdef DDR3_READER
-  localparam [7:0] LANE0_STEP = 8'd9;
-  localparam [7:0] LANE1_STEP = 8'd9;
-  localparam [7:0] WLEVEL_BACKOFF = 8'd0;
-  localparam [7:0] WLEVEL_BACKOFF1 = 8'd0;
   // Cold prologue. Both lanes get one absolute step. The controller
   // reset drops DDR3_nRESET, so the array does not keep the previous
   // trial. After read calibration the step is loaded, with the CPU
@@ -667,32 +663,12 @@ module blinky_top_ddr3 (
     end
   end
 `else
-  localparam [7:0] LANE0_STEP = 8'd10;
-  localparam [7:0] LANE1_STEP = 8'd0;
-`ifdef DDR3_FETCH
-  // Backoff 1 and backoff 3. On the build on the Dock the edges
-  // were 000C and 000A, so the steps are 000B and 0007. 0006 is
-  // not this image. An earlier build's lane 0 edge was 000D.
-  localparam [7:0] WLEVEL_BACKOFF = 8'd1;
-  localparam [7:0] WLEVEL_BACKOFF1 = 8'd3;
-`elsif DDR3_PD
-  // Same backoff as the accepted stored-BL image. A new place can
-  // move the write-level edge. Code 26 is not a step for this image.
-  localparam [7:0] WLEVEL_BACKOFF = 8'd1;
-  localparam [7:0] WLEVEL_BACKOFF1 = 8'd3;
-`else
-  localparam [7:0] WLEVEL_BACKOFF = 8'd0;
-  localparam [7:0] WLEVEL_BACKOFF1 = 8'd0;
-`endif
   wire [7:0] step0_ov = 8'd0;
   wire [7:0] step1_ov = 8'd0;
   wire step_ov_en = 1'b0;
 `endif
   ddr3_controller #(
-    .ROW_WIDTH(13), .COL_WIDTH(10), .BANK_WIDTH(3),
-    .LANE0_STEP(LANE0_STEP), .LANE1_STEP(LANE1_STEP),
-    .WLEVEL_BACKOFF(WLEVEL_BACKOFF),
-    .WLEVEL_BACKOFF1(WLEVEL_BACKOFF1)
+    .ROW_WIDTH(13), .COL_WIDTH(10), .BANK_WIDTH(3)
   ) u_ddr3 (
     .DDR3_DQ      (DDR3_DQ),
     .DDR3_DQS     (DDR3_DQS),

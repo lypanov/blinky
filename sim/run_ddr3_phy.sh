@@ -7,9 +7,9 @@ cd "$(dirname "$0")/.."
 
 export PATH="${HOME}/.local/bin:${PATH}"
 
-PRIM="${GOWIN_PRIM_SIM:-/opt/gowin-eda-ide/simlib/gw2a/prim_sim.v}"
-if [[ ! -f "$PRIM" ]]; then
-  echo "FAIL missing Gowin prim_sim ($PRIM)" >&2
+PRIM_SRC="${GOWIN_PRIM_SIM:-/opt/gowin-eda-ide/simlib/gw2a/prim_sim.v}"
+if [[ ! -f "$PRIM_SRC" ]]; then
+  echo "FAIL missing Gowin prim_sim ($PRIM_SRC)" >&2
   echo "Set GOWIN_PRIM_SIM to gw2a/prim_sim.v from the Gowin IDE." >&2
   exit 1
 fi
@@ -19,6 +19,10 @@ if ! command -v iverilog >/dev/null || ! command -v vvp >/dev/null; then
 fi
 
 mkdir -p sim/obj_dir
+# The vendor 255-tap DQS cascade makes this bench unusable in Icarus.
+# The patch keeps tap N = N * 0.025 ns as one transport delay.
+PRIM=sim/obj_dir/prim_sim_fastdqs.v
+python3 sim/patch_prim_dqs.py "$PRIM_SRC" "$PRIM"
 OUT=sim/obj_dir/ddr3_phy.vvp
 LOG=sim/obj_dir/ddr3_phy.log
 

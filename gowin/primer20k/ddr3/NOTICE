@@ -2,4 +2,48 @@ ddr3_controller.v
 Copyright nand2mario
 https://github.com/nand2mario/ddr3-tang-primer-20k
 Licensed under the Apache License, Version 2.0 (see LICENSE).
-This copy is unmodified.
+
+Source
+------
+nand2mario/ddr3-tang-primer-20k @ a6d866d2369eb27e99cedee6c0cb8a09f311fa57
+(2023-07-25). That tree's controller is the later of the two upstream
+copies. NESTang's last Primer 20K controller is 8b8f4fa6 (2022-10-30,
+deleted from NESTang in 0e0a1e1 when Nano 20K landed). It matches
+a6d866d except it latches dout on data_ready and uses RCALIB_COUNT=16.
+NESTang does not subtract a fixed write-level backoff.
+
+Local deltas
+------------
+- RCALIB_COUNT is 16 on silicon, matching the NESTang Dock controller.
+  dout stays the live dq_in[0] word from a6d866d. The bridge samples it
+  on the data_ready pulse, which is the latch's data_ready value too.
+- Each byte lane write-levels on its own DQ. Upstream uses one wstep
+  for both lanes.
+- A read pulses WLOADN high for one pclk at the end of READ. Upstream
+  ties WLOADN low. HOLD stops the write clock (UG286 / prim_sim
+  fclk_hold). The falling edge reloads WSTEP before the next store.
+- The bridge waits 16 controller clocks after busy falls, including
+  after a refresh, before the next command.
+- dm_out's default is nonblocking, so the write unmask reaches OSER8_MEM
+  on this pclk. Serializer inputs are cleared while reset is held.
+- `ifdef SIM shortcuts are labeled in the controller. They are not the
+  silicon path. Icarus gets an explicit genvar.
+- After the read gate, training writes eight halfwords (every DQ bit,
+  the neighbour column, and both bytes) and requires the whole word
+  back in dq_in[0]. The scan is offsets -4..+12 from each lane's own
+  write-level edge. The first row with three consecutive full-word
+  passes locks that lane-0 step and the center of the lane-1 run.
+  No pass leaves read_calib_done low, so the LED stays dark.
+  dq_in[0] is sampled on the pclk after data_ready rises, which is
+  the beat the CPU sees while data_ready is high.
+- Icarus does not finish the vendor 255-tap DQS cascade.
+  sim/patch_prim_dqs.py copies prim_sim and replaces that cascade
+  with constant transport delays (N*0.025 ns, 1 ps early). The
+  vendor file is not modified. A variable delay sits on a CK edge
+  and the Micron model drops the strobe.
+
+Dropped
+-------
+Fixed WLEVEL_BACKOFF and absolute LANE*_STEP codes. Those were a
+placement offset, not a measurement. The same 1-and-3 backoff that
+passed one stored-BL place missed the P/D place.

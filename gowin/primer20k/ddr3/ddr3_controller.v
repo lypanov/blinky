@@ -46,7 +46,7 @@ module ddr3_controller
     parameter RP   = 6,     // 13.75ns, precharge to active
     parameter RCD  = 6,     // 13.75ns, active to r/w
     parameter RC   = 20,    // 48.25ns, ref/active to ref/active
-    parameter MOD  = 12,    // 12nCK/15ns, cycles after MRS before any other command
+    parameter MOD  = 12     // 12nCK/15ns, cycles after MRS before any other command
 `else
     // DDR3-1066
     parameter CAS  = 7,     // MR0[6,5,4,2] = 0110
@@ -56,25 +56,8 @@ module ddr3_controller
     parameter MRD  = 8,     // >=4 cycles, mode register set delay
     parameter RP   = 8,     // 13.75ns, precharge to active
     parameter RC   = 26,    // 48.25ns, ref/active to ref/active
-    parameter MOD  = 12,    // 12nCK/15ns, cycles after MRS before any other command
+    parameter MOD  = 12     // 12nCK/15ns, cycles after MRS before any other command
 `endif
-    // Absolute write delay loaded after read calibration. Lane 0's odd
-    // column comes back as the even one on the leading edge of the eye.
-    // 10 is the ALU place and the reader place that passed.
-    // LANE1_STEP=0 leaves lane 1 on the write-level result, which is
-    // the ALU place. WLEVEL_BACKOFF, when non-zero, ignores those
-    // constants and loads each lane with its own write-level edge
-    // minus that many codes. WLEVEL_BACKOFF1 is lane 1's count;
-    // zero there uses WLEVEL_BACKOFF for both. On the ALU place
-    // lane 0's edge was 0x0D and its eye was 0x0A. The fetch image
-    // that passed uses backoff 1 and 3. That build's edges were
-    // 0x0C and 0x0A, so the steps were 0x0B and 0x07. An earlier
-    // fetch trial measured lane 0's edge as 0x0D. The stand-in
-    // does not read this edge.
-    parameter [7:0] LANE0_STEP = 8'd10,
-    parameter [7:0] LANE1_STEP = 8'd0,
-    parameter [7:0] WLEVEL_BACKOFF = 8'd0,
-    parameter [7:0] WLEVEL_BACKOFF1 = 8'd0
 )
 (
     // DDR3 side interface
@@ -116,8 +99,8 @@ module ddr3_controller
     output reg [7:0]  wstep1,       // write delay for DQS1
     output reg [7:0]  wstep_run,    // DQS0 delay actually used after calib
     output reg [7:0]  wstep1_run,   // DQS1 delay actually used after calib
-    // After read calibration, step_ov_en selects these instead of the
-    // LANE*_STEP parameters. It stays low through write leveling.
+    // After the eye locks, step_ov_en replaces that delay. The reader
+    // sweep uses it. It stays low through write leveling and training.
     input      [7:0]  step0_ov,
     input      [7:0]  step1_ov,
     input             step_ov_en,
@@ -165,7 +148,6 @@ typedef logic [4:0] FIVEB;
 // Debug stuff
 reg [7:0] cnt_read = 0;
 reg [7:0] cnt_write = 0;
-assign debug = {cnt_write, cnt_read, BYTE'(state)};
 
 // Output signals
 reg nRAS[3:0], nCAS[3:0], nWE[3:0];
@@ -253,8 +235,10 @@ reg [3:0] wlevel_cnt = 3'b0;
 // neighbour column. Each lane stops on its own DQ feedback.
 assign write_level_done = wlevel_done;
 
-// Read calibration. 
-// Note there's no read eye diagram testing yet.
+// Read calibration finds rburst. The write-level result is the leading
+// edge of that lane, which aliases the next column. Training then walks
+// each lane down from its own edge until dq_in[0] matches eight
+// halfwords, and locks the center of that window. No fixed backoff.
 reg [3:0] dqs_read = 4'b0;
 reg dqs_hold = 1'b0;
 reg wload_n = 1'b0;
@@ -263,32 +247,145 @@ reg [1:0] rburst_seen;
 reg rcalib_done = 1'b0;
 reg [3:0] rcalib_cnt = 4'b0;
 assign read_calib_done = rcalib_done;
-// Lane 0's odd column comes back as the even one when the write delay
-// stays on the DQ[0] leading edge. Force an absolute step instead of
-// an offset, so a later edge detection cannot land on the same delay.
-// The read gate stays put. Lane 1 is forced the same way only when
-// LANE1_STEP is non-zero, and only after read calibration, so write
-// leveling still searches on the live wstep1. step_ov_en is the
-// reader's step sweep; it is applied at the same point.
+
+localparam [7:0] EYE_MAX = 8'd24;
+localparam [2:0] E_SETTLE = 3'd0, E_WREQ = 3'd1, E_WBUSY = 3'd2,
+                 E_RREQ = 3'd3, E_RBUSY = 3'd4, E_GAP = 3'd5,
+                 E_MARK = 3'd6, E_STEP = 3'd7;
+reg        eye_arm = 1'b0;
+reg        eye_mode = 1'b0;
+reg        eye_ran = 1'b0;
+reg        eye_lock = 1'b0;
+reg [7:0]  eye_lock0 = 8'd0, eye_lock1 = 8'd0;
+reg [7:0]  eye_s0 = 8'd0, eye_s1 = 8'd0;
+reg [7:0]  eye_edge0 = 8'd0, eye_edge1 = 8'd0;
+reg [7:0]  eye_cen0 = 8'd0, eye_cen1 = 8'd0;
+reg [2:0]  eye_st = E_SETTLE;
+reg [1:0]  eye_ph = 2'd0;
+reg [3:0]  eye_idx = 4'd0;
+reg [7:0]  eye_bo = 8'd0;
+reg [7:0]  eye_o0 = 8'd0;
+reg [7:0]  best_row = 8'd0;
+reg [4:0]  eye_wait = 5'd0;
+reg [2:0]  eye_after = E_SETTLE;
+reg        eye_bad = 1'b0;
+reg        eye_saw_busy = 1'b0;
+reg        eye_cap = 1'b0;
+reg        eye_cap_clear = 1'b0;
+reg [15:0] eye_got = 16'd0;
+reg [15:0] eye_g0 = 16'd0, eye_g1 = 16'd0;
+reg [15:0] eye_g0_edge = 16'd0;
+reg [15:0] eye_g0_rdy = 16'd0;
+reg        eye_pass = 1'b0;
+// Stuck after training so the UART can show why calib stayed low.
+// E0 is pattern 0 at the write-level edge, sampled with eye_got.
+// ER is that same beat sampled while data_ready is high.
+// EL is pattern 0 of the last trial. F is {pass, bad, lock, rclkpos, rclksel}.
+assign debug = {eye_g0_edge, eye_g0, eye_cen0, eye_cen1, eye_bo,
+                eye_pass, eye_bad, eye_lock, rclkpos, rclksel};
+// The cycle data_ready is high is the beat the CPU uses.
+always @(posedge pclk) begin
+    if (~rst_lock_n)
+        eye_g0_rdy <= 16'd0;
+    else if (eye_mode && data_ready && eye_o0 == 8'd0
+             && eye_bo == 8'd0 && eye_idx == 4'd0)
+        eye_g0_rdy <= dq_in[0];
+end
+reg [25:0] eye_addr = 26'd0;
+reg [15:0] eye_din = 16'd0;
+reg        eye_pulse_rd = 1'b0, eye_pulse_wr = 1'b0, eye_commit = 1'b0;
+reg        in_run = 1'b0, have = 1'b0;
+reg [7:0]  run_lo = 8'd0, run_hi = 8'd0, best_lo = 8'd0, best_w = 8'd0;
+reg signed [3:0] box_dx = -4'sd2, box_dy = -4'sd2;
+
+wire [25:0] cmd_addr = eye_mode ? eye_addr : addr;
+wire [15:0] cmd_din  = eye_mode ? eye_din  : din;
+wire        do_rd = eye_mode ? eye_pulse_rd : rd;
+wire        do_wr = eye_mode ? eye_pulse_wr : wr;
+
+function [15:0] eye_pattern;
+    input [2:0] i;
+    begin
+        case (i)
+            3'd0: eye_pattern = 16'hA55A;
+            3'd1: eye_pattern = 16'h5AA5;
+            3'd2: eye_pattern = 16'hFF00;
+            3'd3: eye_pattern = 16'h00FF;
+            3'd4: eye_pattern = 16'h0F0F;
+            3'd5: eye_pattern = 16'hF0F0;
+            3'd6: eye_pattern = 16'h8001;
+            default: eye_pattern = 16'h7FFE;
+        endcase
+    end
+endfunction
+
+// Index 0..EYE_LAST is the write-level edge plus an offset of -4..+12.
+// The leveling edge is the first code that sees the DQS pulse, so the
+// data eye is that code and the ones after it. Searching only downward
+// stays on the cliff: silicon read A500 there (high byte right, low
+// byte zero) at every downward pair.
+localparam [7:0] EYE_LAST = 8'd16; // offsets -4 .. +12
+function [7:0] eye_at;
+    input [7:0] edge_c;
+    input [7:0] idx;
+    integer sum;
+    begin
+        sum = edge_c;
+        sum = sum + idx;
+        sum = sum - 4;
+        if (sum < 0)
+            eye_at = 8'd0;
+        else if (sum > 255)
+            eye_at = 8'd255;
+        else
+            eye_at = sum[7:0];
+    end
+endfunction
+
+function eye_hit;
+    input [1:0] ph;
+    input [15:0] got;
+    input [15:0] expd;
+    begin
+        if (ph == 2'd0)
+            eye_hit = (got[7:0] === expd[7:0]);
+        else if (ph == 2'd1)
+            eye_hit = (got[15:8] === expd[15:8]);
+        else
+            eye_hit = (got === expd);
+    end
+endfunction
+
+function [7:0] eye_add;
+    input [7:0] base;
+    input signed [3:0] delta;
+    integer sum;
+    begin
+        sum = base;
+        sum = sum + delta;
+        if (sum < 0)
+            eye_add = 8'd0;
+        else if (sum > EYE_MAX)
+            eye_add = EYE_MAX;
+        else
+            eye_add = sum[7:0];
+    end
+endfunction
+
 always @(posedge pclk) begin
     if (~rst_lock_n) begin
         wstep_run <= 8'd0;
         wstep1_run <= 8'd0;
-    end else if (rcalib_done) begin
-        if (step_ov_en) begin
-            wstep_run <= step0_ov;
-            wstep1_run <= step1_ov;
-        end else if (WLEVEL_BACKOFF != 8'd0) begin
-            // The leading edge is where write leveling stops. Each
-            // lane's data eye sits a fixed number of codes earlier.
-            wstep_run <= (wstep > WLEVEL_BACKOFF) ? (wstep - WLEVEL_BACKOFF) : 8'd0;
-            wstep1_run <= (wstep1 > ((WLEVEL_BACKOFF1 != 8'd0) ? WLEVEL_BACKOFF1 : WLEVEL_BACKOFF))
-                ? (wstep1 - ((WLEVEL_BACKOFF1 != 8'd0) ? WLEVEL_BACKOFF1 : WLEVEL_BACKOFF))
-                : 8'd0;
-        end else begin
-            wstep_run <= LANE0_STEP;
-            wstep1_run <= (LANE1_STEP == 8'd0) ? wstep1 : LANE1_STEP;
-        end
+    // The reader sweep replaces the trained delay after calib.
+    end else if (rcalib_done && step_ov_en) begin
+        wstep_run <= step0_ov;
+        wstep1_run <= step1_ov;
+    end else if (eye_mode) begin
+        wstep_run <= eye_s0;
+        wstep1_run <= eye_s1;
+    end else if (eye_lock) begin
+        wstep_run <= eye_lock0;
+        wstep1_run <= eye_lock1;
     end else begin
         wstep_run <= wstep;
         wstep1_run <= wstep1;
@@ -325,6 +422,8 @@ always @(posedge pclk) begin
     dq_oen[0:3] <= 4'b1111;
     dqs_hold <= 1'b0;
     wload_n <= 1'b0;
+    if (eye_cap_clear)
+        eye_cap <= 1'b0;
 
     casex ({state, cycle})
         // RESET off after 200 us 
@@ -389,22 +488,26 @@ always @(posedge pclk) begin
         end
 
         // read/write/refresh
-        {IDLE, 5'bxxxxx}: if (rd | wr) begin
+        {IDLE, 5'bxxxxx}: if (eye_commit) begin
+            rcalib_done <= 1'b1;
+            busy <= 1'b0;
+            $display("All initialization DONE... eye %0d/%0d", eye_lock0, eye_lock1);
+        end else if (do_rd || do_wr) begin
             // bank activate
             {nRAS[0], nCAS[0], nWE[0]} <= CMD_BankActivate;
-            BA[0] <= addr[ROW_WIDTH+COL_WIDTH+BANK_WIDTH-1 : ROW_WIDTH+COL_WIDTH];    // bank id
-            A[0] <= addr[ROW_WIDTH+COL_WIDTH-1:COL_WIDTH];      // 12-bit row address
-            state <= rd ? READ : WRITE;
-            if (rd) cnt_read <= cnt_read == 8'hff ? 8'hff : cnt_read + 1;
-            if (wr) cnt_write <= cnt_write == 8'hff ? 8'hff : cnt_write + 1;
+            BA[0] <= cmd_addr[ROW_WIDTH+COL_WIDTH+BANK_WIDTH-1 : ROW_WIDTH+COL_WIDTH];    // bank id
+            A[0] <= cmd_addr[ROW_WIDTH+COL_WIDTH-1:COL_WIDTH];      // 12-bit row address
+            state <= do_rd ? READ : WRITE;
+            if (do_rd) cnt_read <= cnt_read == 8'hff ? 8'hff : cnt_read + 1;
+            if (do_wr) cnt_write <= cnt_write == 8'hff ? 8'hff : cnt_write + 1;
             cycle <= 4'd1;
             busy <= 1'b1;
             // HOLD resets the read FIFO. Without it, odd columns come
             // back as the even one and the prologue compare fails.
             // It also stops the write clock (UG286). The reload below
             // puts that clock back on WSTEP before the next store.
-            if (rd) dqs_hold <= 1'b1;
-        end else if (refresh) begin
+            if (do_rd) dqs_hold <= 1'b1;
+        end else if (!eye_mode && refresh) begin
             // auto-refresh
             // no need for precharge-all b/c all our r/w are done with auto-precharge.
             {nRAS[0], nCAS[0], nWE[0]} <= CMD_AutoRefresh;
@@ -427,10 +530,10 @@ always @(posedge pclk) begin
 // busy  ________________________________/                                                                                               \______
         {READ, FIVEB'(RCD/4)}: begin              // 1       
             {nRAS[RCD%4], nCAS[RCD%4], nWE[RCD%4]} <= CMD_Read;     // 101
-            BA[RCD%4] <= addr[ROW_WIDTH+COL_WIDTH+BANK_WIDTH-1 : ROW_WIDTH+COL_WIDTH];    // bank id
+            BA[RCD%4] <= cmd_addr[ROW_WIDTH+COL_WIDTH+BANK_WIDTH-1 : ROW_WIDTH+COL_WIDTH];    // bank id
             A[RCD%4][12] <= 1'b1;                   // BL8 burst length
             A[RCD%4][10] <= 1'b1;                   // set auto precharge
-            A[RCD%4][9:0] <= addr[COL_WIDTH-1:0];   // column address
+            A[RCD%4][9:0] <= cmd_addr[COL_WIDTH-1:0];   // column address
             dqs_hold <= 1'b1;                   // one cycle longer, setup
         end
         {READ, FIVEB'((RCD+CAS+SERDES)/4+1)}: begin   // 7 (6+6+16 = 28)
@@ -440,6 +543,14 @@ always @(posedge pclk) begin
             data_ready <= 1'b0;
             busy <= 0;
             state <= IDLE;
+            // dq_in is registered on the same edge that raises
+            // data_ready. This block still sees the previous beat
+            // on that edge. The CPU sees the new beat once
+            // data_ready is high, which is this edge.
+            if (eye_mode) begin
+                eye_got <= dq_in[0];
+                eye_cap <= 1'b1;
+            end
             // WLOADN low reloads the write delay from WSTEP. HOLD left
             // it stopped. A one-cycle high here makes the falling edge
             // that loads WSTEP again before the bridge's next command.
@@ -459,9 +570,9 @@ always @(posedge pclk) begin
 
         {WRITE, FIVEB'(RCD/4)}: begin             
             {nRAS[RCD%4], nCAS[RCD%4], nWE[RCD%4]} <= CMD_Write;    // 100
-            BA[RCD%4] <= addr[ROW_WIDTH+COL_WIDTH+BANK_WIDTH-1 : ROW_WIDTH+COL_WIDTH];    // bank id
+            BA[RCD%4] <= cmd_addr[ROW_WIDTH+COL_WIDTH+BANK_WIDTH-1 : ROW_WIDTH+COL_WIDTH];    // bank id
             A[RCD%4][10] <= 1'b1;                           // set auto precharge
-            A[RCD%4][9:0] <= addr[COL_WIDTH-1:0];           // column address
+            A[RCD%4][9:0] <= cmd_addr[COL_WIDTH-1:0];           // column address
             A[RCD%4][12] <= 1'b0;                           // BC4 burst length
         end
 `ifdef DDR3_800
@@ -471,12 +582,12 @@ always @(posedge pclk) begin
             dqs_oen <= 4'b1110;
 
             // DQ output
-            dq_out[6] <= 0; dq_out[7] <= din;
+            dq_out[6] <= 0; dq_out[7] <= cmd_din;
             dq_oen <= 4'b1110;
 
             // DM, umask the word we are writing to
             // Note that BC4 write always start from whole 4 words (not the exact address we want to write to)
-            dm_out[7] <= !(addr[1:0] == 2'b00);
+            dm_out[7] <= !(cmd_addr[1:0] == 2'b00);
         end
         {WRITE, FIVEB'((RCD+CWL)/4+1)}: begin
             // DQS output
@@ -484,13 +595,13 @@ always @(posedge pclk) begin
             dqs_oen <= 4'b0011;
 
             // DQ output
-            dq_out[0] <= din; dq_out[1] <= din;
-            dq_out[2] <= din; dq_out[3] <= 0;
+            dq_out[0] <= cmd_din; dq_out[1] <= cmd_din;
+            dq_out[2] <= cmd_din; dq_out[3] <= 0;
             dq_oen <= 4'b0011;
 
-            dm_out[0] <= !(addr[1:0] == 2'b01);
-            dm_out[1] <= !(addr[1:0] == 2'b10);
-            dm_out[2] <= !(addr[1:0] == 2'b11);
+            dm_out[0] <= !(cmd_addr[1:0] == 2'b01);
+            dm_out[1] <= !(cmd_addr[1:0] == 2'b10);
+            dm_out[2] <= !(cmd_addr[1:0] == 2'b11);
         end
         {WRITE, FIVEB'(20/4)}: begin            // busy=0 at 24
             busy <= 0;
@@ -504,13 +615,13 @@ always @(posedge pclk) begin
             dqs_oen <= 4'b1100;
 
             // DQ output
-            dq_out[4] <= 0; dq_out[5] <= din;
-            dq_out[6] <= din; dq_out[7] <= din;
+            dq_out[4] <= 0; dq_out[5] <= cmd_din;
+            dq_out[6] <= cmd_din; dq_out[7] <= cmd_din;
             dq_oen <= 4'b1100;
 
-            dm_out[5] <= !(addr[1:0] == 2'b00);
-            dm_out[6] <= !(addr[1:0] == 2'b01);
-            dm_out[7] <= !(addr[1:0] == 2'b10);
+            dm_out[5] <= !(cmd_addr[1:0] == 2'b00);
+            dm_out[6] <= !(cmd_addr[1:0] == 2'b01);
+            dm_out[7] <= !(cmd_addr[1:0] == 2'b10);
         end
         {WRITE, FIVEB'((RCD+CWL)/4+1)}: begin
             // DQS output
@@ -518,10 +629,10 @@ always @(posedge pclk) begin
             dqs_oen <= 4'b0111;
 
             // DQ output
-            dq_out[0] <= din; dq_out[1] <= 0;
+            dq_out[0] <= cmd_din; dq_out[1] <= 0;
             dq_oen <= 4'b0111;
 
-            dm_out[0] <= !(addr[1:0] == 2'b11);
+            dm_out[0] <= !(cmd_addr[1:0] == 2'b11);
         end
         {WRITE, FIVEB'(24/4)}: begin              // busy=0 at 28
             busy <= 0;
@@ -649,8 +760,7 @@ always @(posedge pclk) begin
                 rcalib_cnt <= rcalib_cnt + 1'b1;
                 // test RCALIB_COUNT times before we commit
                 if (rcalib_cnt == NIB'(RCALIB_COUNT - 1)) begin
-                    // read calibration is achieved
-                    rcalib_done <= 1'b1;
+                    // Read gate only. rcalib_done waits for the eye.
 `ifdef SIM
                     // SIM shortcut. The first rburst is the trailing
                     // edge of the strobe: dq_in[0] is X there, and the
@@ -665,15 +775,16 @@ always @(posedge pclk) begin
 `endif
                     {nRAS[0], nCAS[0], nWE[0]} <= CMD_PreCharge;    // precharge
                     BA[0] <= 0; A[0] <= 0;                          // bank 0, row 0
-                    // exit read calib
+                    eye_arm <= 1'b1;
                 end else 
                     cycle <= FIVEB'(RCD/4);     // loop
             end
         end
         {READ_CALIB, FIVEB'(RCD/4+10+RP/4)}: begin
-            // Precharge is finished. Exit read calibration. Initialization is all done.
-            $display("All initialization DONE...");
-            busy <= 1'b0;
+            // Precharge is finished. The eye trainer issues the first
+            // command from IDLE. The CPU stays reset until it locks.
+            $display("Read gate found. Training the write eye.");
+            busy <= 1'b1;
             state <= IDLE;
         end
     endcase
@@ -696,6 +807,8 @@ always @(posedge pclk) begin
         wlevel_cnt <= 0; wlevel_done <= 2'b0; wstep <= 0; wstep1 <= 0;
         wload_n <= 1'b0; dqs_hold <= 1'b0;
         rcalib_cnt <= 0; rcalib_done <= 0; rclkpos <= 0; rclksel <= 0;
+        eye_arm <= 1'b0;
+        eye_cap <= 1'b0;
         resetn_delay <= 1'b0;       // cause extra 200us reset for DDR3
         // Serializer inputs power up X. An X beat with DM low
         // stores X, and the read gives that X back.
@@ -705,6 +818,238 @@ always @(posedge pclk) begin
         dm_out <= 8'd0;
         state <= RST_WAIT;
   end
+end
+
+// Write-eye trainer. Runs once the read gate has precharged, before
+// read_calib_done. Eight halfwords cover every DQ bit, the neighbour
+// column, and the two bytes. Phase 0 centers lane 0 on its low byte,
+// phase 1 centers lane 1 on its high byte, phase 2 requires the whole
+// word. A miss there tries the 5x5 box. No match leaves calib low.
+// The window math is an 8-bit subtract. Doing it in blocking locals
+// inside the clocked block missed pclk by about 1.5 ns.
+wire [7:0] span_lo = in_run ? run_lo : eye_bo;
+wire [7:0] span_w  = eye_bo - span_lo + 8'd1;
+wire [7:0] close_w = (run_hi >= run_lo) ? (run_hi - run_lo + 8'd1) : 8'd1;
+wire       span_wider = !have || (span_w >= best_w);
+wire       close_wider = !have || (close_w >= best_w);
+// Lane 1 is the inner sweep. EYE_LAST is the last offset index.
+wire       inner_end = (eye_bo >= EYE_LAST);
+wire       outer_end = (eye_o0 >= EYE_LAST);
+// Three full-word passes, or the first fail after a pass, ends the row.
+wire       eye_close = (!eye_bad && span_w >= 8'd3)
+                    || (eye_bad && in_run);
+always @(posedge pclk) begin
+    eye_pulse_rd <= 1'b0;
+    eye_pulse_wr <= 1'b0;
+    eye_commit <= 1'b0;
+    eye_cap_clear <= 1'b0;
+    if (~rst_lock_n) begin
+        eye_mode <= 1'b0;
+        eye_ran <= 1'b0;
+        eye_lock <= 1'b0;
+        eye_lock0 <= 8'd0;
+        eye_lock1 <= 8'd0;
+        eye_st <= E_SETTLE;
+        eye_ph <= 2'd0;
+        eye_idx <= 4'd0;
+        eye_bo <= 8'd0;
+        eye_o0 <= 8'd0;
+        best_row <= 8'd0;
+        eye_wait <= 5'd0;
+        eye_bad <= 1'b0;
+        eye_pass <= 1'b0;
+        eye_g0_edge <= 16'd0;
+        eye_saw_busy <= 1'b0;
+        in_run <= 1'b0;
+        have <= 1'b0;
+        best_w <= 8'd0;
+        box_dx <= -4'sd2;
+        box_dy <= -4'sd2;
+    end else if (!eye_ran && eye_arm && state == IDLE) begin
+        eye_ran <= 1'b1;
+        eye_mode <= 1'b1;
+        eye_lock <= 1'b0;
+        eye_edge0 <= wstep;
+        eye_edge1 <= wstep1;
+        eye_s0 <= wstep;
+        eye_s1 <= wstep1;
+        eye_ph <= 2'd0;
+        eye_bo <= 8'd0;
+        eye_st <= E_SETTLE;
+        eye_wait <= 5'd0;
+        in_run <= 1'b0;
+        have <= 1'b0;
+        best_w <= 8'd0;
+        $display("EYE edges %0d/%0d", wstep, wstep1);
+        $fflush();
+    end else if (eye_mode) begin
+        case (eye_st)
+            E_SETTLE: begin
+                // Both lanes move. A byte can match while the other
+                // lane is still on the write-level edge, and that
+                // pair is not a joint full-word eye.
+                eye_s0 <= eye_at(eye_edge0, eye_o0);
+                eye_s1 <= eye_at(eye_edge1, eye_bo);
+                if (eye_wait == 5'd16) begin
+                    eye_wait <= 5'd0;
+                    eye_idx <= 4'd0;
+                    eye_bad <= 1'b0;
+                    eye_st <= E_WREQ;
+                end else
+                    eye_wait <= eye_wait + 5'd1;
+            end
+            E_WREQ: begin
+                eye_addr <= {22'd0, eye_idx};
+                eye_din <= eye_pattern(eye_idx[2:0]);
+                eye_pulse_wr <= 1'b1;
+                eye_saw_busy <= 1'b0;
+                eye_st <= E_WBUSY;
+            end
+            E_WBUSY: begin
+                if (busy)
+                    eye_saw_busy <= 1'b1;
+                if (eye_saw_busy && !busy && state == IDLE) begin
+                    eye_saw_busy <= 1'b0;
+                    eye_wait <= 5'd0;
+                    if (eye_idx == 4'd7) begin
+                        eye_idx <= 4'd0;
+                        eye_after <= E_RREQ;
+                    end else begin
+                        eye_idx <= eye_idx + 4'd1;
+                        eye_after <= E_WREQ;
+                    end
+                    eye_st <= E_GAP;
+                end
+            end
+            E_RREQ: begin
+                eye_addr <= {22'd0, eye_idx};
+                eye_cap_clear <= 1'b1;
+                eye_pulse_rd <= 1'b1;
+                eye_saw_busy <= 1'b0;
+                eye_st <= E_RBUSY;
+            end
+            E_RBUSY: begin
+                if (busy)
+                    eye_saw_busy <= 1'b1;
+                if (eye_saw_busy && !busy && state == IDLE) begin
+                    eye_saw_busy <= 1'b0;
+                    if (eye_cap !== 1'b1 || !eye_hit(2'd2, eye_got, eye_pattern(eye_idx[2:0])))
+                        eye_bad <= 1'b1;
+                    if (eye_idx == 4'd0) begin
+                        eye_g0 <= eye_got;
+                        if (eye_o0 == 8'd0 && eye_bo == 8'd0)
+                            eye_g0_edge <= eye_got;
+                    end
+                    if (eye_idx == 4'd1)
+                        eye_g1 <= eye_got;
+                    eye_wait <= 5'd0;
+                    if (eye_idx == 4'd7)
+                        eye_after <= E_MARK;
+                    else begin
+                        eye_idx <= eye_idx + 4'd1;
+                        eye_after <= E_RREQ;
+                    end
+                    eye_st <= E_GAP;
+                end
+            end
+            E_GAP: begin
+                if (eye_wait == 5'd16) begin
+                    eye_wait <= 5'd0;
+                    eye_st <= eye_after;
+                end else
+                    eye_wait <= eye_wait + 5'd1;
+            end
+            E_MARK: begin
+                if (!eye_bad) begin
+                    eye_pass <= 1'b1;
+                    if (!in_run)
+                        run_lo <= eye_bo;
+                    in_run <= 1'b1;
+                    run_hi <= eye_bo;
+                    if (span_wider) begin
+                        have <= 1'b1;
+                        best_lo <= span_lo;
+                        best_w <= span_w;
+                    end
+                end else if (eye_bad && in_run) begin
+                    in_run <= 1'b0;
+                    if (close_wider) begin
+                        have <= 1'b1;
+                        best_lo <= run_lo;
+                        best_w <= close_w;
+                    end
+                end
+                $display("EYE o0=%0d bo=%0d s=%0d/%0d g0=%h g1=%h bad=%b",
+                         eye_o0, eye_bo, eye_s0, eye_s1, eye_g0, eye_g1, eye_bad);
+                $fflush();
+                if (!inner_end && !eye_close) begin
+                    eye_bo <= eye_bo + 8'd1;
+                    eye_st <= E_SETTLE;
+                end else
+                    eye_st <= E_STEP;
+            end
+            E_STEP: begin
+                // This row's window was registered on the previous cycle.
+                if (have && best_w >= 8'd3) begin
+                    eye_cen0 <= eye_o0;
+                    eye_cen1 <= best_lo + (best_w >> 1);
+                    eye_lock0 <= eye_at(eye_edge0, eye_o0);
+                    eye_lock1 <= eye_at(eye_edge1, best_lo + (best_w >> 1));
+                    eye_lock <= 1'b1;
+                    eye_mode <= 1'b0;
+                    eye_commit <= 1'b1;
+                    $display("EYE pass %0d/%0d",
+                             eye_at(eye_edge0, eye_o0),
+                             eye_at(eye_edge1, best_lo + (best_w >> 1)));
+                    $fflush();
+                end else if (have && best_w > best_row) begin
+                    eye_cen0 <= eye_o0;
+                    eye_cen1 <= best_lo + (best_w >> 1);
+                    best_row <= best_w;
+                    if (outer_end) begin
+                        eye_lock0 <= eye_at(eye_edge0, eye_o0);
+                        eye_lock1 <= eye_at(eye_edge1, best_lo + (best_w >> 1));
+                        eye_lock <= 1'b1;
+                        eye_mode <= 1'b0;
+                        eye_commit <= 1'b1;
+                        $display("EYE pass %0d/%0d",
+                                 eye_at(eye_edge0, eye_o0),
+                                 eye_at(eye_edge1, best_lo + (best_w >> 1)));
+                        $fflush();
+                    end else begin
+                        eye_o0 <= eye_o0 + 8'd1;
+                        eye_bo <= 8'd0;
+                        in_run <= 1'b0;
+                        have <= 1'b0;
+                        best_w <= 8'd0;
+                        eye_st <= E_SETTLE;
+                    end
+                end else if (outer_end && best_row != 8'd0) begin
+                    eye_lock0 <= eye_at(eye_edge0, eye_cen0);
+                    eye_lock1 <= eye_at(eye_edge1, eye_cen1);
+                    eye_lock <= 1'b1;
+                    eye_mode <= 1'b0;
+                    eye_commit <= 1'b1;
+                    $display("EYE pass %0d/%0d",
+                             eye_at(eye_edge0, eye_cen0),
+                             eye_at(eye_edge1, eye_cen1));
+                    $fflush();
+                end else if (outer_end) begin
+                    eye_mode <= 1'b0;
+                    $display("EYE fail");
+                    $fflush();
+                end else begin
+                    eye_o0 <= eye_o0 + 8'd1;
+                    eye_bo <= 8'd0;
+                    in_run <= 1'b0;
+                    have <= 1'b0;
+                    best_w <= 8'd0;
+                    eye_st <= E_SETTLE;
+                end
+            end
+            default: eye_st <= E_SETTLE;
+        endcase
+    end
 end
 
 // Monitor rburst pulses and set rburst_seen when one is seen

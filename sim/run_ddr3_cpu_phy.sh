@@ -10,9 +10,9 @@ export PATH="${HOME}/.local/bin:${PATH}"
 export CHISEL_CPU_PROJECT_ROOT="$(pwd)"
 unset SIM_IMAGE DDR3_PHY BLINK3_IMEM
 
-PRIM="${GOWIN_PRIM_SIM:-/opt/gowin-eda-ide/simlib/gw2a/prim_sim.v}"
-if [[ ! -f "$PRIM" ]]; then
-  echo "FAIL missing Gowin prim_sim ($PRIM)" >&2
+PRIM_SRC="${GOWIN_PRIM_SIM:-/opt/gowin-eda-ide/simlib/gw2a/prim_sim.v}"
+if [[ ! -f "$PRIM_SRC" ]]; then
+  echo "FAIL missing Gowin prim_sim ($PRIM_SRC)" >&2
   exit 1
 fi
 if ! command -v iverilog >/dev/null || ! command -v vvp >/dev/null; then
@@ -36,6 +36,9 @@ if ! SIM_IMAGE=ddr3pd DDR3_PHY=micron BLINK3_IMEM="$WORDS" \
   exit 1
 fi
 
+# Same DQS transport-delay patch as run_ddr3_phy.sh.
+PRIM=sim/obj_dir/prim_sim_fastdqs.v
+python3 sim/patch_prim_dqs.py "$PRIM_SRC" "$PRIM"
 OUT=sim/obj_dir/ddr3_cpu_phy.vvp
 LOG=sim/obj_dir/ddr3_cpu_phy.log
 echo "iverilog $(iverilog -V 2>&1 | head -1)"

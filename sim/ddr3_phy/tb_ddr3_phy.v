@@ -9,7 +9,7 @@
 `timescale 1ps / 1ps
 
 module tb_ddr3_phy;
-    localparam integer PCLK_WAIT = 2500; // 25 us. Covers tZQinit plus a short level search.
+    localparam integer PCLK_WAIT = 200000; // level, read gate, then the write-eye walk
     localparam integer READY_WAIT = 40;
 
     reg        rst_n;

@@ -413,18 +413,16 @@ case "$BOARD" in
     mkdir -p "$ROOT/gowin/primer20k/impl"
     cd "$ROOT/gowin/primer20k"
     if [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" || "$FPGA_IMAGE" == "ddr3pd" ]]; then
-      # The reader sweep is DDR3_READER. The stored-BL image and the
-      # P/D-chain image set each lane from its write-level edge
-      # (lane 0 minus 1, lane 1 minus 3). The prologue and the ALU
-      # keep lane 1 on the write-level result.
+      # DDR3_READER is the cold sweep. DDR3_FETCH and DDR3_PD only
+      # select the UART field. The write delay is the trained eye.
       if [[ "$FPGA_IMAGE" == "ddr3pd" ]]; then
-        printf '%s\n' '`define DDR3_PD' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
+        printf '%s\n' '// P/D-chain image. The write delay is the trained eye.' '`define DDR3_PD' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
       elif [[ "$FPGA_IMAGE" == "ddr3fetch" ]]; then
         printf '%s\n' '`define DDR3_FETCH' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
       elif [[ "$FPGA_IMAGE" == "ddr3rsc" ]]; then
         printf '%s\n' '`define DDR3_READER' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
       else
-        printf '%s\n' '// prologue and ALU: lane 0 stays at step 10' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
+        printf '%s\n' '// prologue and ALU: trained write eye, no fixed step' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
       fi
       gw_sh "$ROOT/gowin/primer20k/gowin_ddr3.tcl"
     else

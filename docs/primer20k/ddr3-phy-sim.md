@@ -1,8 +1,9 @@
 # DDR3 PHY sim (Icarus, Micron, prim_sim)
 
-This is not a Dock load and not a write-step eye. `sim/Ddr3UserModel.v`
-stays the fast command-port stand-in. This bench is the soft
-`ddr3_controller` against the Micron model and Gowin `prim_sim`.
+`sim/Ddr3UserModel.v` stays the fast command-port stand-in. This
+bench is the soft `ddr3_controller` against the Micron model and a
+patched Gowin `prim_sim`. The controller trains the write eye before
+it raises `read_calib_done`. The Dock load is `docs/primer20k/step5-ddr3.md`.
 
 ```bash
 sim/run_ddr3_phy.sh
@@ -11,6 +12,11 @@ sim/run_ddr3_phy.sh
 The script prepends `~/.local/bin` to `PATH`. Icarus is not a system
 package on this machine; 12.0 was built there. `GOWIN_PRIM_SIM`
 overrides the default `/opt/gowin-eda-ide/simlib/gw2a/prim_sim.v`.
+`sim/patch_prim_dqs.py` copies that file and replaces the DQS
+255-tap cascade with constant transport delays, `N*0.025-0.001` ns.
+The vendor cascade does not reach calibration under Icarus. A
+variable `#(WSTEP*0.025)` delay matches a CK edge and the Micron
+model drops the strobe. The vendor file is not edited.
 The compile line is `iverilog -g2012 -s tb_ddr3_phy` with
 `-D SIM -D den1024Mb -D sg25 -D x16`. Sparse memory files go under
 `/tmp/ddr3-phy-model` (`+model_data+`).
@@ -26,9 +32,12 @@ Clocks are 100 MHz `pclk` and 400 MHz `fclk`. `ck` lags `fclk` by
 90 degrees. With `ck` leading, the model rejects the write on
 `tDQSS` / `tDSS`.
 
-Write leveling commits at code 26. Those edges still warn that the
-CK capture is indeterminate, so code 26 is not a Dock step. The
-model stores the writes:
+Write leveling commits at code 26/26. The eye then scans offsets
+-4..+12 from that edge and locks the first row with three
+consecutive full-word passes. This run locks steps 22/23
+(`run=16/17`), `rclkpos=1`, `rclksel=3`, at cycle 1984. Code 26 is
+the model's write-level edge, not a Dock step. The model stores
+the writes:
 
 - column 0: `1111`
 - column 1, same burst: `22221111`
@@ -73,11 +82,9 @@ Labeled in `gowin/primer20k/ddr3/ddr3_controller.v`.
 - `dm_out`'s default is nonblocking, so the unmask reaches the pin.
   Serializer inputs are cleared during reset.
 
-## What Modules should re-check on the Dock
+## What the Dock showed
 
-The hardware check is still the prologue compare. This bench now
-returns the written word in `dq_in[0]` for a column-0 / column-1 /
-column-16 set, with no Micron `ERROR`. It does not show the Dock
-alias at that slot. A Dock miss that this sim calls a pass is
-still a Dock problem: the eye and the write step are not in this
-model. Code 26 and `rclksel=3` are not a bitstream.
+The same trainer on the Primer 20K Dock locked steps `0009`/`0007`
+(write-level edges `000D`/`000A`) and the step-5 self-test passed.
+`rclkpos=1`, `rclksel=3` matched this bench. The sim lock 22/23 is
+the wide model eye, not the Dock pair. See `step5-ddr3.md`.
