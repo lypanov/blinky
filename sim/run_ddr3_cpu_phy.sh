@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # DDR3 CPU image (N=5) through ddr3_controller + Micron ddr3.v + gw2a prim_sim.
 # IMAGE=ddr3moddesc (default) is the step-6 module table.
-# IMAGE=ddr3files is the step-7 Files table. The period check is the
-# delay loop, which both images enter only after a zero compare.
+# IMAGE=ddr3files is the step-7 Files table. IMAGE=ddr3modules is the
+# step-8 Modules reset path. The period check is the delay loop, which
+# these images enter only after a zero compare.
 # Does not instantiate Ddr3UserModel and does not load either FPGA.
 # Exit 0 only when the bench prints PHY_SCORE pass and the log has no
 # Micron ERROR.
@@ -29,10 +30,11 @@ fi
 
 IMAGE="${IMAGE:-ddr3moddesc}"
 case "$IMAGE" in
+  ddr3modules) BUILD=sim/build_modules_imem.py ;;
   ddr3files) BUILD=sim/build_files_imem.py ;;
   ddr3moddesc) BUILD=sim/build_moddesc_imem.py ;;
   *)
-    echo "FAIL image $IMAGE (ddr3moddesc or ddr3files)" >&2
+    echo "FAIL image $IMAGE (ddr3moddesc, ddr3files, or ddr3modules)" >&2
     exit 1
     ;;
 esac
@@ -70,9 +72,9 @@ if ! iverilog -g2012 -s tb_ddr3_cpu_phy -o "$OUT" \
 fi
 
 mkdir -p /tmp/ddr3-cpu-phy-model
-# Files leaves R9 at 0. ModDesc leaves the module number 8.
+# Files and Modules leave R9 at 0. ModDesc leaves the module number 8.
 R9_ARG=()
-if [[ "$IMAGE" == "ddr3files" ]]; then
+if [[ "$IMAGE" == "ddr3files" || "$IMAGE" == "ddr3modules" ]]; then
   R9_ARG+=(+expect_r9=0)
 fi
 if ! stdbuf -oL -eL vvp "$OUT" +model_data+/tmp/ddr3-cpu-phy-model "${R9_ARG[@]}" "$@" >"$LOG" 2>&1; then

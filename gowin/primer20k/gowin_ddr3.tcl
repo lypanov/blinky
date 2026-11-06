@@ -24,7 +24,8 @@ set_option -verilog_std sysv2017
 # ddr3_eye.vh is written by tools/gowin_build.sh. The reader image
 # defines DDR3_READER. The stored-BL image defines DDR3_FETCH. The
 # P/D image defines DDR3_PD. The ModDesc image defines DDR3_MODDESC.
-# The Files image defines DDR3_FILES. The prologue and the ALU do not.
+# The Files image defines DDR3_FILES. The Modules image defines
+# DDR3_MODULES. The prologue and the ALU do not.
 set_option -include_path $HERE
 if {[info exists ::env(GOWIN_OUT_NAME)] && $::env(GOWIN_OUT_NAME) ne ""} {
   set_option -output_base_name $::env(GOWIN_OUT_NAME)
