@@ -57,6 +57,10 @@ python3 sim/patch_prim_dqs.py "$PRIM_SRC" "$PRIM"
 OUT=sim/obj_dir/ddr3_cpu_phy.vvp
 LOG=sim/obj_dir/ddr3_cpu_phy.log
 echo "iverilog $(iverilog -V 2>&1 | head -1)"
+ROM_V=(generated/InstrRom.v)
+if [[ "$IMAGE" == "ddr3modules" ]]; then
+  ROM_V+=(generated/SectorRom.v)
+fi
 if ! iverilog -g2012 -s tb_ddr3_cpu_phy -o "$OUT" \
   -D SIM -D den1024Mb -D sg25 -D x16 -DPRINTF_COND=0 \
   -I sim/micron \
@@ -64,7 +68,7 @@ if ! iverilog -g2012 -s tb_ddr3_cpu_phy -o "$OUT" \
   sim/micron/ddr3.v \
   gowin/primer20k/ddr3/ddr3_controller.v \
   generated/CPUSimTopDdr3.v \
-  generated/InstrRom.v \
+  "${ROM_V[@]}" \
   sim/CpuClock.v \
   "$PRIM"; then
   echo "FAIL iverilog" >&2

@@ -228,6 +228,30 @@ openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
 
 `GetSector`, `Search`, and `ReadString` land together. Directory sector 29 holds `AMemoryMappedToggle` and Blink5. That page replaces the in-memory two-entry table at `0x600`. Sector numbers stay multiples of 29. The SPI window is the negative addresses, data `-48` and control `-44`. There is no card. The window stays off the Dock UART and off the training path. Splitting `Search` back out is optional once `GetSector` returns a page.
 
+Done. The three routines are 309 words at `0x9E8`. They issue Kernel's SPI sequence to a register model inside the CPU. There is no card and no pin. Directory 29, `AMemoryMappedToggle` 58, and Blink5 87 sit in a 1024-word ROM. The table at `0x600` is gone. The files block calls this reader, and the existing walks then read the `.rsc` bytes from the sector buffer. A sector that is not a multiple of 29 plants trap 7. Trap's load reads data memory, so the plant stores the same word it then executes.
+
+Verilator of the modules image, `FIRST_VALID` 13, chainFix on, `N = 5`. The period is 1923, which is `339*5+228`. The edges are 66245, 68168, 70091, 72014. The first edge moved from 16793 because the sector reader runs before the loop. R5, R8, R9, and R10 are 0. The names routine is fetched at cycle 9199. The placed body at `0x2200` is fetched at cycle 64262. The remainder trap and the hold at `0x1D8C` are not fetched. `--break-sec` asks for sector 30. The trap plant is fetched at cycle 9855, the hold at `0x1D8C` is fetched at cycle 9903, the LED stays dark, and `0x2200` is not fetched.
+
+`IMAGE=ddr3modules sim/run_ddr3_cpu_phy.sh` prints `PHY_SCORE pass`: period 10512, first edge 306018, PC `0000101c`, R5 `00000000`, R9 `00000000`, mask `ffffffffff`. There is no Micron `ERROR`. The eye on that run is steps 22/23 (`run=16/17`), `rclkpos=1`, `rclksel=3`, at cycle 1984. The period is still `1852*N+1252`. At the Dock `pclk` and `N = 65536` that is 0.398561 Hz. At 27 MHz and `N = 65536` the Nano law is still 0.607645 Hz.
+
+`modules_n65536` placed at 12:50 (UTC+1). Logic 4481/4608 (98%; 4209 LUT and 272 ALU), CLS 2292/2304 (100%, 12 free), registers 1820/3612, 8/10 BSRAM. Slow corner 1.14 V 85 C on `clkdiv`: 504 setup-violated endpoints and 0 hold, TNS -679.292, worst slack -3.552 ns, Fmax 24.637 MHz against 27.000 MHz. SRAM load was bus 3 address 081 only. Idcode `0x100981b`, GW1NSR-4C. CRC check success. Device 078 was not opened for that load.
+
+```bash
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/impl/pnr/modules_n65536.fs
+```
+
+Webcam `measure_blink`, `roi=nano4k`, duration 20, warmup 2: `blink-measure/20261107-125116`, status blinking, edge 0.607274 Hz, FFT 0.590 Hz, trusted method edge, confidence 0.9966, 661 frames, 29.990 fps, `/dev/video2`. The expected full blink is 0.607645 Hz.
+
+`ddr3modules_n65536` placed at 12:53 (UTC+1), `route_option 2`. Logic 5805/20736 (28%; 5375 LUT and 430 ALU), CLS 3911/10368 (38%), registers 2562/16173, 6/46 BSRAM. 0 setup and 0 hold endpoints. Slow corner 0.95 V 85 C. `pclk` Fmax 114.088 MHz against 96.749. Worst listed setup slack is +1.571 ns. `cpu_clk` Fmax is 43.148 MHz against 24.187 MHz. SRAM load was bus 3 address 078 only. Idcode `0x81b`, GW2A-18. The Nano 4K was not opened for that load. UART on FTDI channel B, 115200 8N1, opened before the load. Twenty-two lines after this image locked, every one `C.` (not held). PC stays in the placed loop (`221C`, `2220`, `2224`, `222C`, `2234`, `2238`, `223C`, `2240`, `2254`). Mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. The trained steps on this boot are lane 1 `000C` and lane 0 `0010`. Pattern 0 at the write-level edge is `A55A`. The last pattern-0 read is `A55A`. `F` is `AB`. Locked backoff is `C0 07`, `C1 06`, `BO 07`.
+
+```bash
+openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
+  gowin/primer20k/impl/pnr/ddr3modules_n65536.fs
+```
+
+`measure_blink`, `roi=primer20k`, duration 30, warmup 2: `blink-measure/20261107-125545`, status blinking, edge 0.398109 Hz, FFT 0.405 Hz, trusted method edge, confidence 0.9978, 962 frames, 30.003 fps, `/dev/video2`. The expected full blink is 0.398561 Hz.
+
 ### Proof 7 — real `Modules.Init` and `Modules.Load("Blink5")`
 
 This is last. It is the first proof that uses the reserve, the trap, the compiled module, and the sector reader together. Reset enters the real `Modules` body. The image copies the one string `Oberon` to `Blink5`. `oberon/src/Modules.Mod` stays unmodified. `Files.Init` runs real `Kernel.Init` and `FileDir.Init` once, before any load of Blink5. `Kernel.Init` installs the trap over `MT[0]`. `FileDir.Init` heapsorts the two sector numbers. `Init` subtracts `8000H` again. Addresses 12, 16, 20, and 24 hold `MemLim`, `AllocPtr`, `root`, and the stack origin. `Load` reads the file through real `Files`. Blink5 does not return, so `LED(res)` stays unreached. On the Nano this is feasible only if the netlist stays inside the current check width and the blink stays above the webcam floor.

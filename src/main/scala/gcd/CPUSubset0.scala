@@ -403,6 +403,21 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // LED state register for memory-mapped LED control
   val ledState = RegInit(false.B)
 
+  // Proof 6. The SPI window is -48/-44. Only the placed-body image has
+  // it, so the other elaborations keep the memory path they already had.
+  val spi = if (bodyFetch) {
+    val mod = Module(new SpiSector)
+    mod.io.write := false.B
+    mod.io.ctrl := false.B
+    mod.io.wdata := 0.U
+    Some(mod)
+  } else None
+  val spiLoad = if (bodyFetch) RegInit(false.B) else false.B
+  val spiLoadCtrl = if (bodyFetch) RegInit(false.B) else false.B
+  if (bodyFetch) {
+    spiLoad := false.B
+  }
+
   // H is the mul/div remainder. MOV Ra, H (F0, u=1, op MOV) reads it.
   // DIV is one restoring step per clock, then a sign fix, on this adder.
   // A combinational divider does not fit the Nano 4K.
@@ -502,7 +517,12 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
             Mux(patchLoadHit(i), patchData(i), acc)
           }
         } else io.memReadData
-        val loaded = if (chainFix) Mux(patchLoad, patchWord, io.memReadData) else io.memReadData
+        val loadedMem = if (chainFix) Mux(patchLoad, patchWord, io.memReadData) else io.memReadData
+        val loaded = if (bodyFetch) {
+          Mux(spiLoad, Mux(spiLoadCtrl, spi.get.io.cdata, spi.get.io.rdata), loadedMem)
+        } else {
+          loadedMem
+        }
         if (chainFix) {
           when (patchLoad) {
             patchLoad := false.B
@@ -652,7 +672,13 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     // Sign-extend the offset to 32 bits
     val signExtOffset = Cat(Fill(12, memOffset(19)), memOffset)
     val effectiveAddr = regs(regB) + signExtOffset
-    
+    // -48 is 0xFFFFFFD0 and -44 is 0xFFFFFFD4. Bit 2 picks the register.
+    val spiHit = if (bodyFetch) {
+      effectiveAddr(31, 3) === "h1FFFFFFA".U(29.W) && effectiveAddr(1, 0) === 0.U
+    } else {
+      false.B
+    }
+
     when (isLoad) {  // LDW and LDB. The byte extract is on the completion cycle.
         val useHyper = WireDefault(true.B)
         if (chainFix) {
@@ -677,6 +703,18 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
             romPhase := 1.U
           }
         }
+        if (bodyFetch) {
+          when (spiHit) {
+            useHyper := false.B
+            spiLoad := true.B
+            spiLoadCtrl := effectiveAddr(2)
+            memoryAccessPending := true.B
+            memoryIsLoad := true.B
+            memoryIsByte := false.B
+            memoryLane := 0.U
+            memoryTargetReg := regA
+          }
+        }
         when (useHyper) {
           io.memAddr := effectiveAddr
           io.memRead := true.B
@@ -689,7 +727,16 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
           printf(p"Load start ${effectiveAddr} -> R${regA} byte=${isByte}\n")
         }
     } .otherwise {  // Store instructions
-      when (!isByte) {  // STW - Store Word
+      when (if (bodyFetch) spiHit else false.B) {
+        if (bodyFetch) {
+          spi.get.io.write := true.B
+          spi.get.io.ctrl := effectiveAddr(2)
+          spi.get.io.wdata := regs(regA)
+        }
+        memoryIsLoad := false.B
+        memoryIsByte := false.B
+        memoryAccessPending := waitForStores.B
+      } .elsewhen (!isByte) {  // STW - Store Word
         // Start a memory write operation
         io.memAddr := effectiveAddr
         io.memWriteData := regs(regA)

@@ -121,8 +121,12 @@ if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" =
     exit 1
   fi
 fi
+if [[ "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3modules" ]]; then
+  # Written by the modules elaboration. Other images do not instantiate it.
+  export SECTOR_ROM="$ROOT/generated/SectorRom.v"
+fi
 if [[ "$FPGA_IMAGE" == "modules" ]]; then
-  echo "==> Modules IMEM (32 KB reserve, compiled Modules.Check, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
+  echo "==> Modules IMEM (sector 29, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
   python3 "$ROOT/sim/build_modules_imem.py" \
     --max-iter "$BLINK3_MAXITER" \
     --pad 2048 \

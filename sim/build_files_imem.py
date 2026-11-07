@@ -433,6 +433,16 @@ def _flush(a: Asm, reg: int, skip_slot: int | None) -> None:
     a.word(f0(6, 10, 10, reg))
 
 
+def _bl_abs(a: Asm, target: int) -> None:
+    def fn(pc: int, target: int = target) -> int:
+        off = (target - (pc + 4)) // 4
+        if not -0x800000 <= off < 0x800000:
+            raise ValueError(f"BL from {pc:#x} to {target:#x}")
+        return 0xF7000000 | (off & 0xFFFFFF)
+
+    a.at(fn)
+
+
 def assemble_files(
     hold: int,
     ammt: bytes,
@@ -441,6 +451,7 @@ def assemble_files(
     mode: str,
     break_slot: int | None,
     skip_slot: int | None,
+    sector: dict[str, int] | None = None,
 ) -> tuple[list[int], dict[str, int]]:
     a = Asm()
     bump = Bump(break_slot)
@@ -455,13 +466,19 @@ def assemble_files(
     a.word(mov_imm(W_ACC, 0))
     a.word(mov_imm(10, 0))
 
-    if mode in ("all", "dir"):
+    # Proof 6 reads the directory page from the sector ROM. The two
+    # deposits and the word match at 0x600 stay the files-only image.
+    if sector is None and mode in ("all", "dir"):
         _deposit(a, DIR, directory_words(ammt, blink, blink_base))
-    if mode == "all":
+    if sector is None and mode == "all":
         _deposit(a, AMMT_BASE, pack_words(ammt))
         _deposit(a, blink_base, pack_words(blink))
 
-    _old(a, hold, _name_word(AMMT_NAME), "ammt")
+    if sector is None:
+        _old(a, hold, _name_word(AMMT_NAME), "ammt")
+    else:
+        _bl_abs(a, sector["names"])
+        _bl_abs(a, sector["open_ammt"])
     cur = Cursor(ammt)
     _expect_name(a, cur, AMMT_NAME, NAME_ACC, bump, None)
     _check_key(a, cur, AMMT_KEY, save=True)
@@ -472,7 +489,10 @@ def assemble_files(
     if cur.i != len(ammt):
         raise SystemExit(f"AMMT walk stopped at {cur.i}, length {len(ammt)}")
 
-    _old(a, hold, _name_word(BLINK5_NAME), "b5")
+    if sector is None:
+        _old(a, hold, _name_word(BLINK5_NAME), "b5")
+    else:
+        _bl_abs(a, sector["open_blink"])
     cur = Cursor(blink)
     _expect_name(a, cur, BLINK5_NAME, NAME_ACC, bump, NAME_SLOT)
     _check_key(a, cur, BLINK5_KEY, save=False)
@@ -535,7 +555,8 @@ def assemble_files(
 
     prog = a.encode(FILES)
     end = FILES + len(prog) * 4
-    if end > 0x1000:
+    limit = 0x6C0 if sector is not None else 0x1000
+    if end > limit:
         raise SystemExit(f"files block is {len(prog)} words, ends at {end:#x}")
     if (
         bump.slot is not None
@@ -635,6 +656,7 @@ def files_imem(
     break_slot: int | None = None,
     skip_slot: int | None = None,
     mode: str = "all",
+    sector: dict[str, int] | None = None,
 ) -> tuple[list[int], dict[str, int], int]:
     ammt = ammt_rsc()
     blink = blink5_rsc()
@@ -660,6 +682,7 @@ def files_imem(
         mode,
         break_slot,
         skip_slot,
+        sector,
     )
     _place(words, FILES // 4, prog, 0x1000 // 4)
     _defer_link_store(words, labels)

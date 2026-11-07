@@ -40,6 +40,11 @@ placer (0x1100). The placer copies the fixed page-0x10 words to
 0x2200, rewrites the one BL for that address, and walks one
 type-chain entry at 0x2304. The CPU then fetches page 0x22 from
 external memory. Reset and training never do.
+
+Proof 6 is the sector reader in the free words at 0x9E8. GetSector,
+Search, and ReadString run before the two file walks. Directory sector
+29 replaces the table at 0x600. The bytes come back through the SPI
+window. The delay loop is not edited.
 """
 from __future__ import annotations
 
@@ -50,6 +55,8 @@ import sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 from build_files_imem import EXTRA_CHECKS, FILES, NAME_ACC, files_imem  # noqa: E402
+from sector_code import BASE as SECTOR, HEX_PATH, assemble_sector  # noqa: E402
+from sector_image import write_hex  # noqa: E402
 from inner_core import MOD_NUM, load_inner  # noqa: E402
 from build_hyperram_imem import (  # noqa: E402
     Asm,
@@ -528,7 +535,10 @@ def modules_imem(
     break_bit: bool = False,
     trap_num: int | None = None,
     break_check: bool = False,
+    break_sec: bool = False,
 ) -> tuple[list[int], dict[str, int], int]:
+    sector_prog, sector_labels = assemble_sector(0x1D8C, 30 if break_sec else 29)
+    write_hex(HEX_PATH)
     words, labels, nprog = files_imem(
         final_system,
         max_iter=max_iter,
@@ -537,7 +547,10 @@ def modules_imem(
         break_slot=break_slot,
         skip_slot=skip_slot,
         mode=mode,
+        sector=sector_labels,
     )
+    if labels["hold"] != 0x1D8C:
+        raise SystemExit(f"hold moved to {labels['hold']:#x}")
     store_pc = _flush_store(words)
     prog, local = assemble_body(
         labels["hold"],
@@ -550,6 +563,7 @@ def modules_imem(
         break_check=break_check,
     )
     _place(words, BODY // 4, prog, 0x1000 // 4)
+    _place(words, SECTOR // 4, sector_prog, 0x1000 // 4)
     if fall:
         gate = local["gate"]
         words[gate // 4] = f0(0, 1, 0, 1)
@@ -566,6 +580,7 @@ def modules_imem(
     labels = dict(labels)
     labels.update(local)
     labels.update(placed)
+    labels.update(sector_labels)
     labels["body"] = BODY
     labels["flush"] = store_pc
     labels["placer"] = PLACER
@@ -628,8 +643,21 @@ def check_image(words: list[int], labels: dict[str, int], prog_len: int) -> None
         raise SystemExit("SYSTEM.BIT is not tested with MI")
     if mov_imm(1, BIT_ADDR) not in block or mov_imm(0, BIT_WORD) not in block:
         raise SystemExit("the known bit word is not stored")
-    if bl_r12(0) in words or bl_r12(7) in words:
-        raise SystemExit("the blink image executes a trap")
+    if bl_r12(0) in words:
+        raise SystemExit("the blink image executes trap 0")
+    traps = [i * 4 for i, word in enumerate(words) if word == bl_r12(7)]
+    if traps != [labels["fail_bl"]]:
+        raise SystemExit(f"trap 7 is not only the sector remainder: {[hex(t) for t in traps]}")
+    sec = words[SECTOR // 4 : labels["fail_bl"] // 4 + 1]
+    if f1(11, 0, 0, 29) not in sec or 0x24000000 not in sec:
+        raise SystemExit("GetSector does not divide by 29 and read H")
+    if mov_imm(0, 29) not in sec:
+        raise SystemExit("Search does not start at sector 29")
+    for needle in (0xA0BFFFD0, 0xA0BFFFD4, 0x81BFFFD0, 0x81BFFFD4):
+        if needle not in sec:
+            raise SystemExit(f"SPI window word {needle:#x} is missing")
+    if 0x44000600 in words:
+        raise SystemExit("the 0x600 directory is still addressed")
     if words[labels["res_blink"] // 4 + 2] != f1(9, 0, 0, 0):
         raise SystemExit("Blink5 is not expected to return res 0")
     check_trap(words, labels)
@@ -706,6 +734,8 @@ def main() -> int:
                         help="Sim only: BL R12 with trap 0, then return")
     parser.add_argument("--break-check", action="store_true",
                         help="Sim only: expect res 1 from Check(Blink5)")
+    parser.add_argument("--break-sec", action="store_true",
+                        help="Sim only: sector 30, so DIV 29 leaves a remainder")
     parser.add_argument(
         "--out",
         default=os.path.join(ROOT, "sim", "visualizer", "imem", "modules.words"),
@@ -730,6 +760,7 @@ def main() -> int:
         break_bit=args.break_bit,
         trap_num=trap_num,
         break_check=args.break_check,
+        break_sec=args.break_sec,
     )
     clean = (
         args.break_slot is None
@@ -741,6 +772,7 @@ def main() -> int:
         and not args.break_div
         and not args.break_bit
         and not args.break_check
+        and not args.break_sec
         and trap_num is None
     )
     if clean:
