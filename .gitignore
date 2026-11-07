@@ -423,6 +423,10 @@ gowin/primer20k/led.v.bak
 # Primer 20K Blink3 .fs is ~1.7 MB; keep it local / CI artifact, not git.
 gowin/primer20k/**/*.fs
 *.fs
+# BeebFpga Gowin build (wrapper, tcl, synthesis, bitstream). ROM images
+# stay inside the retro/beebfpga submodule and are not copied here.
+retro/beeb/build/
+retro/beeb/build-log.txt
 docs/blink-measure/**/clip.mkv
 docs/blink-measure/**/capture.log
 docs/blink-measure/**/result.json.stdout
