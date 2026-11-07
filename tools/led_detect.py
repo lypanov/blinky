@@ -890,11 +890,10 @@ def _keep_likely_leds(
 
     blinkers = [led for led in filtered if led.get("state") == "blinking"]
     blinkers.sort(key=blink_key, reverse=True)
-    if blinkers:
-        floor = 0.35 * chroma(blinkers[0])
-        blinkers = [led for led in blinkers if chroma(led) >= floor]
-    # Two real blinkers sit on different boards (~150 px). Glow around a
-    # blinker also FFTs at that rate — drop it with NMS.
+    # Two real blinkers sit on different boards (~150 px). A bloomed core
+    # has a much higher disk-mean than the other board's small LED, so a
+    # ratio against the brightest blinker drops the real one. Glow next to
+    # a blinker is the nearby duplicate; NMS drops that.
     blinkers = _nms_leds(blinkers, BLINKER_NMS_PX)[:2]
     used = {(led["x"], led["y"]) for led in blinkers}
 
@@ -927,6 +926,44 @@ def _keep_likely_leds(
     return kept[: max(limit, 6)]
 
 
+def _plateau_centroid(
+    field: np.ndarray, x: int, y: int, thr: float
+) -> tuple[int, int, float, np.ndarray]:
+    """Pixel nearest the centroid of a flat peak, and that plateau's mask.
+
+    A core that is on or off together has one std on every pixel of the
+    disk. The first tied pixel can sit on the rim; sampling there misses
+    the LED. NumPy's argsort does not pick the same tied pixel in 1.26
+    and 2.x.
+    """
+    h, w = field.shape
+    val = float(field[y, x])
+    floor = val - 1e-3
+    mask = np.zeros((h, w), dtype=bool)
+    stack = [(y, x)]
+    mask[y, x] = True
+    while stack:
+        cy, cx = stack.pop()
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dy == 0 and dx == 0:
+                    continue
+                ny, nx = cy + dy, cx + dx
+                if ny < 0 or nx < 0 or ny >= h or nx >= w or mask[ny, nx]:
+                    continue
+                fv = float(field[ny, nx])
+                if fv < thr or fv < floor:
+                    continue
+                mask[ny, nx] = True
+                stack.append((ny, nx))
+    pys, pxs = np.nonzero(mask)
+    cy = float(pys.mean())
+    cx = float(pxs.mean())
+    k = int(np.argmin((pxs - cx) ** 2 + (pys - cy) ** 2))
+    px, py = int(pxs[k]), int(pys[k])
+    return px, py, float(field[py, px]), mask
+
+
 def _local_maxima(
     field: np.ndarray, radius: int = 6, max_peaks: int = 8
 ) -> list[tuple[int, int, float]]:
@@ -936,21 +973,34 @@ def _local_maxima(
     ys, xs = np.where(field >= thr)
     if len(xs) == 0:
         return []
-    order = np.argsort(-field[ys, xs])
+    # lexsort is a stable key order. argsort's tie break differs by NumPy.
+    order = np.lexsort((xs, ys, -field[ys, xs]))
     taken = np.zeros(len(xs), dtype=bool)
     peaks: list[tuple[int, int, float]] = []
     sep2 = float((2 * radius) ** 2)
+    seen = np.zeros((h, w), dtype=bool)
     for idx in order:
         if taken[idx]:
             continue
         x, y = int(xs[idx]), int(ys[idx])
+        if seen[y, x]:
+            taken[idx] = True
+            continue
         val = float(field[y, x])
         y0, y1 = max(0, y - radius), min(h, y + radius + 1)
         x0, x1 = max(0, x - radius), min(w, x + radius + 1)
         if val < float(field[y0:y1, x0:x1].max()) - 1e-6:
             continue
+        x, y, val, plateau = _plateau_centroid(field, x, y, thr)
+        seen |= plateau
+        # A wide flat region (the drifting box) can start outside the
+        # exclusion zone and still centroid onto a stronger peak.
+        if any((x - px) ** 2 + (y - py) ** 2 <= sep2 for px, py, _pv in peaks):
+            taken |= seen[ys, xs]
+            continue
         peaks.append((x, y, val))
         taken |= (xs.astype(np.float32) - x) ** 2 + (ys.astype(np.float32) - y) ** 2 <= sep2
+        taken |= seen[ys, xs]
         if len(peaks) >= max_peaks:
             break
     return peaks
