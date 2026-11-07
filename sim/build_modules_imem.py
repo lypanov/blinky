@@ -19,6 +19,16 @@ the stack origin that was read, and the delay loop's existing push
 lands on the high end. Nothing is added inside the delay loop.
 chainFix stays on. The tail does not grow: the proof word is XOR-ed
 into the step-7 store at the link slot.
+
+R12 becomes 20H, BootLoad's MTOrg. Kernel.Install's encoding is stored
+at that address, which is MT[0]: an unconditional branch to Trap.
+Trap reads the instruction at R15-4 and takes DIV 10H MOD 10H the way
+ORG lowers it, ASR by 4 then AND 0xF. Trap 0 returns through R15.
+Any other number branches to the hold. The blink image does not
+execute BL R12. --assert-false is the separate trace: it plants
+ASSERT(FALSE) (trap 7) in data memory and branches through R12.
+--trap0 is the return trace. Fetch is still the pROM, so the same
+branch is also the ROM word at 20H. The boards load the blink image.
 """
 from __future__ import annotations
 
@@ -28,7 +38,7 @@ import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
-from build_files_imem import EXTRA_CHECKS, NAME_ACC, files_imem  # noqa: E402
+from build_files_imem import EXTRA_CHECKS, FILES, NAME_ACC, files_imem  # noqa: E402
 from build_hyperram_imem import (  # noqa: E402
     Asm,
     PROLOGUE,
@@ -36,6 +46,7 @@ from build_hyperram_imem import (  # noqa: E402
     f0,
     f1,
     ldw,
+    mhi,
     mov_imm,
     stw,
     write_words,
@@ -49,6 +60,8 @@ ADDR_ROOT = 20
 ADDR_LIMIT = 24
 ALLOC = 0x0C00
 MOD_ROOT = 0x0020
+# BootLoad's MTOrg. MT[0] is the trap branch. MT[1] and MT[2] follow it.
+MT_ORG = 0x20
 # Page 0x10 (0x1000..0x10FF) is the code window: a word load there
 # returns the pROM, not HyperRAM. The reserve starts at 0x2000, above
 # that page and above the low map, and is the next 8000H bytes. The
@@ -148,6 +161,84 @@ def _bit_check(a: Asm, break_bit: bool) -> None:
     a.label("bit_ok")
 
 
+def install_word(trap: int, at: int = MT_ORG) -> int:
+    """Kernel.Install: 0E7000000H + (Padr - at) DIV 4 - 1."""
+    if (trap | at) & 3:
+        raise ValueError(hex(trap), hex(at))
+    off = (trap - at) // 4 - 1
+    if not -0x800000 <= off < 0x800000:
+        raise ValueError(off)
+    return 0xE7000000 | (off & 0xFFFFFF)
+
+
+def bl_r12(num: int) -> int:
+    """ORG.Trap: BLR, condition always, trap number, register MT."""
+    if not 0 <= num <= 15:
+        raise ValueError(num)
+    return 0xD7000000 | ((num & 0xF) << 4) | 0xC
+
+
+def _ldw_signed(ra: int, rb: int, off: int) -> int:
+    if not -0x80000 <= off < 0x80000:
+        raise ValueError(off)
+    return 0x80000000 | ((ra & 0xF) << 24) | ((rb & 0xF) << 20) | (off & 0xFFFFF)
+
+
+def _load_abs_word(a: Asm, rd: int, value_at) -> None:
+    """MHI/IOR of a word known once labels exist."""
+
+    def hi(pc: int) -> int:
+        word = value_at() & 0xFFFFFFFF
+        return mhi(rd, word >> 16)
+
+    def lo(pc: int) -> int:
+        word = value_at() & 0xFFFFFFFF
+        return f1(6, rd, rd, word & 0xFFFF)
+
+    a.at(hi)
+    a.at(lo)
+
+
+def _install(a: Asm) -> None:
+    """Store Install's branch at [R12] and fold it against the encoding."""
+    a.at(lambda pc: mov_imm(1, a.labels["trap"]))
+    a.word(f0(9, 0, 1, 12))
+    a.word(f1(2, 0, 0, 2))
+    a.word(f1(9, 0, 0, 1))
+    a.word(mhi(3, 0xE700))
+    a.word(f0(6, 4, 3, 0))
+    a.word(stw(4, 12, 0))
+    a.word(ldw(1, 12, 0))
+    _load_abs_word(a, 3, lambda: install_word(a.labels["trap"]))
+    a.word(f0(9, 0, 1, 3))
+    _fold(a)
+
+
+def _emit_trap_call(a: Asm, num: int) -> None:
+    """Store the BL at its own address, then execute it.
+
+    Trap's GET reads data memory. The fetch of the BL is the pROM word,
+    and the two words are the same encoding.
+    """
+    word = bl_r12(num)
+    a.at(lambda pc: mov_imm(1, a.labels["assert_bl"]))
+    _load_abs_word(a, 0, lambda word=word: word)
+    a.word(stw(0, 1, 0))
+    a.label("assert_bl")
+    a.word(word)
+
+
+def _trap_body(a: Asm, hold: int) -> None:
+    """Kernel.Trap's decode. Trap 0 returns. Anything else holds."""
+    a.word(_ldw_signed(1, 15, -4))
+    a.word(f1(2, 1, 1, 4))
+    a.word(f1(4, 1, 1, 0xF))
+    a.branch("trap_ret", 1)
+    a.at(lambda pc, hold=hold: cond_branch(pc, hold, ALWAYS))
+    a.label("trap_ret")
+    a.word(0xC700000F)
+
+
 def assemble_body(
     hold: int,
     stub_return: int,
@@ -155,6 +246,7 @@ def assemble_body(
     proof: int,
     break_div: bool = False,
     break_bit: bool = False,
+    trap_num: int | None = None,
 ) -> tuple[list[int], dict[str, int]]:
     a = Asm()
     a.word(mov_imm(8, 0))
@@ -199,15 +291,18 @@ def assemble_body(
     a.word(f1(7, 0, 8, NONCE))
     _store_abs(a, proof, None)
 
-    # Address 20 and 24 are MT[1] and MT[2]. The prologue still requires
-    # 0x50 and 0x70 there. Address 16 is restored to the power-up zero.
-    _store_abs(a, ADDR_ALLOC, 0)
-    _store_abs(a, ADDR_ROOT, MT1)
-    _store_abs(a, ADDR_LIMIT, MT2)
+    # Addresses 16, 20, and 24 keep AllocPtr, root, and the stack origin.
+    # R12 is 20H, so MT[1] and MT[2] are 0x24 and 0x28. Setup planted
+    # 0x50 and 0x70 there, and the files block reinstalls them after it
+    # restates R12. Install writes the trap branch at MT[0].
+    a.word(mov_imm(12, MT_ORG))
+    _install(a)
 
     a.word(f1(9, 0, 8, 0))
     a.label("gate")
     a.at(lambda pc, hold=hold: cond_branch(pc, hold, BNE))
+    if trap_num is not None:
+        _emit_trap_call(a, trap_num)
     a.word(mov_imm(0, PROLOGUE))
     a.word(BT_R0)
 
@@ -219,6 +314,9 @@ def assemble_body(
     a.word(f0(6, NAME_ACC, NAME_ACC, 0))
     a.word(stw(NAME_ACC, 11, 0))
     a.at(lambda pc, back=stub_return: cond_branch(pc, back, ALWAYS))
+
+    a.label("trap")
+    _trap_body(a, hold)
 
     prog = a.encode(BODY)
     end = BODY + len(prog) * 4
@@ -250,6 +348,24 @@ def _retarget_reset(words: list[int]) -> None:
     words[0x9C // 4] = mov_imm(0, BODY)
 
 
+def _retarget_r12(words: list[int]) -> None:
+    """Setup and the files block both restate the module table base."""
+    old = mov_imm(12, 0x10)
+    new = mov_imm(12, MT_ORG)
+    hits = [i * 4 for i, word in enumerate(words) if word == old]
+    if hits != [0x80, FILES]:
+        raise SystemExit(f"R12 = 0x10 sites {[hex(h) for h in hits]}")
+    for addr in hits:
+        words[addr // 4] = new
+
+
+def _plant_vector(words: list[int], trap: int) -> None:
+    idx = MT_ORG // 4
+    if words[idx] != BEEF:
+        raise SystemExit(f"ROM {MT_ORG:#x} is {words[idx]:#x}, expected filler")
+    words[idx] = install_word(trap)
+
+
 def modules_imem(
     final_system: str,
     max_iter: int | None = None,
@@ -263,6 +379,7 @@ def modules_imem(
     skip_proof: bool = False,
     break_div: bool = False,
     break_bit: bool = False,
+    trap_num: int | None = None,
 ) -> tuple[list[int], dict[str, int], int]:
     words, labels, nprog = files_imem(
         final_system,
@@ -281,6 +398,7 @@ def modules_imem(
         PROOF_SKIP if skip_proof else PROOF,
         break_div=break_div,
         break_bit=break_bit,
+        trap_num=trap_num,
     )
     _place(words, BODY // 4, prog, 0x1000 // 4)
     if fall:
@@ -288,6 +406,8 @@ def modules_imem(
         words[gate // 4] = f0(0, 1, 0, 1)
     words[store_pc // 4] = cond_branch(store_pc, local["stub"], ALWAYS)
     _retarget_reset(words)
+    _retarget_r12(words)
+    _plant_vector(words, local["trap"])
     labels = dict(labels)
     labels.update(local)
     labels["body"] = BODY
@@ -338,6 +458,32 @@ def check_image(words: list[int], labels: dict[str, int], prog_len: int) -> None
         raise SystemExit("SYSTEM.BIT is not tested with MI")
     if mov_imm(1, BIT_ADDR) not in block or mov_imm(0, BIT_WORD) not in block:
         raise SystemExit("the known bit word is not stored")
+    if bl_r12(0) in words or bl_r12(7) in words:
+        raise SystemExit("the blink image executes a trap")
+    check_trap(words, labels)
+
+
+def check_trap(words: list[int], labels: dict[str, int]) -> None:
+    trap = labels["trap"]
+    vector = install_word(trap)
+    if words[MT_ORG // 4] != vector:
+        raise SystemExit(f"ROM MT[0] is {words[MT_ORG // 4]:#x}, expected {vector:#x}")
+    if _b_target(MT_ORG, vector) != trap:
+        raise SystemExit("MT[0] does not branch to Trap")
+    if words[0x80 // 4] != mov_imm(12, MT_ORG) or words[FILES // 4] != mov_imm(12, MT_ORG):
+        raise SystemExit("R12 is not 20H in setup and in the files block")
+    if mov_imm(12, 0x10) in words:
+        raise SystemExit("a MOV R12, 0x10 remains")
+    if words[trap // 4] != _ldw_signed(1, 15, -4):
+        raise SystemExit("Trap does not load the instruction at R15-4")
+    if words[trap // 4 + 1] != f1(2, 1, 1, 4) or words[trap // 4 + 2] != f1(4, 1, 1, 0xF):
+        raise SystemExit("Trap does not decode DIV 10H MOD 10H")
+    if words[labels["trap_ret"] // 4] != 0xC700000F:
+        raise SystemExit("trap 0 does not return through R15")
+    if stw(4, 12, 0) not in words[BODY // 4 : trap // 4]:
+        raise SystemExit("Install does not store the branch at [R12]")
+    if ldw(1, 12, 0) not in words[BODY // 4 : trap // 4]:
+        raise SystemExit("Install does not read the branch back")
 
 
 def main() -> int:
@@ -358,11 +504,18 @@ def main() -> int:
                         help="Expect quotient 3 so the DIV predicate fails")
     parser.add_argument("--break-bit", action="store_true",
                         help="Store a clear bit 0 so the MI predicate fails")
+    parser.add_argument("--assert-false", action="store_true",
+                        help="Sim only: BL R12 with trap 7 and hold the LED")
+    parser.add_argument("--trap0", action="store_true",
+                        help="Sim only: BL R12 with trap 0, then return")
     parser.add_argument(
         "--out",
         default=os.path.join(ROOT, "sim", "visualizer", "imem", "modules.words"),
     )
     args = parser.parse_args()
+    if args.assert_false and args.trap0:
+        raise SystemExit("assert-false and trap0 are separate traces")
+    trap_num = 7 if args.assert_false else 0 if args.trap0 else None
     src = os.path.join(ROOT, "tests", "final_system.code")
     words, labels, nprog = modules_imem(
         src,
@@ -377,6 +530,7 @@ def main() -> int:
         skip_proof=args.skip_proof,
         break_div=args.break_div,
         break_bit=args.break_bit,
+        trap_num=trap_num,
     )
     clean = (
         args.break_slot is None
@@ -387,9 +541,14 @@ def main() -> int:
         and not args.skip_proof
         and not args.break_div
         and not args.break_bit
+        and trap_num is None
     )
     if clean:
         check_image(words, labels, nprog)
+    else:
+        check_trap(words, labels)
+    if trap_num is not None and words[labels["assert_bl"] // 4] != bl_r12(trap_num):
+        raise SystemExit("the trace BL is not ORG.Trap")
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     write_words(args.out, words)
     print(

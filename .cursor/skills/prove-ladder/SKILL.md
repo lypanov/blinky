@@ -10,3 +10,5 @@ description: >-
 ---
 
 Prove every ladder step in this order and do not skip a stage. First run simulation until the expected checks pass. The Nano 4K image is Verilator (`tools/run_verilator_sim.sh`). When the step touches DDR3, the Dock image is Icarus with the Micron `ddr3.v` model (`sim/run_ddr3_cpu_phy.sh`). The Verilator stand-in does not close that check. Then load the same tip on the Tang Nano 4K (HyperRAM) and confirm on hardware — usually the LED blinks at the published formula rate, measured by the webcam, with a dark LED meaning fail. Only after that, prove the same tip on the Primer 20K / Dock (DDR3). A step is done only when sim, 4K, and 20K all agree.
+
+A failed 4K or Dock stage sends the step back to simulation. Fix the cause, then run the ladder again from sim. Loop until sim, 4K, and 20K agree. Stop the loop when the Nano 4K does not fit. Report that stage.
