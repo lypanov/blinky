@@ -2,7 +2,7 @@
 
 One item at a time, from the top. This file is an index. The write-up is in the file each item names.
 
-Next: 6.
+Next: 7.
 
 1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay. Done. The measured result is in the ledger.
 
@@ -12,7 +12,7 @@ Ledger items 2–5 are not to-dos. If a later item cannot fit on the Nano 4K wit
 3. `DIV`, `H`, and `SYSTEM.BIT`. Same file, Proof 2. Done. The measured result is in the plan.
 4. The trap at `MT[0]`. Same file, Proof 3. Done. The measured result is in the plan.
 5. Compiled `Modules.Check` on the ROM loop. Same file, Proof 4. Done. The measured result is in the plan.
-6. Place Blink5 and fetch that body. Same file, Proof 5.
+6. Place Blink5 and fetch that body. Same file, Proof 5. Done. The measured result is in the plan.
 7. One sector step. Same file, Proof 6.
 8. Real `Modules.Init` and `Modules.Load("Blink5")`. Same file, Proof 7.
 

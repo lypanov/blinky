@@ -99,6 +99,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
                  extraChecks: Int = 0,
                  fetchStored: Boolean = false,
                  chainFix: Boolean = false,
+                 // Proof 5. One placed body, fetched from external memory.
+                 // Reset, training, and the loader stay in the pROM. The
+                 // page compare is one constant, not a table of addresses.
+                 bodyFetch: Boolean = false,
                  chiselRom: Boolean = false) extends Module {
   val io = IO(new Bundle {
     val r0 = Output(UInt(32.W))  // Output register R0 for testing
@@ -422,6 +426,42 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val divDiff = divSum(31, 0)
   val divGe = divSum(32)
 
+  // Proof 5. Page 0x22 is the placed Blink5 body. A fetch of that page
+  // reads external memory. Every other PC, including reset and the
+  // loader, keeps the pROM. The word is overlaid into the ROM register
+  // the cycle before it executes, which is the same register the
+  // one-address fetch uses. A load or store already in flight keeps the
+  // memory port; the next instruction is fetched after it completes.
+  val bodyWord = if (bodyFetch) Reg(UInt(32.W)) else 0.U(32.W)
+  val bodyFor = if (bodyFetch) Reg(UInt(32.W)) else 0.U(32.W)
+  val bodyReady = if (bodyFetch) RegInit(false.B) else false.B
+  val bodyPhase = if (bodyFetch) RegInit(0.U(2.W)) else 0.U(2.W)
+  val inBody = if (bodyFetch) pc(31, 8) === 0x22.U(24.W) && pc(1, 0) === 0.U else false.B
+  val haveBody = if (bodyFetch) bodyReady && pc === bodyFor else false.B
+  val wantBody = if (bodyFetch) {
+    inBody && !haveBody && !memoryAccessPending && divPhase === 0.U && !chainHold
+  } else false.B
+  if (bodyFetch) {
+    when (wantBody) {
+      when (bodyPhase === 0.U) {
+        startFetch := true.B
+        bodyPhase := 1.U
+      } .elsewhen (bodyPhase === 1.U && !io.memStall) {
+        bodyWord := io.memReadData
+        bodyPhase := 2.U
+      } .elsewhen (bodyPhase === 2.U) {
+        bodyPhase := 0.U
+        bodyReady := true.B
+        bodyFor := pc
+      }
+    } .elsewhen (!inBody) {
+      bodyPhase := 0.U
+    }
+    when (wantBody) {
+      stallFetch := true.B
+    }
+  }
+
   // Main execution state machine.
   // A pending load completes when memStall is low. Block RAM ties memStall
   // to 0, so this is still the original one-cycle load. Extra stall cycles
@@ -430,7 +470,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     // The ROM word at this PC is a hold. Do not execute it. The state
     // machine above owns the HyperRAM read. pcNext stays on this PC.
     when (startFetch) {
-      io.memAddr := patchPC
+      io.memAddr := (if (bodyFetch) pc else patchPC)
       io.memRead := true.B
     }
   } .elsewhen (chainHold) {
@@ -954,6 +994,12 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       romAddr := (codeRomAddr >> 2)(addrBits - 1, 0)
     }
   }
+  if (bodyFetch) {
+    when (wantBody && bodyPhase === 2.U) {
+      romOverlayEn := true.B
+      romOverlayData := bodyWord
+    }
+  }
   // Last so it wins over the code-page address. While reset is 1 the
   // ROM must present the instruction at 0x80. An X on holdForCode would
   // otherwise sink this select and the first fetch stays X.
@@ -973,9 +1019,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     printf(p"Writing ${regWriteData} to register ${regWriteAddr} (R${regWriteAddr} = ${regWriteData})\n")
   }
   
-  // Special halt condition for simulation
-  // We'll halt when pc points beyond our instruction memory
-  when ((pc >> 2) >= imemWords.length.U) {
+  // Halt when the PC runs off the pROM. Page 0x22 is the placed body,
+  // which is outside that ROM and is fetched from external memory.
+  val pastRom = (pc >> 2) >= imemWords.length.U
+  when (pastRom && !inBody) {
     halted := true.B
   }
   
@@ -1150,7 +1197,8 @@ object CPUSubset0 {
         requireMemCheck = hyper || ddr3,
         extraChecks = extra,
         fetchStored = fetchbl || ddr3fetch,
-        chainFix = pdchain || moddesc || files || modules || ddr3pd || ddr3moddesc || ddr3files || ddr3modules
+        chainFix = pdchain || moddesc || files || modules || ddr3pd || ddr3moddesc || ddr3files || ddr3modules,
+        bodyFetch = modules || ddr3modules
       ),
       firtoolOpts = firtoolOpts
     )
@@ -1165,6 +1213,7 @@ object CPUSubset0 {
         extraChecks = extra,
         fetchStored = fetchbl || ddr3fetch,
         chainFix = pdchain || moddesc || files || modules || ddr3pd || ddr3moddesc || ddr3files || ddr3modules,
+        bodyFetch = modules || ddr3modules,
         enableLogger = ddr3
       ),
       firtoolOpts = firtoolOpts
@@ -1180,6 +1229,7 @@ object CPUSubset0 {
         extraChecks = extra,
         fetchStored = fetchbl || ddr3fetch,
         chainFix = pdchain || moddesc || files || modules || ddr3pd || ddr3moddesc || ddr3files || ddr3modules,
+        bodyFetch = modules || ddr3modules,
         enableLogger = ddr3
       ),
       firtoolOpts = firtoolOpts

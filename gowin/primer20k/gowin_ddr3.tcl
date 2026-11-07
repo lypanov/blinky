@@ -34,10 +34,10 @@ if {[info exists ::env(GOWIN_OUT_NAME)] && $::env(GOWIN_OUT_NAME) ne ""} {
 }
 set_option -synthesis_tool gowinsynthesis
 set_option -place_option 2
-# Route for timing. The Modules divider leaves pclk with almost no
-# slack under the congestion router, and the Dock eye then fails
-# write leveling (high byte FF instead of A5).
-set_option -route_option 1
+# route_option 1 left the placed-body image at -0.018 ns on the eye
+# path (pclk Fmax 96.580). That bitstream trained to G=FF5A and held
+# at 0x1D90. route_option 2 closes the same path at +0.309 ns.
+set_option -route_option 2
 set_option -use_done_as_gpio 1
 set_option -use_ready_as_gpio 1
 set_option -use_sspi_as_gpio 1

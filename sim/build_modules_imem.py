@@ -33,6 +33,13 @@ Before the gate, the body calls the compiled Modules.Check twice.
 sim/inner_core.py compiles those words. "Blink5" must leave res 0
 and "9bad" must leave res 1. Both differences fold into R8, which
 the existing link-slot store already checks. The tail stays 40.
+
+Proof 5 places that delay loop in external memory and fetches it.
+The loader stays in the pROM. Load's BT R1 is retargeted at the
+placer (0x1100). The placer copies the fixed page-0x10 words to
+0x2200, rewrites the one BL for that address, and walks one
+type-chain entry at 0x2304. The CPU then fetches page 0x22 from
+external memory. Reset and training never do.
 """
 from __future__ import annotations
 
@@ -51,6 +58,7 @@ from build_hyperram_imem import (  # noqa: E402
     f0,
     f1,
     ldw,
+    load_const,
     mhi,
     mov_imm,
     stw,
@@ -86,6 +94,7 @@ BNE = 9
 ALWAYS = 7
 MI = 0
 BT_R0 = 0xC7000000
+BT_R1 = 0xC7000001
 # F0 u=1 op MOV, Rd = R0. ORG.H(0) and the MOD arm of DivOp.
 MOV_H = 0x20000000
 # Word whose bit 0 is set. SYSTEM.BIT rotates right by bit+1 and tests MI.
@@ -101,6 +110,25 @@ BLINK_LEN = 7  # "Blink5" plus 0X, ORS.slen
 BAD_LEN = 5  # "9bad" plus 0X
 BLINK_WORDS = (0x6E696C42, 0x0000356B)  # Blink5\0\0
 BAD_WORDS = (0x64616239, 0x00000000)  # 9bad\0\0\0\0
+# The placed body. Page 0x22 is the fetch window. Page 0x10 stays the
+# pROM code window the copy loads from. The type word sits one page
+# later, off the data table at 0x600 and off the stack ends.
+PLACER = 0x1100
+BODY_ORG = 0x2200
+LOOP_SRC = 0x1048
+LOOP_WORDS = (0x10AC - LOOP_SRC) // 4
+BL_DISP = 0x108C - LOOP_SRC
+BL_AT = BODY_ORG + BL_DISP
+TOGGLE = 0x1000
+FIX_GETSB = 0x8DC00008
+GETSB_AT = BODY_ORG + (0x1054 - LOOP_SRC)
+TYPE_DATA = 0x2300
+TYPE_AT = TYPE_DATA + 4
+# mno = 0, vno = 8, disp = 1. One step returns adr to TYPE_DATA.
+TYPE_RAW = (8 << 12) | 1
+TYPE_FIXED = TYPE_DATA + 8
+_BL_OFF = (TOGGLE - BL_AT - 4) // 4
+BL_WORD = 0xF7000000 | (_BL_OFF & 0xFFFFFF)
 
 
 def _store_abs(a: Asm, addr: int, value: int | None) -> None:
@@ -419,6 +447,72 @@ def _plant_vector(words: list[int], trap: int) -> None:
     words[idx] = install_word(trap)
 
 
+def assemble_placer(hold: int) -> tuple[list[int], dict[str, int]]:
+    """Copy the fixed delay loop, walk one type entry, branch to it."""
+    a = Asm()
+    a.word(mov_imm(1, LOOP_SRC))
+    a.word(mov_imm(2, BODY_ORG))
+    a.word(mov_imm(3, LOOP_WORDS))
+    a.label("copy")
+    a.word(ldw(0, 1, 0))
+    a.word(stw(0, 2, 0))
+    a.word(f1(8, 1, 1, 4))
+    a.word(f1(8, 2, 2, 4))
+    a.word(f1(9, 3, 3, 1))
+    a.branch("copy", BNE)
+
+    # The copied BL still targets Toggle from 0x108C. Rewrite it.
+    a.word(mov_imm(1, BL_AT))
+    for w in load_const(0, BL_WORD):
+        a.word(w)
+    a.word(stw(0, 1, 0))
+
+    # The GetSB the walker stored has to be the one that was copied.
+    a.word(mov_imm(1, GETSB_AT))
+    a.word(ldw(0, 1, 0))
+    for w in load_const(4, FIX_GETSB):
+        a.word(w)
+    a.word(f0(9, 0, 0, 4))
+    a.at(lambda pc, hold=hold: cond_branch(pc, hold, BNE))
+
+    # One global type entry. mno is 0, so the word becomes data + vno.
+    a.word(mov_imm(1, TYPE_AT))
+    a.word(mov_imm(0, TYPE_RAW))
+    a.word(stw(0, 1, 0))
+    a.word(mov_imm(4, TYPE_DATA))
+    a.label("twalk")
+    a.word(f0(9, 0, 1, 4))
+    a.branch("tdone", 1)  # BEQ
+    a.word(ldw(0, 1, 0))
+    a.word(f0(0, 2, 0, 0))
+    a.word(f1(2, 2, 2, 24))  # ASR 24
+    a.word(f1(4, 2, 2, 0xF))
+    a.at(lambda pc, hold=hold: cond_branch(pc, hold, BNE))
+    a.word(f0(0, 3, 0, 0))
+    a.word(f1(2, 3, 3, 12))  # ASR 12
+    a.word(f1(4, 3, 3, 0xFFF))
+    a.word(f0(8, 3, 4, 3))  # data + vno
+    a.word(stw(3, 1, 0))
+    a.word(f1(4, 0, 0, 0xFFF))  # disp
+    a.word(f1(1, 0, 0, 2))  # * 4
+    a.word(f0(9, 1, 1, 0))
+    a.branch("twalk", ALWAYS)
+
+    a.label("tdone")
+    a.word(mov_imm(1, TYPE_AT))
+    a.word(ldw(0, 1, 0))
+    a.word(f1(9, 0, 0, TYPE_FIXED))
+    a.at(lambda pc, hold=hold: cond_branch(pc, hold, BNE))
+    a.word(mov_imm(1, BODY_ORG))
+    a.label("enter")
+    a.word(BT_R1)
+    prog = a.encode(PLACER)
+    end = PLACER + len(prog) * 4
+    if end > 0x1200:
+        raise SystemExit(f"placer ends at {end:#x}, prologue is 0x1200")
+    return prog, dict(a.labels)
+
+
 def modules_imem(
     final_system: str,
     max_iter: int | None = None,
@@ -463,10 +557,19 @@ def modules_imem(
     _retarget_reset(words)
     _retarget_r12(words)
     _plant_vector(words, local["trap"])
+    place, placed = assemble_placer(labels["hold"])
+    _place(words, PLACER // 4, place, 0x1200 // 4)
+    go = labels["go"]
+    if words[go // 4] != BT_R1:
+        raise SystemExit(f"Load success at {go:#x} is not BT R1")
+    words[go // 4] = cond_branch(go, PLACER, ALWAYS)
     labels = dict(labels)
     labels.update(local)
+    labels.update(placed)
     labels["body"] = BODY
     labels["flush"] = store_pc
+    labels["placer"] = PLACER
+    labels["body_org"] = BODY_ORG
     return words, labels, len(prog)
 
 
@@ -489,6 +592,18 @@ def check_image(words: list[int], labels: dict[str, int], prog_len: int) -> None
         raise SystemExit("the reserve ends are not both addressed")
     if words[0x1048 // 4] != 0x4EE90004 or words[0x104C // 4] != 0xAFE00000:
         raise SystemExit("the delay loop push moved")
+    if _b_target(labels["go"], words[labels["go"] // 4]) != PLACER:
+        raise SystemExit("Load does not enter the placer")
+    if words[PLACER // 4] != mov_imm(1, LOOP_SRC):
+        raise SystemExit("the placer does not copy from the ROM loop")
+    if words[labels["enter"] // 4] != BT_R1:
+        raise SystemExit("the placer does not branch to the body")
+    if BL_WORD in words:
+        raise SystemExit("the relocated BL is a ROM fetch, not a stored immediate")
+    if mov_imm(1, BODY_ORG) not in words[PLACER // 4 : 0x1200 // 4]:
+        raise SystemExit("the placer does not address the placed body")
+    if mov_imm(0, TYPE_RAW) not in words[PLACER // 4 : 0x1200 // 4]:
+        raise SystemExit("the type entry is not planted")
     if mov_imm(1, PROOF) not in block:
         raise SystemExit("the proof word is not addressed")
     if words[labels["flush"] // 4] == stw(NAME_ACC, 11, 0):

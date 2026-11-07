@@ -191,7 +191,38 @@ openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
 
 This is the hard step, and it is the missing piece of original step 10. It is one placed body, not a move of every fetch. The image copies Blink5 into external memory, walks one real type-chain entry, and fetches that placed body. Reset, training, and the loader stay in the pROM. The body has its own addresses. It does not land on the data table. A fetch before training reads garbage.
 
-The Nano is the harder board. `modules_n262144` placed for Proof 2 has worst slack -1.013 ns on `clkdiv`, CLS 2258/2304 (98%, 46 free), and the slow corner misses 27 MHz (Fmax 26.281 MHz). HyperRAM will not start a command more often than every 15 clocks. Paying that on every instruction of the placed delay loop, on top of `103*N+142`, pushes `N = 262144` near the webcam floor of 0.2 Hz. The Dock has timing room (`pclk` Fmax 100.5 MHz against 96.7, zero violated endpoints). The Dock rate `576*N+788` moves once the body is fetched from DDR3. The new count is the trace's count.
+Done. The placer sits in the pROM at `0x1100`. Load's success word at `0x668` branches there. The placer copies the 25 fixed delay-loop words from `0x1048` to `0x2200`, rewrites the one BL, and walks the type entry at `0x2304`. The raw word is `0x8001` (`mno` 0, `vno` 8, `disp` 1). The stored word comes back `0x2308`, which is the data address plus `vno`. The copied `GetSB` is `8DC00008`. The BL at `0x2244` is `F7FFFB6E`, and it still reaches Toggle at `0x1000`. The return is `0x2248`. Page `0x22` is the only PC the CPU fetches from external memory. `N = 262144` pays a memory command on every instruction of that loop and falls under the 0.2 Hz floor on both boards (0.152 Hz on the Nano, 0.100 Hz on the Dock). `65536` is the largest MHI step that stays above it. The MHI at `0x105C` is `60000001`, and the copy takes that word with it.
+
+Verilator of the modules image, `FIRST_VALID` 13, chainFix on. `Check("Blink5")` stores `res` 1 then 0. `Check("9bad")` stores `res` 1. The first instruction executed at `0x2200` is `4EE90004`. The trace fetches `F7FFFB6E` at `0x2244`.
+
+| N | cycles between edges | first edge |
+|---:|---:|---:|
+| 5 | 1923 | 16793 |
+| 6 | 2262 | 17132 |
+| 8 | 2940 | 17810 |
+| 65536 | 22216932 | 22231802 |
+
+Those edges are 16793, 18716, 20639, 22562, then 17132, 19394, 21656, 23918, then 17810, 20750, 23690, 26630, then 22231802, 44448734. The period is `339*N+228`. At 27 MHz and `N = 65536` that is 0.607645 Hz. `CHAIN_FIX=0` holds at `0x1D8C` with no LED edge in 40000 cycles. `IMAGE=ddr3modules sim/run_ddr3_cpu_phy.sh` prints `PHY_SCORE pass`: period 10512, first edge 78626, PC `0000101c`, R5 `00000000`, R9 `00000000`, mask `ffffffffff`. There is no Micron `ERROR`. The eye on that run is steps 22/23 (`run=16/17`), `rclkpos=1`, `rclksel=3`, at cycle 1984. The skip iteration in that trace is 1852 pclk, and the toggle iteration is 3104, so the period is `1852*N+1252`. At the Dock `pclk` and `N = 65536` that is 0.398561 Hz.
+
+`modules_n65536` placed at 11:45 (UTC+1). Logic 4440/4608 (97%; 4166 LUT and 274 ALU), CLS 2266/2304 (99%, 38 free), registers 1699/3612, 6/10 BSRAM. Slow corner 1.14 V 85 C on `clkdiv`: the report header counts 32 setup-violated endpoints and 0 hold. The `clkdiv` TNS row is 12 endpoints, TNS -3.582, worst slack -0.636 ns, Fmax 26.544 MHz against 27.000 MHz. SRAM load was bus 3 address 081 only. Idcode `0x100981b`, GW1NSR-4C. CRC check success. Device 078 was not opened for that load.
+
+```bash
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/impl/pnr/modules_n65536.fs
+```
+
+Webcam `measure_blink`, `roi=nano4k`, duration 20, warmup 2: `blink-measure/20261107-114839`, status blinking, edge 0.607274 Hz, FFT 0.590 Hz, trusted method edge, confidence 0.9966, 661 frames, 29.990 fps, `/dev/video2`. The expected full blink is 0.607645 Hz.
+
+`route_option 1` placed the Dock image with `pclk` Fmax 96.580 MHz and worst slack -0.018 ns on the eye path. That bitstream trained to `G=FF5A` and held at `0x1D90`. `gowin/primer20k/gowin_ddr3.tcl` now uses `route_option 2`.
+
+`ddr3modules_n65536` placed at 11:56 (UTC+1). Logic 5724/20736 (28%; 5294 LUT and 430 ALU), CLS 3919/10368 (38%), registers 2441/16173, 4/46 BSRAM. 0 setup and 0 hold endpoints. Slow corner 0.95 V 85 C. `pclk` Fmax 99.728 MHz against 96.749. Worst listed setup slack is +0.309 ns. `cpu_clk` Fmax is 41.565 MHz against 24.187 MHz. SRAM load was bus 3 address 078 only. Idcode `0x81b`, GW2A-18. The Nano 4K was not opened for that load. UART on FTDI channel B, 115200 8N1, opened before the load. Thirty-five settled lines, every one `C.` (not held). PC stays in the placed loop (`221C`, `2220`, `2224`, `2228`, `222C`, `2230`, `2234`, `2238`, `223C`, `2240`, `2254`). Mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. The trained steps on this boot are lane 1 `000C` and lane 0 `000A`. Pattern 0 at the write-level edge is `FF5A`. The last pattern-0 read is `A55A`. `F` is `A8`. Locked backoff is `C0 01`, `C1 06`, `BO 07`.
+
+```bash
+openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
+  gowin/primer20k/impl/pnr/ddr3modules_n65536_r2.fs
+```
+
+`measure_blink`, `roi=primer20k`, duration 30, warmup 2: `blink-measure/20261107-115737`, status blinking, edge 0.398195 Hz, FFT 0.406 Hz, trusted method edge, confidence 0.9978, 961 frames, 29.997 fps, `/dev/video2`. The expected full blink is 0.398561 Hz.
 
 ### Proof 6 — one sector step
 

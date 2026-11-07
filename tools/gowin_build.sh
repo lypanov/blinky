@@ -15,7 +15,7 @@
 #   FPGA_IMAGE=pdchain tools/gowin_build.sh      # HyperRAM plus device P-chain and D-chain fixups
 #   FPGA_IMAGE=moddesc tools/gowin_build.sh      # HyperRAM plus ModDesc, the module table, and a procedure call
 #   FPGA_IMAGE=files tools/gowin_build.sh        # HyperRAM plus Files, two .rsc images, and Load of Blink5
-#   FPGA_IMAGE=modules tools/gowin_build.sh      # HyperRAM plus Modules.Init on the reset path, then Load of Blink5
+#   FPGA_IMAGE=modules tools/gowin_build.sh      # placed Blink5 body, fetched from HyperRAM (N=65536)
 #   FPGA_IMAGE=ddr3 BOARD=primer20k tools/gowin_build.sh  # Primer 20K DDR3 data port + Blink3
 #   FPGA_IMAGE=ddr3fixup BOARD=primer20k tools/gowin_build.sh  # that port plus the step-2 ALU
 #   FPGA_IMAGE=ddr3rsc BOARD=primer20k tools/gowin_build.sh    # that port plus LDB/STB and the .rsc reader
@@ -23,7 +23,7 @@
 #   FPGA_IMAGE=ddr3pd BOARD=primer20k tools/gowin_build.sh     # that port plus the P-chain and D-chain fixups
 #   FPGA_IMAGE=ddr3moddesc BOARD=primer20k tools/gowin_build.sh  # that port plus ModDesc and a procedure call
 #   FPGA_IMAGE=ddr3files BOARD=primer20k tools/gowin_build.sh    # that port plus Files, two .rsc images, and Load of Blink5
-#   FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # that port plus Modules.Init, then Load of Blink5
+#   FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # placed Blink5 body, fetched from DDR3 (N=65536)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,7 +33,14 @@ cd "$ROOT"
 
 FPGA_IMAGE="${FPGA_IMAGE:-blink3}"
 BOARD="${BOARD:-nano4k}"
-BLINK3_MAXITER="${BLINK3_MAXITER:-262144}"
+# The placed body is fetched from external memory. 262144 iterations
+# falls under the 0.2 Hz webcam floor on both boards. 65536 is the
+# largest MHI step that stays above it. Other images keep 262144.
+if [[ "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3modules" ]]; then
+  BLINK3_MAXITER="${BLINK3_MAXITER:-65536}"
+else
+  BLINK3_MAXITER="${BLINK3_MAXITER:-262144}"
+fi
 if [[ "$FPGA_IMAGE" == "hyperram" && -z "${BLINK3_IMEM:-}" ]]; then
   BLINK3_IMEM="$ROOT/sim/visualizer/imem/hyperram.words"
 fi

@@ -20,6 +20,7 @@ class CPUSimTop(
     extraChecks: Int = 0,
     fetchStored: Boolean = false,
     chainFix: Boolean = false,
+    bodyFetch: Boolean = false,
     // When set, the DDR3 command port is an IO. The Micron ddr3.v bench
     // drives it. The command-port stand-in is not instantiated.
     externalPhy: Boolean = false
@@ -56,7 +57,8 @@ class CPUSimTop(
     requireMemCheck = hyper || ddr3,
     extraChecks = extraChecks,
     fetchStored = fetchStored,
-    chainFix = chainFix
+    chainFix = chainFix,
+    bodyFetch = bodyFetch
   )) }
   if (hyper) {
     val bridge = Module(new HyperRamBridge)
@@ -200,6 +202,7 @@ object CPUSimTop {
         // CHAIN_FIX=0 is the same words with no patch table. The walk
         // loads zeros, the compare fails, and the pin stays dark.
         val chainFix = image == "ddr3pd" || ((image == "ddr3moddesc" || image == "ddr3files" || image == "ddr3modules") && sys.env.getOrElse("CHAIN_FIX", "1") != "0")
+        val bodyFetch = image == "ddr3modules" && sys.env.getOrElse("BODY_FETCH", "1") != "0"
         val externalPhy = sys.env.getOrElse("DDR3_PHY", "") == "micron"
         val imemPath = new File(
           projectRoot,
@@ -216,7 +219,7 @@ object CPUSimTop {
           )
         ).getAbsolutePath
         val words = loadInstructionsFromFile(imemPath)
-        println(s"CPUSimTop: $image IMEM ${words.length} words extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix externalPhy=$externalPhy from $imemPath")
+        println(s"CPUSimTop: $image IMEM ${words.length} words extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix bodyFetch=$bodyFetch externalPhy=$externalPhy from $imemPath")
         (
           () => new CPUSimTop(
             Seq.empty,
@@ -225,6 +228,7 @@ object CPUSimTop {
             extraChecks = extra,
             fetchStored = fetchStored,
             chainFix = chainFix,
+            bodyFetch = bodyFetch,
             externalPhy = externalPhy
           ),
           s"$targetDir/CPUSimTopDdr3.v",
@@ -266,8 +270,9 @@ object CPUSimTop {
         // CHAIN_FIX=0 is the same words with no patch table and no ROM read
         // of the code window. The walk loads zeros and the pin stays dark.
         val chainFix = (image == "pdchain" || image == "moddesc" || image == "files" || image == "modules") && sys.env.getOrElse("CHAIN_FIX", "1") != "0"
+        val bodyFetch = image == "modules" && sys.env.getOrElse("BODY_FETCH", "1") != "0"
         println(s"CPUSimTop: $image IMEM ${words.length} words from $imemPath")
-        println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix")
+        println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix bodyFetch=$bodyFetch")
         (
           () => new CPUSimTop(
             Seq.empty,
@@ -276,7 +281,8 @@ object CPUSimTop {
             hyperFirstValid = firstValid,
             extraChecks = extra,
             fetchStored = fetchStored,
-            chainFix = chainFix
+            chainFix = chainFix,
+            bodyFetch = bodyFetch
           ),
           s"$targetDir/CPUSimTopHyper.v",
           image

@@ -12,7 +12,7 @@
 
 module tb_ddr3_cpu_phy;
     localparam integer PCLK_WAIT = 200000;
-    localparam integer EXPECT_PERIOD = 3668; // 576*5+788, delay loop only
+    localparam integer EXPECT_PERIOD = 10512; // 1852*5+1252, placed body fetch
     // ModDesc, Files, and Modules all sit before that loop, so the
     // period stays. Init is not in the delay loop.
     localparam [31:0] EXPECT_R5 = 32'h00000000;

@@ -37,6 +37,7 @@ class CPUMinimalWrapper(
     extraChecks: Int = 0,
     fetchStored: Boolean = false,
     chainFix: Boolean = false,
+    bodyFetch: Boolean = false,
     // DDR3 elaborations keep the Logger. Nano 4K images leave it out.
     // The Dock training UART is ddr3_uart_tx, not this module.
     enableLogger: Boolean = false
@@ -65,7 +66,8 @@ class CPUMinimalWrapper(
       requireMemCheck = hyper || ddr3,
       extraChecks = extraChecks,
       fetchStored = fetchStored,
-      chainFix = chainFix
+      chainFix = chainFix,
+      bodyFetch = bodyFetch
     ))
   }
   io.led := cpu.io.led
