@@ -67,3 +67,19 @@ if [[ "$fail" -ne 0 ]]; then
   exit 1
 fi
 echo "PHY_SCORE pass"
+
+# Same controller. A cliff at indices 0..2 and a later window at 5..7
+# on one lane-0 row must lock the later window (center 6).
+DECIDE_LOG=sim/obj_dir/ddr3_phy_decide.log
+mkdir -p /tmp/ddr3-phy-model-decide
+if ! stdbuf -oL -eL vvp "$OUT" +model_data+/tmp/ddr3-phy-model-decide +eye_decide >"$DECIDE_LOG" 2>&1; then
+  echo "FAIL eye_decide vvp" >&2
+  tail -20 "$DECIDE_LOG" >&2
+  exit 1
+fi
+if ! grep -q '^PHY_SCORE pass$' "$DECIDE_LOG"; then
+  echo "FAIL eye_decide" >&2
+  grep -E '^(CALIB|FAIL |PHY_|EYE pass|EYE fail)' "$DECIDE_LOG" | tail -20 >&2
+  exit 1
+fi
+echo "EYE_DECIDE pass"

@@ -363,6 +363,17 @@ module tb_ddr3_phy;
             $display("PHY_SCORE fail");
             $finish;
         end
+        // +eye_decide plants a cliff at indices 0..2 and a data eye at
+        // 5..7 on the same lane-0 row. The lock is the data eye.
+        if ($test$plusargs("eye_decide")) begin
+            if (ctl.eye_cen0 === 8'd0 && ctl.eye_cen1 === 8'd6)
+                $display("PHY_SCORE pass");
+            else begin
+                $display("FAIL eye decide cen %0d/%0d", ctl.eye_cen0, ctl.eye_cen1);
+                $display("PHY_SCORE fail");
+            end
+            $finish;
+        end
 
         // Traffic starts here. Micron ERROR lines after this marker
         // are command failures. Lines before it are the shortened

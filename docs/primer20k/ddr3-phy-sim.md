@@ -32,12 +32,17 @@ Clocks are 100 MHz `pclk` and 400 MHz `fclk`. `ck` lags `fclk` by
 90 degrees. With `ck` leading, the model rejects the write on
 `tDQSS` / `tDSS`.
 
-Write leveling commits at code 26/26. The eye then scans offsets
--4..+12 from that edge and locks the first row with three
-consecutive full-word passes. This run locks steps 22/23
-(`run=16/17`), `rclkpos=1`, `rclksel=3`, at cycle 1984. Code 26 is
-the model's write-level edge, not a Dock step. The model stores
-the writes:
+Write leveling commits at code 26/26. The scan is offsets -4..+12
+from that edge. The sim path locks the first three consecutive
+full-word passes. A write on this model's write-level edge slips
+the strobe, so the sim does not probe that edge. This run locks
+steps 22/23 (`run=16/17`), `rclkpos=1`, `rclksel=3`, at cycle 1984.
+Those steps are the cliff below code 26. `+eye_decide` plants a
+cliff at indices 0..2 and a window at 5..7 on the same row. The
+script requires that lock to be the window: steps 22/28
+(`run=16/1c`) at cycle 4234, and it finishes before traffic.
+Silicon uses that second rule. Code 26 is the model's write-level
+edge, not a Dock step. The model stores the writes:
 
 - column 0: `1111`
 - column 1, same burst: `22221111`
@@ -84,7 +89,12 @@ Labeled in `gowin/primer20k/ddr3/ddr3_controller.v`.
 
 ## What the Dock showed
 
-The same trainer on the Primer 20K Dock locked steps `0009`/`0007`
-(write-level edges `000D`/`000A`) and the step-5 self-test passed.
-`rclkpos=1`, `rclksel=3` matched this bench. The sim lock 22/23 is
-the wide model eye, not the Dock pair. See `step5-ddr3.md`.
+The early-exit trainer on the Primer 20K Dock locked steps
+`0009`/`0007` (write-level edges `000D`/`000A`) and the step-5
+self-test passed. `rclkpos=1`, `rclksel=3` matched this bench. The
+sim lock 22/23 is that cliff, not the Dock pair. A modules image
+at the same cliff came back with the high byte replaced. Silicon
+now finishes the lane-0 row and locks three matches at or above
+the edge. That center is index 6, the `000C`/`0009` pair from the
+boots that trained. `+eye_decide` is that choice. See
+`step5-ddr3.md`.

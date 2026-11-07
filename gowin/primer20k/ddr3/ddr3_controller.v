@@ -235,10 +235,11 @@ reg [3:0] wlevel_cnt = 3'b0;
 // neighbour column. Each lane stops on its own DQ feedback.
 assign write_level_done = wlevel_done;
 
-// Read calibration finds rburst. The write-level result is the leading
-// edge of that lane, which aliases the next column. Training then walks
-// each lane down from its own edge until dq_in[0] matches eight
-// halfwords, and locks the center of that window. No fixed backoff.
+// Read calibration finds rburst. Training then scans offsets -4..+12
+// from each lane's write-level edge. Offsets -4..-1 are the cliff.
+// A row that also matches at the edge or above locks that window.
+// A row that matches only on the cliff locks the cliff, which is the
+// model eye. No fixed backoff.
 reg [3:0] dqs_read = 4'b0;
 reg dqs_hold = 1'b0;
 reg wload_n = 1'b0;
@@ -297,6 +298,8 @@ reg        eye_pulse_rd = 1'b0, eye_pulse_wr = 1'b0, eye_commit = 1'b0;
 reg        in_run = 1'b0, have = 1'b0;
 reg [7:0]  run_lo = 8'd0, run_hi = 8'd0, best_lo = 8'd0, best_w = 8'd0;
 reg signed [3:0] box_dx = -4'sd2, box_dy = -4'sd2;
+reg        cliff_run = 1'b0, have_cliff = 1'b0;
+reg [7:0]  cliff_lo = 8'd0, cliff_hi = 8'd0, cliff_cen = 8'd0;
 
 wire [25:0] cmd_addr = eye_mode ? eye_addr : addr;
 wire [15:0] cmd_din  = eye_mode ? eye_din  : din;
@@ -321,9 +324,15 @@ endfunction
 
 // Index 0..EYE_LAST is the write-level edge plus an offset of -4..+12.
 // The leveling edge is the first code that sees the DQS pulse, so the
-// data eye is that code and the ones after it. Searching only downward
-// stays on the cliff: silicon read A500 there (high byte right, low
-// byte zero) at every downward pair.
+// data eye is that code and the ones after it. Index 4 is offset 0.
+// Indices 0..3 are the downward cliff: silicon read A500 there (high
+// byte right, low byte zero). Stopping at the first three matches
+// locks that cliff when it false-passes (Dock steps 0007/0009,
+// C1 01, BO 02) and a later store comes back with its high byte
+// replaced. Silicon keeps that row open until three matches at the
+// edge or above lock. Only a row with no such match locks the cliff.
+// The Micron model slips if a write lands on its edge, so sim keeps
+// the first three matches unless +eye_decide.
 localparam [7:0] EYE_LAST = 8'd16; // offsets -4 .. +12
 function [7:0] eye_at;
     input [7:0] edge_c;
@@ -822,9 +831,11 @@ end
 
 // Write-eye trainer. Runs once the read gate has precharged, before
 // read_calib_done. Eight halfwords cover every DQ bit, the neighbour
-// column, and the two bytes. Phase 0 centers lane 0 on its low byte,
-// phase 1 centers lane 1 on its high byte, phase 2 requires the whole
-// word. A miss there tries the 5x5 box. No match leaves calib low.
+// column, and the two bytes. A sample counts when the whole word
+// matches in dq_in[0]. The inner scan finishes the lane-0 row.
+// Three matches at or above the write-level edge lock that center.
+// If the row never matches there, three cliff matches lock instead.
+// No match on any row leaves calib low.
 // The window math is an 8-bit subtract. Doing it in blocking locals
 // inside the clocked block missed pclk by about 1.5 ns.
 wire [7:0] span_lo = in_run ? run_lo : eye_bo;
@@ -835,9 +846,24 @@ wire       close_wider = !have || (close_w >= best_w);
 // Lane 1 is the inner sweep. EYE_LAST is the last offset index.
 wire       inner_end = (eye_bo >= EYE_LAST);
 wire       outer_end = (eye_o0 >= EYE_LAST);
-// Three full-word passes, or the first fail after a pass, ends the row.
-wire       eye_close = (!eye_bad && span_w >= 8'd3)
-                    || (eye_bad && in_run);
+// Index 4 is the write-level edge. 0..3 are the cliff.
+wire       eye_above = (eye_bo >= 8'd4);
+wire [7:0] cliff_w = cliff_hi - cliff_lo + 8'd1;
+// Three matches at or above the edge end the row. A cliff match
+// does not, and neither does a miss: the rest of this row can
+// still hold the data eye.
+// The Micron model passes only below its write-level edge, and a
+// normal write on that edge slips the sim strobe. Sim therefore
+// keeps the first three matches. Silicon, and +eye_decide, do not
+// lock that cliff when the same row has a later window.
+`ifdef SIM
+reg silicon_eye = 1'b0;
+initial silicon_eye = $test$plusargs("eye_decide");
+`else
+wire silicon_eye = 1'b1;
+`endif
+wire       eye_close = (!eye_bad && span_w >= 8'd3 && (eye_above || !silicon_eye))
+                    || (eye_bad && in_run && !silicon_eye);
 always @(posedge pclk) begin
     eye_pulse_rd <= 1'b0;
     eye_pulse_wr <= 1'b0;
@@ -865,6 +891,11 @@ always @(posedge pclk) begin
         best_w <= 8'd0;
         box_dx <= -4'sd2;
         box_dy <= -4'sd2;
+        cliff_run <= 1'b0;
+        have_cliff <= 1'b0;
+        cliff_lo <= 8'd0;
+        cliff_hi <= 8'd0;
+        cliff_cen <= 8'd0;
     end else if (!eye_ran && eye_arm && state == IDLE) begin
         eye_ran <= 1'b1;
         eye_mode <= 1'b1;
@@ -880,6 +911,8 @@ always @(posedge pclk) begin
         in_run <= 1'b0;
         have <= 1'b0;
         best_w <= 8'd0;
+        cliff_run <= 1'b0;
+        have_cliff <= 1'b0;
         $display("EYE edges %0d/%0d", wstep, wstep1);
         $fflush();
     end else if (eye_mode) begin
@@ -943,9 +976,21 @@ always @(posedge pclk) begin
                     if (eye_idx == 4'd1)
                         eye_g1 <= eye_got;
                     eye_wait <= 5'd0;
-                    if (eye_idx == 4'd7)
+                    if (eye_idx == 4'd7) begin
+`ifdef SIM
+                        // +eye_decide plants a cliff at 0..2 and a real
+                        // window at 5..7 on lane 0's first row. The lock
+                        // has to be the real window.
+                        if ($test$plusargs("eye_decide")) begin
+                            if (eye_o0 == 8'd0 && (eye_bo <= 8'd2
+                                    || (eye_bo >= 8'd5 && eye_bo <= 8'd7)))
+                                eye_bad <= 1'b0;
+                            else
+                                eye_bad <= 1'b1;
+                        end
+`endif
                         eye_after <= E_MARK;
-                    else begin
+                    end else begin
                         eye_idx <= eye_idx + 4'd1;
                         eye_after <= E_RREQ;
                     end
@@ -960,7 +1005,22 @@ always @(posedge pclk) begin
                     eye_wait <= eye_wait + 5'd1;
             end
             E_MARK: begin
-                if (!eye_bad) begin
+                // A cliff run ends at the first miss or at the edge.
+                // Its center is kept only as this row's fallback.
+                if (cliff_run && (eye_bad || eye_above)) begin
+                    cliff_run <= 1'b0;
+                    if (!have_cliff && cliff_w >= 8'd3) begin
+                        have_cliff <= 1'b1;
+                        cliff_cen <= cliff_lo + 8'd1;
+                    end
+                end
+                if (!eye_bad && !eye_above && silicon_eye) begin
+                    eye_pass <= 1'b1;
+                    if (!cliff_run)
+                        cliff_lo <= eye_bo;
+                    cliff_run <= 1'b1;
+                    cliff_hi <= eye_bo;
+                end else if (!eye_bad && (eye_above || !silicon_eye)) begin
                     eye_pass <= 1'b1;
                     if (!in_run)
                         run_lo <= eye_bo;
@@ -1002,6 +1062,18 @@ always @(posedge pclk) begin
                              eye_at(eye_edge0, eye_o0),
                              eye_at(eye_edge1, best_lo + (best_w >> 1)));
                     $fflush();
+                end else if (have_cliff) begin
+                    eye_cen0 <= eye_o0;
+                    eye_cen1 <= cliff_cen;
+                    eye_lock0 <= eye_at(eye_edge0, eye_o0);
+                    eye_lock1 <= eye_at(eye_edge1, cliff_cen);
+                    eye_lock <= 1'b1;
+                    eye_mode <= 1'b0;
+                    eye_commit <= 1'b1;
+                    $display("EYE pass %0d/%0d",
+                             eye_at(eye_edge0, eye_o0),
+                             eye_at(eye_edge1, cliff_cen));
+                    $fflush();
                 end else if (have && best_w > best_row) begin
                     eye_cen0 <= eye_o0;
                     eye_cen1 <= best_lo + (best_w >> 1);
@@ -1022,6 +1094,8 @@ always @(posedge pclk) begin
                         in_run <= 1'b0;
                         have <= 1'b0;
                         best_w <= 8'd0;
+                        cliff_run <= 1'b0;
+                        have_cliff <= 1'b0;
                         eye_st <= E_SETTLE;
                     end
                 end else if (outer_end && best_row != 8'd0) begin
@@ -1044,6 +1118,8 @@ always @(posedge pclk) begin
                     in_run <= 1'b0;
                     have <= 1'b0;
                     best_w <= 8'd0;
+                    cliff_run <= 1'b0;
+                    have_cliff <= 1'b0;
                     eye_st <= E_SETTLE;
                 end
             end

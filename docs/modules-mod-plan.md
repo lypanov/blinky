@@ -121,6 +121,38 @@ openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
 
 R12 becomes `20H`. `Kernel.Install` writes the branch at `20H`, which is `MT[0]`. The blink image never enters `Trap`. A separate trace runs `ASSERT(FALSE)` and holds the LED. The boards load the blink image.
 
+Done. The branch at `MT[0]` is `E7000203H`, which lands on `Trap` at `0x830`. `Trap` loads the instruction at `R15 - 4`, shifts it right by 4, and keeps the low nibble. Trap 0 is `BT R15`. Any other number branches to the hold at `0x1D8C`. The blink trace does not fetch `0x20` or `0x830`. `--assert-false` fetches `0x20`, arrives at `0x1D8C` with the trap number 7 in `R1`, and stays in that hold. Twenty thousand cycles of that trace have no LED edge. `--trap0` fetches `0x20`, returns, and blinks. The delay loop was not edited.
+
+The first Dock load of this image locked the write-level cliff (lane 1 `0007`, lane 0 `0009`, `C1 01`, `BO 02`). The stored branch came back with its high byte replaced, the install compare failed, and the LED held. Stopping at the first three matches is that cliff when the cliff false-passes. Silicon now keeps the lane-0 row open and locks three matches at or above the write-level edge. The Micron model slips if a normal write lands on its own edge, so the sim path still locks its first three matches. `+eye_decide` is the silicon choice on that model.
+
+Verilator of the modules image, `FIRST_VALID` 13, chainFix on:
+
+| N | cycles between edges | first edge |
+|---:|---:|---:|
+| 5 | 657 | 13372 |
+| 6 | 760 | 13475 |
+| 8 | 966 | 13681 |
+
+Those edges are 13372, 14029, 14686, 15343, then 13475, 14235, 14995, 15755, then 13681, 14647, 15613, 16579. The period is still `103*N+142`. The first edge is 12 cycles earlier than Proof 2. `--trap0` at `N = 5` is the same period, with edges 13418, 14075, 14732, 15389. `IMAGE=ddr3modules sim/run_ddr3_cpu_phy.sh` prints `PHY_SCORE pass`: period 3668, first edge 61238, PC `0000101c`, R5 `00000000`, R9 `00000000`, mask `ffffffffff`. That period is still `576*5+788`. The eye on that run is steps 22/23 (`run=16/17`), `rclkpos=1`, `rclksel=3`, at cycle 1984. There is no Micron `ERROR`. `sim/run_ddr3_phy.sh` also prints `PHY_SCORE pass`, and `+eye_decide` locks steps 22/28 (`run=16/1c`) at cycle 4234. The full blink stays 0.499982 Hz on the Nano and 0.320373 Hz on the Dock.
+
+`modules_n262144` placed at 09:57 (Europe/Amsterdam). Logic 4363/4608 (95%; 4121 LUT and 242 ALU), CLS 2258/2304 (98%, 46 free), registers 1634/3612, 6/10 BSRAM. Slow corner 1.14 V 85 C on `clkdiv`: 49 setup endpoints, 0 hold, TNS -20.435, worst slack -1.013 ns, Fmax 26.281 MHz against 27.000 MHz. The 27 MHz `clkdiv` constraint is the one already on this image. SRAM load was bus 3 address 081 only. Idcode `0x100981b`, GW1NSR-4C. CRC check success. Device 078 was not loaded.
+
+```bash
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/impl/pnr/modules_n262144.fs
+```
+
+Webcam `measure_blink`, `roi=nano4k`, duration 20, warmup 2: `blink-measure/20261107-100203`, status blinking, edge 0.4989 Hz, FFT 0.499 Hz, trusted method edge, confidence 0.9983, 661 frames, 29.986 fps, `/dev/video2`. The expected full blink is 0.499982 Hz.
+
+`ddr3modules_n262144` placed at 10:03 (Europe/Amsterdam). Logic 5647/20736 (28%; 5249 LUT and 398 ALU), CLS 3880/10368 (38%), registers 2376/16173, 4/46 BSRAM. 0 setup and 0 hold endpoints. Slow corner 0.95 V 85 C. `pclk` Fmax 98.380 MHz against 96.749. Worst listed setup slack is +0.171 ns. `cpu_clk` Fmax is 42.411 MHz against 24.187 MHz. SRAM load was bus 3 address 078 only. Idcode `0x81b`, GW2A-18. The Nano 4K was not opened for that load. UART on FTDI channel B, 115200 8N1, reopened after the load. The boot line is `..0080`. The settled lines are `C.` (not held). PC stays in the delay loop (`106C`, `1074`, `1078`, `107C`, `1080`, `1084`). Mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. The trained steps on this boot are lane 1 `000C` and lane 0 `0009`. Pattern 0 at the write-level edge and the last pattern-0 read both came back `A55A`. `F` is `AB`. Locked backoff is `C0 00`, `C1 06`, `BO 07`.
+
+```bash
+openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
+  gowin/primer20k/impl/pnr/ddr3modules_n262144.fs
+```
+
+`measure_blink`, `roi=primer20k`, duration 30, warmup 2: `blink-measure/20261107-100819`, status blinking, edge 0.3204 Hz, FFT 0.312 Hz, trusted method edge, confidence 0.9982, 962 frames, 30.006 fps, `/dev/video2`. The expected full blink is 0.320373 Hz.
+
 ### Proof 4 — compiled `Modules.Check` on the ROM loop
 
 Norebo compiles unmodified `Kernel`, `FileDir`, `Files`, and `Modules` in one session. The device runs real `Modules.Check("Blink5")` and real `Modules.Check("9bad")`. The first returns `res = 0`. The second returns `res = 1`. Those words replace the hand-built Modules encodings. The delay loop is still the ROM loop. `Check` does not need `DIV` or the trap, and it comes after both. The tail stays 40 checks. The 44-check netlist stays unloaded.

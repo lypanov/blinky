@@ -31,8 +31,17 @@ Local deltas
 - After the read gate, training writes eight halfwords (every DQ bit,
   the neighbour column, and both bytes) and requires the whole word
   back in dq_in[0]. The scan is offsets -4..+12 from each lane's own
-  write-level edge. The first row with three consecutive full-word
-  passes locks that lane-0 step and the center of the lane-1 run.
+  write-level edge. Offsets -4..-1 are the cliff. Silicon finishes
+  that lane-0 row. Three matches at the edge or above lock that
+  center. Stopping at the first three matches locks the cliff when
+  it false-passes (Dock steps 0007/0009) and a later store comes
+  back with its high byte replaced. A row that matches only on the
+  cliff still locks the cliff. The Micron model passes only below
+  its write-level edge, and a write on that edge slips the sim
+  strobe, so the sim path keeps the first three matches (steps
+  22/23). `+eye_decide` is the silicon choice on that model: a cliff
+  at indices 0..2 and a window at 5..7 lock center 6 (steps 22/28).
+  The first such row locks that lane-0 step and the lane-1 center.
   No pass leaves read_calib_done low, so the LED stays dark.
   dq_in[0] is sampled on the pclk after data_ready rises, which is
   the beat the CPU sees while data_ready is high.
