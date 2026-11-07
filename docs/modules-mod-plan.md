@@ -157,6 +157,36 @@ openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
 
 Norebo compiles unmodified `Kernel`, `FileDir`, `Files`, and `Modules` in one session. The device runs real `Modules.Check("Blink5")` and real `Modules.Check("9bad")`. The first returns `res = 0`. The second returns `res = 1`. Those words replace the hand-built Modules encodings. The delay loop is still the ROM loop. `Check` does not need `DIV` or the trap, and it comes after both. The tail stays 40 checks. The 44-check netlist stays unloaded.
 
+Done. The compiler reads `oberon/src`, not `docs/OberonSources`. One session writes `Kernel.rsc` 4800 bytes key `97E012DD`, `FileDir.rsc` 7988 bytes key `AF8E65FF`, `Files.rsc` 9818 bytes key `73F5D686`, and `Modules.rsc` 5099 bytes key `41C6A19A`. `Modules` imports `Files` at `73F5D686`. Those four files are 27705 bytes. They stay on the host. The 8 KB pROM keeps the 75-word `Check` slice, at `0x8BC`. Both `GetSB` links are `8DC0000CH` (`LDW R13, R12, 12`), so the static base is `MT[3]` and `res` is the word at `0x0B28`. The body is 202 words and ends at `0x9E8`, still below `0x1000`. The delay-loop push at `0x1048` is unchanged. The tail is still 40.
+
+Verilator of the modules image, `FIRST_VALID` 13, chainFix on. `Check("Blink5")` stores `res` 1 then 0. `Check("9bad")` stores `res` 1. The trace does not fetch `0x20`. At the first fetch of `0x1048`, R5 is 0, R8 is 0, R9 is 0, R12 is `0x20`, and R14 is `0xA000`.
+
+| N | cycles between edges | first edge |
+|---:|---:|---:|
+| 5 | 657 | 14692 |
+| 6 | 760 | 14795 |
+| 8 | 966 | 15001 |
+
+Those edges are 14692, 15349, 16006, 16663, then 14795, 15555, 16315, 17075, then 15001, 15967, 16933, 17899. The period is still `103*N+142`. The first edge is 1320 cycles later than Proof 3. `--break-check` still stores `res` 1, 0, 1, then holds at `0x1D8C` with R8 `FFFFFFFF` from cycle 1889. Twenty thousand cycles of that trace have no LED edge. `tools/run_verilator_sim.sh` reports six Blink2 edges at a mean of 84 cycles (98, 182, 266, 350, 434, 518). `IMAGE=ddr3modules sim/run_ddr3_cpu_phy.sh` prints `PHY_SCORE pass`: period 3668, first edge 67362, PC `0000101c`, R5 `00000000`, R9 `00000000`, mask `ffffffffff`. That period is still `576*5+788`. The first edge is 6124 pclk later than Proof 3. The eye on that run is steps 22/23 (`run=16/17`), `rclkpos=1`, `rclksel=3`, at cycle 1984. There is no Micron `ERROR`. The full blink stays 0.499982 Hz on the Nano and 0.320373 Hz on the Dock.
+
+`modules_n262144` placed at 10:59 (Europe/Amsterdam). Logic 4363/4608 (95%; 4121 LUT and 242 ALU), CLS 2258/2304 (98%, 46 free), registers 1634/3612, 6/10 BSRAM. Slow corner 1.14 V 85 C on `clkdiv`: 49 setup endpoints, 0 hold, TNS -20.435, worst slack -1.013 ns, Fmax 26.281 MHz against 27.000 MHz. The 27 MHz `clkdiv` constraint is the one already on this image. SRAM load was bus 3 address 081 only. Idcode `0x100981b`, GW1NSR-4C. CRC check success. Device 078 was not loaded.
+
+```bash
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/impl/pnr/modules_n262144.fs
+```
+
+Webcam `measure_blink`, `roi=nano4k`, duration 20, warmup 2: `blink-measure/20261107-110019-mcp`, status blinking, edge 0.499 Hz, FFT 0.5 Hz, trusted method edge, confidence 1.0, 661 frames, 30 fps, `/dev/video2`. The expected full blink is 0.499982 Hz.
+
+`ddr3modules_n262144` placed at 11:02 (Europe/Amsterdam). Logic 5647/20736 (28%; 5249 LUT and 398 ALU), CLS 3880/10368 (38%), registers 2376/16173, 4/46 BSRAM. 0 setup and 0 hold endpoints. Slow corner 0.95 V 85 C. `pclk` Fmax 98.380 MHz against 96.749. Worst listed setup slack is +0.171 ns. `cpu_clk` Fmax is 42.411 MHz against 24.187 MHz. SRAM load was bus 3 address 078 only. Idcode `0x81b`, GW2A-18. The Nano 4K was not opened for that load. UART on FTDI channel B, 115200 8N1, reopened after the load. The settled lines are `C.` (not held). PC stays in the delay loop (`106C`, `1074`, `1078`, `107C`, `1080`, `1084`, `1088`). Mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. The trained steps on this boot are lane 1 `000C` and lane 0 `0009`. Pattern 0 at the write-level edge and the last pattern-0 read both came back `A55A`. `F` is `AB`. Locked backoff is `C0 00`, `C1 06`, `BO 07`.
+
+```bash
+openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
+  gowin/primer20k/impl/pnr/ddr3modules_n262144.fs
+```
+
+`measure_blink`, `roi=primer20k`, duration 30, warmup 2: `blink-measure/20261107-110434-mcp`, status blinking, edge 0.32 Hz, FFT 0.312 Hz, trusted method edge, confidence 1.0, 961 frames, 30 fps, `/dev/video2`. The expected full blink is 0.320373 Hz.
+
 ### Proof 5 — place Blink5 and fetch that body
 
 This is the hard step, and it is the missing piece of original step 10. It is one placed body, not a move of every fetch. The image copies Blink5 into external memory, walks one real type-chain entry, and fetches that placed body. Reset, training, and the loader stay in the pROM. The body has its own addresses. It does not land on the data table. A fetch before training reads garbage.

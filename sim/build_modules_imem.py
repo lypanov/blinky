@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Step 8 image: the Modules body is the reset path.
 
-tests/BlinkModules.Mod is the formula. This host has no Oberon
-compiler, so this file emits the ORG encodings. Reset still begins
+tests/BlinkModules.Mod is the formula for Init. Reset still begins
 at the setup block. The MOV at 0x9C enters this body instead of the
 memory prologue. The body is
 
@@ -29,6 +28,11 @@ execute BL R12. --assert-false is the separate trace: it plants
 ASSERT(FALSE) (trap 7) in data memory and branches through R12.
 --trap0 is the return trace. Fetch is still the pROM, so the same
 branch is also the ROM word at 20H. The boards load the blink image.
+
+Before the gate, the body calls the compiled Modules.Check twice.
+sim/inner_core.py compiles those words. "Blink5" must leave res 0
+and "9bad" must leave res 1. Both differences fold into R8, which
+the existing link-slot store already checks. The tail stays 40.
 """
 from __future__ import annotations
 
@@ -39,6 +43,7 @@ import sys
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 from build_files_imem import EXTRA_CHECKS, FILES, NAME_ACC, files_imem  # noqa: E402
+from inner_core import MOD_NUM, load_inner  # noqa: E402
 from build_hyperram_imem import (  # noqa: E402
     Asm,
     PROLOGUE,
@@ -86,6 +91,16 @@ MOV_H = 0x20000000
 # Word whose bit 0 is set. SYSTEM.BIT rotates right by bit+1 and tests MI.
 BIT_ADDR = 0x05E8
 BIT_WORD = 1
+# Check's static base is MT[3]. res is at data+28H, the compiler's offset.
+MOD_DATA = 0x0B00
+RES_ADDR = MOD_DATA + 0x28
+MT3 = MT_ORG + MOD_NUM * 4
+BLINK_NAME = 0x0B40
+BAD_NAME = 0x0B48
+BLINK_LEN = 7  # "Blink5" plus 0X, ORS.slen
+BAD_LEN = 5  # "9bad" plus 0X
+BLINK_WORDS = (0x6E696C42, 0x0000356B)  # Blink5\0\0
+BAD_WORDS = (0x64616239, 0x00000000)  # 9bad\0\0\0\0
 
 
 def _store_abs(a: Asm, addr: int, value: int | None) -> None:
@@ -114,6 +129,26 @@ def _f1s(op: int, rd: int, rb: int, imm: int) -> int:
 def _fold(a: Asm) -> None:
     """IOR R0 into the difference accumulator R8."""
     a.word(f0(6, 8, 8, 0))
+
+
+def _bl(a: Asm, name: str) -> None:
+    def fn(pc: int, name: str = name) -> int:
+        off = (a.labels[name] - (pc + 4)) // 4
+        if not -0x800000 <= off < 0x800000:
+            raise ValueError(f"BL to {name} is out of range")
+        return 0xF7000000 | (off & 0xFFFFFF)
+
+    a.at(fn)
+
+
+def _call_check(a: Asm, name_addr: int, length: int, expect: int, tag: str) -> None:
+    a.word(mov_imm(0, name_addr))
+    a.word(mov_imm(1, length))
+    _bl(a, "check")
+    a.label(tag)
+    _load_abs(a, RES_ADDR, 0)
+    a.word(f1(9, 0, 0, expect))  # SUB R0, R0, expect
+    _fold(a)
 
 
 def _div_pair(a: Asm, expect_q: int) -> None:
@@ -247,6 +282,7 @@ def assemble_body(
     break_div: bool = False,
     break_bit: bool = False,
     trap_num: int | None = None,
+    break_check: bool = False,
 ) -> tuple[list[int], dict[str, int]]:
     a = Asm()
     a.word(mov_imm(8, 0))
@@ -298,6 +334,20 @@ def assemble_body(
     a.word(mov_imm(12, MT_ORG))
     _install(a)
 
+    # Compiled Modules.Check. R12 is 20H and R14 is still the stack
+    # origin, so the 20-byte frame sits on the high end of the reserve.
+    # The two results fold into the same R8 the gate already tests.
+    _store_abs(a, MT3, MOD_DATA)
+    for addr, word in (
+        (BLINK_NAME, BLINK_WORDS[0]),
+        (BLINK_NAME + 4, BLINK_WORDS[1]),
+        (BAD_NAME, BAD_WORDS[0]),
+        (BAD_NAME + 4, BAD_WORDS[1]),
+    ):
+        _store_abs(a, addr, word)
+    _call_check(a, BLINK_NAME, BLINK_LEN, 1 if break_check else 0, "res_blink")
+    _call_check(a, BAD_NAME, BAD_LEN, 1, "res_bad")
+
     a.word(f1(9, 0, 8, 0))
     a.label("gate")
     a.at(lambda pc, hold=hold: cond_branch(pc, hold, BNE))
@@ -317,6 +367,9 @@ def assemble_body(
 
     a.label("trap")
     _trap_body(a, hold)
+    a.label("check")
+    for word in load_inner()["check"]:
+        a.word(word)
 
     prog = a.encode(BODY)
     end = BODY + len(prog) * 4
@@ -380,6 +433,7 @@ def modules_imem(
     break_div: bool = False,
     break_bit: bool = False,
     trap_num: int | None = None,
+    break_check: bool = False,
 ) -> tuple[list[int], dict[str, int], int]:
     words, labels, nprog = files_imem(
         final_system,
@@ -399,6 +453,7 @@ def modules_imem(
         break_div=break_div,
         break_bit=break_bit,
         trap_num=trap_num,
+        break_check=break_check,
     )
     _place(words, BODY // 4, prog, 0x1000 // 4)
     if fall:
@@ -460,7 +515,10 @@ def check_image(words: list[int], labels: dict[str, int], prog_len: int) -> None
         raise SystemExit("the known bit word is not stored")
     if bl_r12(0) in words or bl_r12(7) in words:
         raise SystemExit("the blink image executes a trap")
+    if words[labels["res_blink"] // 4 + 2] != f1(9, 0, 0, 0):
+        raise SystemExit("Blink5 is not expected to return res 0")
     check_trap(words, labels)
+    check_compiled(words, labels, break_check=False)
 
 
 def check_trap(words: list[int], labels: dict[str, int]) -> None:
@@ -486,6 +544,29 @@ def check_trap(words: list[int], labels: dict[str, int]) -> None:
         raise SystemExit("Install does not read the branch back")
 
 
+def check_compiled(words: list[int], labels: dict[str, int], break_check: bool) -> None:
+    """The ROM slice is Norebo's Check, and the tail did not grow."""
+    if EXTRA_CHECKS != 40:
+        raise SystemExit(f"the tail is {EXTRA_CHECKS}, and 44 stays unloaded")
+    core = load_inner()
+    check = core["check"]
+    at = labels["check"]
+    got = words[at // 4 : at // 4 + len(check)]
+    if got != check:
+        raise SystemExit("ROM Check is not the compiled procedure")
+    if check.count(0x8DC0000C) != 2:
+        raise SystemExit("GetSB was not fixed to LDW R13, R12, 12")
+    expect = 1 if break_check else 0
+    if words[labels["res_blink"] // 4 + 2] != f1(9, 0, 0, expect):
+        raise SystemExit(f"Blink5 expect is not {expect}")
+    if words[labels["res_bad"] // 4 + 2] != f1(9, 0, 0, 1):
+        raise SystemExit("9bad is not expected to return res 1")
+    if mov_imm(0, MT3) not in words[BODY // 4 : at // 4] and mov_imm(1, MT3) not in words:
+        raise SystemExit("MT[3] is not planted")
+    if words[0x1048 // 4] != 0x4EE90004 or words[0x104C // 4] != 0xAFE00000:
+        raise SystemExit("the delay loop push moved")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build the step-8 Modules IMEM")
     parser.add_argument("--max-iter", type=int, default=None)
@@ -508,6 +589,8 @@ def main() -> int:
                         help="Sim only: BL R12 with trap 7 and hold the LED")
     parser.add_argument("--trap0", action="store_true",
                         help="Sim only: BL R12 with trap 0, then return")
+    parser.add_argument("--break-check", action="store_true",
+                        help="Sim only: expect res 1 from Check(Blink5)")
     parser.add_argument(
         "--out",
         default=os.path.join(ROOT, "sim", "visualizer", "imem", "modules.words"),
@@ -531,6 +614,7 @@ def main() -> int:
         break_div=args.break_div,
         break_bit=args.break_bit,
         trap_num=trap_num,
+        break_check=args.break_check,
     )
     clean = (
         args.break_slot is None
@@ -541,12 +625,14 @@ def main() -> int:
         and not args.skip_proof
         and not args.break_div
         and not args.break_bit
+        and not args.break_check
         and trap_num is None
     )
     if clean:
         check_image(words, labels, nprog)
     else:
         check_trap(words, labels)
+        check_compiled(words, labels, break_check=args.break_check)
     if trap_num is not None and words[labels["assert_bl"] // 4] != bl_r12(trap_num):
         raise SystemExit("the trace BL is not ORG.Trap")
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
@@ -565,9 +651,14 @@ def main() -> int:
         hex(labels["flush"]),
         "limit",
         hex(LIMIT),
+        "check",
+        hex(labels["check"]),
         "->",
         args.out,
     )
+    if clean:
+        for name, mod in load_inner()["modules"].items():
+            print(f"[ok] {name}.rsc {mod['bytes']} bytes key {mod['key']:08X}")
     return 0
 
 

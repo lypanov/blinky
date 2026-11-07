@@ -1089,8 +1089,9 @@ object CPUSubset0 {
     // table, the procedure variable, and the BLR link).
     // 40 matches sim/build_files_imem.py and sim/build_modules_imem.py.
     // The file compares reuse the step-6 link slot, and Init's reserve
-    // compare is XOR-ed into that same store. Extra tail bits missed
-    // timing and were not loaded.
+    // compare is XOR-ed into that same store. Modules.Check's two results
+    // fold into that same word. Extra tail bits missed timing and were
+    // not loaded.
     // A mismatch leaves the LED dark, because a slot that is never stored
     // stays clear.
     val extra = if (modules || files || moddesc || ddr3moddesc || ddr3files || ddr3modules) 40 else if (pdchain || ddr3pd) 37 else if (fetchbl || ddr3fetch) 34 else if (rsc || ddr3rsc) 32 else if (fixup || ddr3fixup) 20 else 0

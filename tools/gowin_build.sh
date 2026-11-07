@@ -115,7 +115,7 @@ if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" =
   fi
 fi
 if [[ "$FPGA_IMAGE" == "modules" ]]; then
-  echo "==> Modules IMEM (Init with a 32 KB reserve, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
+  echo "==> Modules IMEM (32 KB reserve, compiled Modules.Check, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
   python3 "$ROOT/sim/build_modules_imem.py" \
     --max-iter "$BLINK3_MAXITER" \
     --pad 2048 \
@@ -192,7 +192,7 @@ elif [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE"
     exit 1
   fi
   if [[ "$FPGA_IMAGE" == "ddr3modules" ]]; then
-    echo "==> DDR3 Modules IMEM (Init with a 32 KB reserve, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
+    echo "==> DDR3 Modules IMEM (32 KB reserve, compiled Modules.Check, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
     python3 "$ROOT/sim/build_modules_imem.py" \
       --max-iter "$BLINK3_MAXITER" \
       --pad 2048 \
@@ -372,6 +372,13 @@ elif [[ "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "ddr3moddesc" || "$FPGA_I
       echo "    body still has the prologue MOV 40001200"
     else
       echo "error: prologue MOV 40001200 missing from the modules body" >&2
+      exit 1
+    fi
+    links="$(grep -ci '8dc0000c' "$IMEM_HEX" || true)"
+    if [[ "$links" == "2" ]]; then
+      echo "    ROM has both fixed Modules.Check GetSB links"
+    else
+      echo "error: compiled Check GetSB 8dc0000c appears $links times, expected 2" >&2
       exit 1
     fi
   fi
