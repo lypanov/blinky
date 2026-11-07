@@ -10,11 +10,15 @@ memory prologue. The body is
 
 and the prologue's success path is still Load("Blink5"). The 32 KB
 reserve is that DEC. One store lands at each end of the gap and both
-words are read back into the same difference. R14 becomes the stack
-origin that was read, and the delay loop's existing push lands on
-the high end. Nothing is added inside the delay loop. chainFix stays
-on. The tail does not grow: the proof word is XOR-ed into the
-step-7 store at the link slot.
+words are read back into the same difference. Before the gate, the
+body also checks 58 DIV 29 = 2, 58 MOD 29 = 0 (MOV from H), the same
+pair as an F0 divide, floor division of -5 by 3, and SYSTEM.BIT of
+bit 0 of the word 1. A failed predicate is a nonzero difference, and
+the existing BNE holds the LED before the delay loop. R14 becomes
+the stack origin that was read, and the delay loop's existing push
+lands on the high end. Nothing is added inside the delay loop.
+chainFix stays on. The tail does not grow: the proof word is XOR-ed
+into the step-7 store at the link slot.
 """
 from __future__ import annotations
 
@@ -62,7 +66,13 @@ MT1 = 0x50
 MT2 = 0x70
 BNE = 9
 ALWAYS = 7
+MI = 0
 BT_R0 = 0xC7000000
+# F0 u=1 op MOV, Rd = R0. ORG.H(0) and the MOD arm of DivOp.
+MOV_H = 0x20000000
+# Word whose bit 0 is set. SYSTEM.BIT rotates right by bit+1 and tests MI.
+BIT_ADDR = 0x05E8
+BIT_WORD = 1
 
 
 def _store_abs(a: Asm, addr: int, value: int | None) -> None:
@@ -78,11 +88,73 @@ def _load_abs(a: Asm, addr: int, rd: int) -> None:
     a.word(ldw(rd, 1, 0))
 
 
+def _f1s(op: int, rd: int, rb: int, imm: int) -> int:
+    """F1 with the v bit set when the immediate is negative."""
+    if not -0x8000 <= imm <= 0xFFFF:
+        raise ValueError(imm)
+    word = f1(op, rd, rb, imm & 0xFFFF)
+    if imm < 0:
+        word |= 0x10000000
+    return word
+
+
+def _fold(a: Asm) -> None:
+    """IOR R0 into the difference accumulator R8."""
+    a.word(f0(6, 8, 8, 0))
+
+
+def _div_pair(a: Asm, expect_q: int) -> None:
+    """R0 holds the dividend. Subtract the expected quotient and fold H."""
+    if expect_q < 0:
+        a.word(_f1s(9, 0, 0, expect_q))
+    else:
+        a.word(f1(9, 0, 0, expect_q))
+    _fold(a)
+    a.word(MOV_H)
+    _fold(a)
+
+
+def _div_checks(a: Asm, break_div: bool) -> None:
+    """58 DIV 29 = 2, remainder 0, as F1 and as F0. Then -5 DIV 3 = -2, H = 1."""
+    a.word(mov_imm(0, 58))
+    a.word(f1(11, 0, 0, 29))
+    _div_pair(a, 3 if break_div else 2)
+    a.word(mov_imm(0, 58))
+    a.word(mov_imm(1, 29))
+    a.word(f0(11, 0, 0, 1))
+    a.word(f1(9, 0, 0, 2))
+    _fold(a)
+    a.word(MOV_H)
+    _fold(a)
+    a.word(_f1s(0, 0, 0, -5))
+    a.word(f1(11, 0, 0, 3))
+    a.word(_f1s(9, 0, 0, -2))
+    _fold(a)
+    a.word(MOV_H)
+    a.word(f1(9, 0, 0, 1))
+    _fold(a)
+
+
+def _bit_check(a: Asm, break_bit: bool) -> None:
+    """SYSTEM.BIT of bit 0: LDW, ROR by 1, MI. A clear sign poisons R8."""
+    a.word(mov_imm(0, 0 if break_bit else BIT_WORD))
+    a.word(mov_imm(1, BIT_ADDR))
+    a.word(stw(0, 1, 0))
+    a.word(ldw(1, 1, 0))
+    a.word(f1(3, 1, 1, 1))
+    a.branch("bit_ok", MI)
+    a.word(mov_imm(0, 1))
+    _fold(a)
+    a.label("bit_ok")
+
+
 def assemble_body(
     hold: int,
     stub_return: int,
     reserve: int,
     proof: int,
+    break_div: bool = False,
+    break_bit: bool = False,
 ) -> tuple[list[int], dict[str, int]]:
     a = Asm()
     a.word(mov_imm(8, 0))
@@ -116,6 +188,11 @@ def assemble_body(
     a.word(f0(6, 8, 8, 0))
     a.word(f1(9, 0, 6, HIGH_MARK))
     a.word(f0(6, 8, 8, 0))
+
+    # DIV, H, and SYSTEM.BIT. A wrong quotient, a wrong remainder, or a
+    # clear sign after the rotate leaves R8 nonzero and the gate holds.
+    _div_checks(a, break_div)
+    _bit_check(a, break_bit)
 
     # Power-up memory is 0. A skipped store must not look like success,
     # so the stored word is the difference XOR a nonce.
@@ -184,6 +261,8 @@ def modules_imem(
     break_dec: bool = False,
     fall: bool = False,
     skip_proof: bool = False,
+    break_div: bool = False,
+    break_bit: bool = False,
 ) -> tuple[list[int], dict[str, int], int]:
     words, labels, nprog = files_imem(
         final_system,
@@ -200,6 +279,8 @@ def modules_imem(
         store_pc + 4,
         RESERVE + (1 if break_dec else 0),
         PROOF_SKIP if skip_proof else PROOF,
+        break_div=break_div,
+        break_bit=break_bit,
     )
     _place(words, BODY // 4, prog, 0x1000 // 4)
     if fall:
@@ -242,6 +323,21 @@ def check_image(words: list[int], labels: dict[str, int], prog_len: int) -> None
     # The delay loop's MHI is untouched, and 0x1048 is still not a MOV here.
     if any(word == mov_imm(0, 0x1048) for word in block):
         raise SystemExit("MOV of 0x1048 is in the modules body")
+    if f1(11, 0, 0, 29) not in block or f0(11, 0, 0, 1) not in block:
+        raise SystemExit("F1 and F0 DIV of 58 by 29 are not both in the body")
+    if block.count(MOV_H) < 3:
+        raise SystemExit("MOV from H is not in each divide check")
+    if _f1s(0, 0, 0, -5) not in block or f1(11, 0, 0, 3) not in block:
+        raise SystemExit("the floor division of -5 by 3 is missing")
+    if f1(9, 0, 0, 3) in block:
+        raise SystemExit("the broken quotient compare is in the clean image")
+    bit_ok = labels["bit_ok"]
+    if words[(bit_ok - 16) // 4] != f1(3, 1, 1, 1):
+        raise SystemExit("SYSTEM.BIT does not ROR by bit+1")
+    if words[(bit_ok - 12) // 4] != cond_branch(bit_ok - 12, bit_ok, MI):
+        raise SystemExit("SYSTEM.BIT is not tested with MI")
+    if mov_imm(1, BIT_ADDR) not in block or mov_imm(0, BIT_WORD) not in block:
+        raise SystemExit("the known bit word is not stored")
 
 
 def main() -> int:
@@ -258,6 +354,10 @@ def main() -> int:
                         help="Replace the Init branch to the hold with MOV R1, R1")
     parser.add_argument("--skip-proof", action="store_true",
                         help="Store the proof word at 0x5E0 so 0x5F0 stays 0")
+    parser.add_argument("--break-div", action="store_true",
+                        help="Expect quotient 3 so the DIV predicate fails")
+    parser.add_argument("--break-bit", action="store_true",
+                        help="Store a clear bit 0 so the MI predicate fails")
     parser.add_argument(
         "--out",
         default=os.path.join(ROOT, "sim", "visualizer", "imem", "modules.words"),
@@ -275,6 +375,8 @@ def main() -> int:
         break_dec=args.break_dec,
         fall=args.fall,
         skip_proof=args.skip_proof,
+        break_div=args.break_div,
+        break_bit=args.break_bit,
     )
     clean = (
         args.break_slot is None
@@ -283,6 +385,8 @@ def main() -> int:
         and not args.break_dec
         and not args.fall
         and not args.skip_proof
+        and not args.break_div
+        and not args.break_bit
     )
     if clean:
         check_image(words, labels, nprog)

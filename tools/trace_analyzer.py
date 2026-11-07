@@ -24,7 +24,9 @@ def disassemble(instr):
         if u == 0:
             return f"{op_names[op]} R{a}, R{b}, R{c}"
         else:
-            if op == 8:
+            if op == 0:
+                return f"MOV R{a}, H"
+            elif op == 8:
                 return f"ADC R{a}, R{b}, R{c}"
             elif op == 9:
                 return f"SBC R{a}, R{b}, R{c}"

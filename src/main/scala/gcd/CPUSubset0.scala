@@ -360,7 +360,30 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   
   // LED state register for memory-mapped LED control
   val ledState = RegInit(false.B)
-  
+
+  // H is the mul/div remainder. MOV Ra, H (F0, u=1, op MOV) reads it.
+  // DIV is one restoring step per clock, then a sign fix, on this adder.
+  // A combinational divider does not fit the Nano 4K.
+  val hReg = RegInit(0.U(32.W))
+  val divPhase = RegInit(0.U(6.W))
+  val divQuot = RegInit(0.U(32.W))
+  val divRem = RegInit(0.U(32.W))
+  val divDen = RegInit(0.U(32.W))
+  val divDest = RegInit(0.U(4.W))
+  val divNegD = RegInit(false.B)
+  val divNegS = RegInit(false.B)
+  val divNegQ = RegInit(false.B)
+  val divNegR = RegInit(false.B)
+  val divAdjust = RegInit(false.B)
+  val divFix = RegInit(false.B)
+  val divLhs = WireDefault(0.U(32.W))
+  val divRhs = WireDefault(0.U(32.W))
+  val divSub = WireDefault(true.B)
+  val divRhsEff = Mux(divSub, (~divRhs).asUInt, divRhs)
+  val divSum = Cat(0.U(1.W), divLhs) + Cat(0.U(1.W), divRhsEff) + Mux(divSub, 1.U(33.W), 0.U(33.W))
+  val divDiff = divSum(31, 0)
+  val divGe = divSum(32)
+
   // Main execution state machine.
   // A pending load completes when memStall is low. Block RAM ties memStall
   // to 0, so this is still the original one-cycle load. Extra stall cycles
@@ -419,6 +442,71 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         printf(p"Load complete R${memoryTargetReg} byte=${memoryIsByte} lane=${memoryLane} word=${loaded}\n")
       }
       memoryAccessPending := false.B
+    }
+  } .elsewhen (divPhase =/= 0.U) {
+    // Phase 1..2 take absolute values. 3..34 are the 32 restoring steps.
+    // 35..36 apply the toward-zero signs. 37..38 are Oberon's floor
+    // adjustment when the divisor is positive and the remainder is negative.
+    when (divPhase === 1.U) {
+      when (divNegD) {
+        divLhs := 0.U
+        divRhs := divQuot
+        divQuot := divDiff
+      }
+      divPhase := 2.U
+    } .elsewhen (divPhase === 2.U) {
+      when (divNegS) {
+        divLhs := 0.U
+        divRhs := divDen
+        divDen := divDiff
+      }
+      divPhase := 3.U
+    } .elsewhen (divPhase <= 34.U) {
+      val rShift = Cat(divRem(30, 0), divQuot(31))
+      divLhs := rShift
+      divRhs := divDen
+      divRem := Mux(divGe, divDiff, rShift)
+      divQuot := Cat(divQuot(30, 0), divGe)
+      divPhase := divPhase + 1.U
+    } .elsewhen (divPhase === 35.U) {
+      when (divNegQ) {
+        divLhs := 0.U
+        divRhs := divQuot
+        divQuot := divDiff
+      }
+      divPhase := 36.U
+    } .elsewhen (divPhase === 36.U) {
+      val nextRem = Mux(divNegR, divDiff, divRem)
+      when (divNegR) {
+        divLhs := 0.U
+        divRhs := divRem
+      }
+      divRem := nextRem
+      divFix := divAdjust && nextRem(31)
+      divPhase := 37.U
+    } .elsewhen (divPhase === 37.U) {
+      when (divFix) {
+        divLhs := divQuot
+        divRhs := 1.U
+        divQuot := divDiff
+      }
+      divPhase := 38.U
+    } .elsewhen (divPhase === 38.U) {
+      val nextRem = Mux(divFix, divDiff, divRem)
+      when (divFix) {
+        divLhs := divRem
+        divRhs := divDen
+        divSub := false.B
+      }
+      hReg := nextRem
+      regWrite := true.B
+      regWriteAddr := divDest
+      regWriteData := divQuot
+      divPhase := 0.U
+      pcNext := nextPC
+      printf(p"DIV done R${divDest}=${divQuot} H=${nextRem}\n")
+    } .otherwise {
+      divPhase := 0.U
     }
   } .elsewhen (isBranch) {
     // Check for halt instruction (branch self with e7ffffff)
@@ -642,6 +730,15 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
           
           // Debug output for MHI
           printf(p"MHI: R$regA = ${imm} << 16 = ${imm << 16}\n")
+        } .elsewhen(!useImmediate && (format === "b0010".U)) {
+          // F0 u=1, op MOV. ORG.H and the MOD arm: Ra = H. v is 0.
+          regWrite := true.B
+          regWriteAddr := regA
+          regWriteData := hReg
+          z := hReg === 0.U
+          n := hReg(31)
+          printf(p"MOV H: R$regA = ${hReg}\n")
+          pcNext := nextPC
         } .otherwise {
           regWrite := true.B
           regWriteAddr := regA
@@ -767,6 +864,21 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         regWriteAddr := regA
         regWriteData := result
         pcNext := nextPC
+      }
+      is(11.U) { // DIV. Quotient in Ra, remainder in H. PC holds until phase 38.
+        val unsigned = format(1)
+        divQuot := bval
+        divRem := 0.U
+        divDen := operand
+        divDest := regA
+        divNegD := bval(31) && !unsigned
+        divNegS := operand(31) && !unsigned
+        divNegQ := (bval(31) ^ operand(31)) && !unsigned
+        divNegR := bval(31) && !unsigned
+        divAdjust := !unsigned && !operand(31) && (operand =/= 0.U)
+        divFix := false.B
+        divPhase := 1.U
+        printf(p"DIV: R$regB=${bval} / ${operand} -> R$regA\n")
       }
     }
   } .otherwise {
