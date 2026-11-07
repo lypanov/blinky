@@ -24,7 +24,13 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
   })
   
   // Create CPU with the provided instructions
-  val cpu = Module(new CPUSubset0(instructionHexStrings, customMemoryImage = customMemoryImage))
+  // The FPGA image keeps the Verilog ROM. Treadle leaves that black box
+  // unimplemented, so these tests use the registered Chisel copy.
+  val cpu = Module(new CPUSubset0(
+    instructionHexStrings,
+    customMemoryImage = customMemoryImage,
+    chiselRom = true
+  ))
   
   // Create memory controller (use mock version for tests)
   val memoryController = Module(new MemoryController(useRealGowin = false))
@@ -35,6 +41,8 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
   memoryController.io.cpuWrite := cpu.io.memWrite
   memoryController.io.cpuRead := cpu.io.memRead
   cpu.io.memReadData := memoryController.io.cpuReadData
+  // Block RAM has no wait states. The FPGA wrappers tie this the same way.
+  cpu.io.memStall := false.B
   
   // Connect outputs
   io.r0 := cpu.io.r0

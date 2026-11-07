@@ -47,6 +47,28 @@ class InstrRom(depth: Int, addrBits: Int, hexPath: String) extends BlackBox {
   romWriter.close()
 }
 
+// Treadle does not run the Verilog black box, so the unit tests use this
+// register. The address is the next PC and the word at the current PC is
+// what comes out, which is the same read as InstrRom.
+class ChiselInstrRom(words: Seq[String], addrBits: Int) extends Module {
+  val io = IO(new Bundle {
+    val addr = Input(UInt(addrBits.W))
+    val data = Output(UInt(32.W))
+    val overlayEn = Input(Bool())
+    val overlayData = Input(UInt(32.W))
+  })
+  val mem = VecInit(words.map { token =>
+    (java.lang.Long.parseLong(token, 16) & 0xffffffffL).U(32.W)
+  })
+  val data = Reg(UInt(32.W))
+  when (io.overlayEn) {
+    data := io.overlayData
+  } .otherwise {
+    data := mem(io.addr)
+  }
+  io.data := data
+}
+
 // Slots past the 45-bit mask. The address is registered on the store
 // cycle and compared on the next cycle, so the compare is not part of
 // the instruction path. The step-6 stores land hundreds of cycles
@@ -76,7 +98,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
                  requireMemCheck: Boolean = false,
                  extraChecks: Int = 0,
                  fetchStored: Boolean = false,
-                 chainFix: Boolean = false) extends Module {
+                 chainFix: Boolean = false,
+                 chiselRom: Boolean = false) extends Module {
   val io = IO(new Bundle {
     val r0 = Output(UInt(32.W))  // Output register R0 for testing
     val r1 = Output(UInt(32.W))  // Output register R1 for testing
@@ -213,10 +236,25 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val fetchWord = Mux(reset.asBool,
     (0x80.U(32.W) >> 2)(addrBits - 1, 0),
     (pcNext >> 2)(addrBits - 1, 0))
-  val instructionRom = Module(new InstrRom(imemDepth, addrBits, imemHexFile.getAbsolutePath))
-  instructionRom.io.clk := clock
-  instructionRom.io.addr := fetchWord
-  val instruction = instructionRom.io.data
+  val romAddr = Wire(UInt(addrBits.W))
+  romAddr := fetchWord
+  val romOverlayEn = WireDefault(false.B)
+  val romOverlayData = WireDefault(0.U(32.W))
+  val instruction = Wire(UInt(32.W))
+  if (chiselRom) {
+    val rom = Module(new ChiselInstrRom(imemPadded, addrBits))
+    rom.io.addr := romAddr
+    rom.io.overlayEn := romOverlayEn
+    rom.io.overlayData := romOverlayData
+    instruction := rom.io.data
+  } else {
+    val instructionRom = Module(new InstrRom(imemDepth, addrBits, imemHexFile.getAbsolutePath))
+    instructionRom.io.clk := clock
+    instructionRom.io.addr := romAddr
+    instructionRom.io.overlayEn := romOverlayEn
+    instructionRom.io.overlayData := romOverlayData
+    instruction := instructionRom.io.data
+  }
 
   // Step 4. One PC (0x1F00) executes the word HyperRAM returns for that
   // address, not the ROM word. The ROM word there is a hold. The fetch
@@ -236,8 +274,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val startFetch = WireDefault(false.B)
   if (chainFix) {
     // Step 5 fills the overlay from the patch table, after pcNext is known.
-    instructionRom.io.overlayEn := false.B
-    instructionRom.io.overlayData := 0.U
+    romOverlayEn := false.B
+    romOverlayData := 0.U
   } else if (fetchStored) {
     stallFetch := atPatch && !doneFetch
     when (stallFetch) {
@@ -257,11 +295,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       nextInject := false.B
       nextDone := false.B
     }
-    instructionRom.io.overlayEn := inject
-    instructionRom.io.overlayData := fetchedWord
+    romOverlayEn := inject
+    romOverlayData := fetchedWord
   } else {
-    instructionRom.io.overlayEn := false.B
-    instructionRom.io.overlayData := 0.U
+    romOverlayEn := false.B
+    romOverlayData := 0.U
   }
   fetching := nextFetching
   inject := nextInject
@@ -907,20 +945,20 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       Mux(useHits(i), patchData(i), acc)
     }
     when (useHits.asUInt.orR) {
-      instructionRom.io.overlayEn := true.B
-      instructionRom.io.overlayData := fetchData
+      romOverlayEn := true.B
+      romOverlayData := fetchData
     }
     when (romPhase === 1.U) {
-      instructionRom.io.addr := ((pc + 4.U) >> 2)(addrBits - 1, 0)
+      romAddr := ((pc + 4.U) >> 2)(addrBits - 1, 0)
     } .elsewhen (holdForCode) {
-      instructionRom.io.addr := (codeRomAddr >> 2)(addrBits - 1, 0)
+      romAddr := (codeRomAddr >> 2)(addrBits - 1, 0)
     }
   }
   // Last so it wins over the code-page address. While reset is 1 the
   // ROM must present the instruction at 0x80. An X on holdForCode would
   // otherwise sink this select and the first fetch stays X.
   when (reset.asBool) {
-    instructionRom.io.addr := (0x80.U(32.W) >> 2)(addrBits - 1, 0)
+    romAddr := (0x80.U(32.W) >> 2)(addrBits - 1, 0)
   }
   
   // Register write logic
