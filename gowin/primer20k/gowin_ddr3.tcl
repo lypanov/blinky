@@ -36,10 +36,13 @@ if {[info exists ::env(GOWIN_OUT_NAME)] && $::env(GOWIN_OUT_NAME) ne ""} {
   set_option -output_base_name ddr3
 }
 set_option -synthesis_tool gowinsynthesis
-set_option -place_option 2
-# route_option 1 left the placed-body image at -0.018 ns on the eye
-# path (pclk Fmax 96.580). That bitstream trained to G=FF5A and held
-# at 0x1D90. route_option 2 closes the same path at +0.309 ns.
+# place_option 2 on the 2-port register file trains the write eye to
+# G=FF00 (F=EB) and the CPU holds at 0x1D8C. route_option 1 on that
+# placement holds at 0x1D90 with the same G. place_option 0 with
+# route_option 2 trains to G=A55A (F=AB) and runs the placed loop.
+# The earlier netlist needed route_option 2 as well: route_option 1
+# left the eye path at -0.018 ns and trained to G=FF5A.
+set_option -place_option 0
 set_option -route_option 2
 set_option -use_done_as_gpio 1
 set_option -use_ready_as_gpio 1

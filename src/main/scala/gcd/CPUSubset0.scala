@@ -148,7 +148,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // otherwise default to 0x80.
   val pc = RegInit(0x80.U(32.W))
   
-  // Registers
+  // Registers. Two same-cycle read ports, below. All 16 stay.
   val regs = RegInit(VecInit(Seq.fill(16)(0.U(32.W))))
   
   // Flags
@@ -377,6 +377,14 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val isLoad = isMemory && !format(1)  // u=0 for load
   val isStore = isMemory && format(1)  // u=1 for store
   val isByte = isMemory && format(0)   // v=1 for byte
+
+  // Same-cycle 2-port read. No instruction reads three registers: a store
+  // reads Ra and Rb, an ALU reads Rb and Rc, a register branch reads Rc.
+  // Port B's address is the b field with no mux in front of it. The address
+  // adder and the ALU take this port, which is the 27 MHz path. Port X is
+  // Ra on a store and Rc otherwise.
+  val rdB = regs(regB)
+  val rdX = regs(Mux(isStore, regA, regC))
   
   // By default, increment PC
   val nextPC = pc + 4.U
@@ -644,11 +652,12 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
           // Branch to register: Use register c as the branch target
           val targetReg = c_reg
           
-          // Make sure the low 2 bits are 0 (word-aligned)
-          pcNext := regs(targetReg) & ~(3.U(32.W))
+          // Make sure the low 2 bits are 0 (word-aligned).
+          // isStore is false here, so port X is Rc.
+          pcNext := rdX & ~(3.U(32.W))
           
           // Debug output for branch to register
-          printf(p"BT R$targetReg: Branching to address ${regs(targetReg) & ~(3.U(32.W))} vs ${regs(targetReg)}\n")
+          printf(p"BT R$targetReg: Branching to address ${rdX & ~(3.U(32.W))} vs ${rdX}\n")
         } .elsewhen (isBranchWithOffset) {
           // Calculate branch target address: PC + 4 + off * 4
           // For a 24-bit signed offset, extend sign to 32 bits
@@ -671,7 +680,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     // Calculate effective address: reg(b) + offset
     // Sign-extend the offset to 32 bits
     val signExtOffset = Cat(Fill(12, memOffset(19)), memOffset)
-    val effectiveAddr = regs(regB) + signExtOffset
+    val effectiveAddr = rdB + signExtOffset
     // -48 is 0xFFFFFFD0 and -44 is 0xFFFFFFD4. Bit 2 picks the register.
     val spiHit = if (bodyFetch) {
       effectiveAddr(31, 3) === "h1FFFFFFA".U(29.W) && effectiveAddr(1, 0) === 0.U
@@ -731,7 +740,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         if (bodyFetch) {
           spi.get.io.write := true.B
           spi.get.io.ctrl := effectiveAddr(2)
-          spi.get.io.wdata := regs(regA)
+          spi.get.io.wdata := rdX
         }
         memoryIsLoad := false.B
         memoryIsByte := false.B
@@ -739,14 +748,14 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       } .elsewhen (!isByte) {  // STW - Store Word
         // Start a memory write operation
         io.memAddr := effectiveAddr
-        io.memWriteData := regs(regA)
+        io.memWriteData := rdX
         io.memWrite := true.B
         if (chainFix) {
           val hits = siteMatch(effectiveAddr, armed = false)
           for (i <- patchOffs.indices) {
             when (hits(i)) {
               patchValid(i) := true.B
-              patchData(i) := regs(regA)
+              patchData(i) := rdX
             }
           }
         }
@@ -756,16 +765,16 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         // old 0x10 programs and the 0x50 map both drive io.led.
         when (effectiveAddr === 0x10.U || effectiveAddr === 0x50.U) {
           // Update LED state with bit 0 of the value being stored
-          ledState := regs(regA)(0)
+          ledState := rdX(0)
           // Use a single LED event code and pass the state as an extra 8-bit value.
           Logger.log(io, Logger.Codes.LedToggle, ledState.asUInt)
           // Debug output
-          printf(p"Memory-mapped LED write detected at address ${effectiveAddr}: Setting LED to ${regs(regA)(0)}\n")
+          printf(p"Memory-mapped LED write detected at address ${effectiveAddr}: Setting LED to ${rdX(0)}\n")
           CPUSubset0Companion.printTrace("Memory-mapped LED write detected (snoop 0x10 or 0x50)\n")
         }
         
         // Debug output
-        printf(p"STW: Storing R${regA}(${regs(regA)}) to address ${effectiveAddr}\n")
+        printf(p"STW: Storing R${regA}(${rdX}) to address ${effectiveAddr}\n")
         
         // Block RAM returns in the same cycle. HyperRAM waits out Tcmd.
         memoryIsLoad := false.B
@@ -774,7 +783,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         // A store of zero at 0x7C0+4*slot arms one memory check.
         // Step 2 adds the same at 0x800+4*slot. Any missing zero keeps the LED dark.
         checkMask.foreach { mask =>
-          when (regs(regA) === 0.U && effectiveAddr(1, 0) === 0.U) {
+          when (rdX === 0.U && effectiveAddr(1, 0) === 0.U) {
             val memDelta = effectiveAddr - 0x7C0.U
             when (memDelta < (memSlots * 4).U) {
               val slot = memDelta(4, 2)
@@ -796,7 +805,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         // three bytes of the bus. The bridge's data_mask is what keeps the
         // neighbours. A full-word write here would fail the lane test.
         val lane = effectiveAddr(1, 0)
-        val low = regs(regA)(7, 0)
+        val low = rdX(7, 0)
         val placed = MuxLookup(lane, Cat(0.U(24.W), low))(Seq(
           0.U -> Cat(0.U(24.W), low),
           1.U -> Cat(0.U(16.W), low, 0.U(8.W)),
@@ -827,9 +836,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     // F1 v=1 sign-extends the 16-bit immediate (ORG.Put1 when im < 0).
     // v=0 zero-extends, which is what every existing blink immediate uses.
     val imm32 = Mux(format(0), Cat(Fill(16, imm(15)), imm), Cat(0.U(16.W), imm))
-    val operand = Mux(useImmediate, imm32, regs(regC))
+    val operand = Mux(useImmediate, imm32, rdX)
     val shamt = operand(4, 0)
-    val bval = regs(regB)
+    val bval = rdB
     // One 5-stage barrel for LSL, ASR and ROR. Three Verilog shifts did not
     // fit the GW1NSR-4C (4992 logic cells, limit 4608). A shift of 0 leaves
     // the register unchanged because no stage is selected.
@@ -882,7 +891,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       }
       
       is(6.U) { // IOR - Bitwise OR with immediate/register operand
-        val result = regs(regB) | operand
+        val result = bval | operand
         regWrite := true.B
         regWriteAddr := regA
         regWriteData := result
@@ -892,14 +901,14 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         z := result === 0.U
         
         // Debug output for IOR
-        printf(p"IOR: R$regA = R$regB(${regs(regB)}) | ${operand} = $result\n")
+        printf(p"IOR: R$regA = R$regB(${bval}) | ${operand} = $result\n")
         
         // IMPORTANT: After executing the instruction, update the PC.
         pcNext := nextPC
       }
       
       is(7.U) { // XOR - Exclusive OR with immediate/register operand
-        val result = regs(regB) ^ operand
+        val result = bval ^ operand
         regWrite := true.B
         regWriteAddr := regA
         regWriteData := result
@@ -913,7 +922,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       }
       
       is(8.U) { // ADD - Add immediate/register operand
-        val result = regs(regB) + operand
+        val result = bval + operand
         regWrite := true.B
         regWriteAddr := regA
         regWriteData := result
@@ -928,14 +937,14 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         z := result === 0.U
         
         // Debug output for ADD
-        printf(p"ADD: R$regA = R$regB(${regs(regB)}) + ${operand} = $result\n")
+        printf(p"ADD: R$regA = R$regB(${bval}) + ${operand} = $result\n")
         
         // IMPORTANT: After executing the instruction, update the PC.
         pcNext := nextPC
       }
       
       is(9.U) { // SUB - Subtract immediate/register operand
-        val result = regs(regB) - operand
+        val result = bval - operand
         regWrite := true.B
         regWriteAddr := regA
         regWriteData := result
@@ -950,9 +959,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         z := result === 0.U
         
         when(!useImmediate) {
-          printf(p"F0 SUB: R$regB(${regs(regB)}) - R$regC(${regs(regC)}) = $result, Z=$z\n")
+          printf(p"F0 SUB: R$regB(${bval}) - R$regC(${rdX}) = $result, Z=$z\n")
         } .otherwise {
-          printf(p"SUB: R$regB(${regs(regB)}) - ${imm} = $result\n")
+          printf(p"SUB: R$regB(${bval}) - ${imm} = $result\n")
         }
         
         pcNext := nextPC

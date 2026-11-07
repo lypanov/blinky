@@ -50,4 +50,30 @@ openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
 
 `measure_blink`, `roi=primer20k`, duration 30, warmup 2: `blink-measure/20261106-222338-mcp`, status blinking, edge 0.32 Hz, FFT 0.312 Hz, trusted method edge, confidence 1.0, 962 frames, 30.062 fps. The expected full blink is 0.320373 Hz. The same clip shows the Nano at 0.499 Hz.
 
-The next ledger item, if a later to-do does not fit, is item 2. It was not taken here.
+## Item 2, measured
+
+The register file is a same-cycle 2-port read. Port B is the `b` field, with no address mux in front of it, and it feeds the address adder and the ALU. Port X is `Ra` on a store and `Rc` otherwise. All 16 registers stay. The compiler does not change. Both blink laws stay: Blink2 is still 84 cycles, and the placed body is still `339*N+228` on the Nano and `1852*N+1252` pclk on the Dock.
+
+`tools/run_verilator_sim.sh` reports six Blink2 edges at a mean of 84 cycles (98, 182, 266, 350, 434, 518). `IMAGE=ddr3modules sim/run_ddr3_cpu_phy.sh` prints `PHY_SCORE pass`: period 10512, first edge 306018, PC `0000101c`, R5 `00000000`, R9 `00000000`, mask `ffffffffff`. That period is `1852*5+1252`. No Micron `ERROR`.
+
+The packed baseline on `e89073a` is logic 4481/4608, CLS 2292/2304, 12 free. `modules_n65536` placed at 13:52 (Europe/Amsterdam). Logic 4228/4608 (92%; 3954 LUT and 274 ALU), CLS 2260/2304 (99%, 44 free), registers 1820/3612, 8/10 BSRAM. Freed CLS is 32, from 12 free on that baseline to 44 free. Slow corner 1.14 V 85 C on `clkdiv`: 668 setup endpoints, 0 hold, worst slack −4.477 ns, Fmax 24.088 MHz against 27.000 MHz. The measured rate still matches. The SDC was not relaxed. SRAM load was bus 3 address 081 only.
+
+```bash
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/impl/pnr/modules_n65536.fs
+```
+
+Webcam `measure_blink`, `roi=nano4k`, duration 20, warmup 2: `blink-measure/20261107-135604`, status blinking, edge 0.6058 Hz, FFT 0.590 Hz, trusted method edge, confidence 0.9965, 661 frames, 29.986 fps, 26 edges, `/dev/video2`. The expected full blink is 0.607645 Hz.
+
+`place_option 2` on this netlist trained the Dock write eye to `G=FF00` (`F=EB`) and held at `0x1D8C`. `route_option 1` on that placement held at `0x1D90` with the same `G`. `gowin/primer20k/gowin_ddr3.tcl` now uses `place_option 0` and keeps `route_option 2`.
+
+`ddr3modules_n65536` placed at 14:18 (Europe/Amsterdam). Logic 5563/20736 (27%; 5132 LUT and 431 ALU), CLS 3913/10368 (38%), registers 2562/16173, 6/46 BSRAM. 0 setup and 0 hold endpoints. `pclk` Fmax 106.793 MHz against 96.749, worst slack +0.972 ns. `cpu_clk` Fmax 37.065 MHz against 24.187. SRAM load was bus 3 address 078 only. The Nano 4K was not opened for that load. UART on FTDI channel B, 115200 8N1, reopened after the load. The settled lines are `C.` (not held). PC stays in the placed loop (`222C`, `2230`, `2234`, `2238`). Mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. Programmed steps are lane 1 `000C` and lane 0 `000A`. The last pattern-0 read is `A55A`. `F` is `AB`. The write-level edge sample is `FF5A`.
+
+```bash
+openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
+  gowin/primer20k/impl/pnr/ddr3modules_n65536.fs
+```
+
+`measure_blink`, `roi=primer20k`, duration 30, warmup 2: `blink-measure/20261107-141912`, status blinking, edge 0.3983 Hz, FFT 0.405 Hz, trusted method edge, confidence 0.9978, 962 frames, 30.004 fps, `/dev/video2`. The expected full blink is 0.398561 Hz.
+
+Item 3 was not taken.
