@@ -517,7 +517,13 @@ case "$BOARD" in
       else
         printf '%s\n' '// prologue and ALU: trained write eye, no fixed step' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
       fi
-      gw_sh "$ROOT/gowin/primer20k/gowin_ddr3.tcl"
+      # The arm-word modules netlist trains only with route_option 1.
+      # route_option 2 leaves a one-tap eye and holds the CPU in reset.
+      if [[ "$FPGA_IMAGE" == "ddr3modules" ]]; then
+        DDR3_ROUTE_OPTION=1 gw_sh "$ROOT/gowin/primer20k/gowin_ddr3.tcl"
+      else
+        gw_sh "$ROOT/gowin/primer20k/gowin_ddr3.tcl"
+      fi
     else
       gw_sh "$ROOT/gowin/primer20k/gowin_blink3.tcl"
     fi

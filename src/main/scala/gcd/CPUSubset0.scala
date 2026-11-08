@@ -177,17 +177,22 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val shifterExtra = math.min(extraChecks, 37)
   val tailChecks = extraChecks - shifterExtra
   val totalChecks = memSlots + shifterExtra
-  // The compiled core replaces the page-0x10 patch table. Proof 7 arms the
-  // compare mask at reset: the image has no room for the forty zero stores.
+  // The compiled core replaces the page-0x10 patch table. Those two images
+  // have no room for the forty zero stores, so the mask is gone. One
+  // flip-flop arms the LED, and only a store of the linker's constant
+  // sets it. Every other image keeps the zero-store mask.
   val splitFetch = core.isDefined
+  val useArm = splitFetch
   val chainOn = chainFix && !splitFetch
   if (splitFetch && (!bodyFetch || chiselRom)) {
     throw new RuntimeException("the core map needs the body fetch and the BSRAM ROM")
   }
-  val checkMask = if (totalChecks > 0) {
-    val init = if (splitFetch) ((BigInt(1) << totalChecks) - 1).U(totalChecks.W) else 0.U(totalChecks.W)
-    Some(RegInit(init))
+  val checkMask = if (totalChecks > 0 && !useArm) {
+    Some(RegInit(0.U(totalChecks.W)))
   } else None
+  val armAddrC = if (useArm) core.get.armAddr else 0
+  val armWordC = if (useArm) core.get.armWord else 0L
+  val armed = if (useArm) RegInit(false.B) else false.B
   
   // Instruction words. A combinational case-ROM of the fixup image did not
   // fit the GW1NSR-4C. This is a synchronous read so synthesis can use BSRAM
@@ -830,6 +835,14 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         memoryIsLoad := false.B
         memoryIsByte := false.B
         memoryAccessPending := waitForStores.B
+        if (useArm) {
+          when (effectiveAddr === armAddrC.U(32.W)) {
+            printf(p"ARM ${Hexadecimal(rdX)} hit=${rdX === BigInt(armWordC).U(32.W)}\n")
+            when (rdX === BigInt(armWordC).U(32.W)) {
+              armed := true.B
+            }
+          }
+        }
         // A store of zero at 0x7C0+4*slot arms one memory check.
         // Step 2 adds the same at 0x800+4*slot. Any missing zero keeps the LED dark.
         checkMask.foreach { mask =>
@@ -1194,19 +1207,24 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   io.r7 := regs(7)
   io.r8 := regs(8)
   io.r9 := regs(9)
-  io.dbgMask := checkMask.map(m => (m.asUInt | 0.U(40.W))(39, 0)).getOrElse(0.U(40.W))
+  io.dbgMask := (
+    if (useArm) Mux(armed, ((BigInt(1) << 40) - 1).U(40.W), 0.U(40.W))
+    else checkMask.map(m => (m.asUInt | 0.U(40.W))(39, 0)).getOrElse(0.U(40.W))
+  )
   io.halted := halted
-  val tailOk = if (tailChecks == 0) {
+  val tailOk = if (tailChecks == 0 || useArm) {
     true.B
   } else {
-    val tail = Module(new CheckTail(tailChecks, 0x800 + shifterExtra * 4, splitFetch))
+    val tail = Module(new CheckTail(tailChecks, 0x800 + shifterExtra * 4, false))
     tail.io.en := io.memWrite && !io.memByte && (io.memWriteData === 0.U)
     tail.io.addr := io.memAddr
     tail.io.ok
   }
-  val ledReady = checkMask.map { m =>
-    val armed = ((BigInt(1) << totalChecks) - 1).U(totalChecks.W)
-    val ready = ledState && (m === armed)
+  val ledReady = if (useArm) {
+    ledState && armed
+  } else checkMask.map { m =>
+    val armedMask = ((BigInt(1) << totalChecks) - 1).U(totalChecks.W)
+    val ready = ledState && (m === armedMask)
     if (tailChecks == 0) ready else ready && tailOk
   }.getOrElse(ledState)
   io.led := ledReady

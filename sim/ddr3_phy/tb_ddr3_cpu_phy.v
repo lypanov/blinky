@@ -12,9 +12,14 @@
 
 module tb_ddr3_cpu_phy;
     localparam integer PCLK_WAIT = 200000;
-    localparam integer EXPECT_PERIOD = 10512; // 1852*5+1252, placed body fetch
-    // ModDesc, Files, and Modules all sit before that loop, so the
-    // period stays. Init is not in the delay loop.
+    // Proof 7 Blink5, edge PC 0x2070. The CPU-cycle law is
+    // 462*N+598 (2908 at N=5). This bench counts pclk and the CPU
+    // clock is pclk/4, so the edge is 4*2908 plus 40 pclk. That 40
+    // is one DDR3 store on the toggle; the fast memory model
+    // finishes it inside the CPU-cycle law. 10512 (1852*5+1252)
+    // was the body at PC 0x101c. The arm prologue runs before the
+    // first edge, so it does not change this period.
+    localparam integer EXPECT_PERIOD = 4 * (462 * 5 + 598) + 40;
     localparam [31:0] EXPECT_R5 = 32'h00000000;
     // ModDesc leaves R9 at 8. Files uses R9 as the w accumulator and
     // leaves 0. Modules still ends in that Load, so R9 is 0 there too.
@@ -180,7 +185,7 @@ module tb_ddr3_cpu_phy;
     end
 
     integer waits, cycle, edges, max_cycles, cmds, reads;
-    integer first_edge, prev_edge, period, expect_period;
+    integer first_edge, prev_edge, period, period0, expect_period;
     reg [31:0] expect_r9;
     reg [31:0] expect_r5;
     reg        prev_led;
@@ -202,6 +207,7 @@ module tb_ddr3_cpu_phy;
         first_edge = -1;
         prev_edge = -1;
         period = -1;
+        period0 = -1;
         prev_led = 1'b0;
         saw_ready = 1'b0;
         last_beat = 16'hxxxx;
@@ -257,7 +263,7 @@ module tb_ddr3_cpu_phy;
                  phy_rd, phy_wr, phy_refresh, busy);
         $fflush;
 
-        while (edges < 2 && cycle < max_cycles) begin
+        while (edges < 3 && cycle < max_cycles) begin
             @(posedge pclk);
             #1;
             cycle = cycle + 1;
@@ -297,8 +303,11 @@ module tb_ddr3_cpu_phy;
             if (led !== prev_led) begin
                 if (first_edge < 0)
                     first_edge = cycle;
-                else
+                else begin
                     period = cycle - prev_edge;
+                    if (edges == 1)
+                        period0 = period;
+                end
                 prev_edge = cycle;
                 edges = edges + 1;
                 $display("LED cycle=%0d %b->%b pc=%h r5=%h r9=%h mask=%h",
@@ -306,16 +315,16 @@ module tb_ddr3_cpu_phy;
                 $fflush;
                 prev_led = led;
             end
-            if (cycle <= 20 || cycle % 200 == 0) begin
+            if (cycle <= 20 || cycle % 100000 == 0) begin
                 $display("RUN cyc=%0d pc=%h r5=%h r9=%h mask=%h led=%b reads=%0d cmds=%0d",
                          cycle, pc, r5, r9, mask, led, reads, cmds);
                 $fflush;
             end
         end
 
-        $display("END cycle=%0d edges=%0d first=%0d period=%0d pc=%h r5=%h r9=%h mask=%h reads=%0d",
-                 cycle, edges, first_edge, period, pc, r5, r9, mask, reads);
-        if (edges >= 2 && period == expect_period &&
+        $display("END cycle=%0d edges=%0d first=%0d period0=%0d period=%0d pc=%h r5=%h r9=%h mask=%h reads=%0d",
+                 cycle, edges, first_edge, period0, period, pc, r5, r9, mask, reads);
+        if (edges >= 3 && period0 == expect_period && period == expect_period &&
             r5 === expect_r5 && r9 === expect_r9 && mask === EXPECT_MASK)
             $display("PHY_SCORE pass");
         else

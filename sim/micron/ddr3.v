@@ -741,10 +741,9 @@ module ddr3 (
         input  [BL_MAX*DQ_BITS-1:0] data;
         reg    [`MAX_BITS-1:0] addr;
         begin
-            // Bench probe. A masked write still stores the previous
-            // word, and that word is X if this column was never written.
-            $display("MEM write bank=%h row=%h col=%h data=%h", bank, row, col, data);
-            $fflush;
+            // The masked-write probe used to print every column. The
+            // arm-word image stores through this task for the whole
+            // boot, and the print dominated the PHY run.
 `ifdef MAX_MEM
             addr = {row, col}/BL_MAX;
             write_to_file( memfd[bank], addr, data );

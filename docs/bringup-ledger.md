@@ -202,6 +202,39 @@ Software: before its delay loop, Blink5 (or the stub, whichever runs after `Modu
 
 Proof: sim, 4K, and Dock, as usual. The extra instructions run before the loop, so only the first edge moves and the period formula stays. Also prove the negative: an image with one expected value deliberately wrong must stay dark in simulation, and on the 4K if time allows. Record the logic and CLS freed on the 4K.
 
+### Item C, measured
+
+The LED on `modules` and `ddr3modules` arms only when a word store of `0xA11C0DE5` lands at `0x7C0`. `checkMask` and `CheckTail` are gone on those two images. One flip-flop starts clear. The pin is `ledState && armed`, and `dbgMask` is `40'hffffffffff` once that store hits and zero until then. Every other image keeps the zero-store mask. `oberon/src/Modules.Mod` was not edited.
+
+`sim/link_inner.py` appends the arm sequence after Blink5's compiled body and points the entry at it, so the sequence runs once, before the delay loop. It folds the differences of the words at 12, 16, 20, and 24 (`MemLim` `0x14000`, `AllocPtr` `0x2000`, root `0x161A0`, stack `0xC000`), checks that 58 DIV 29 is 2 and that the remainder in H is 0, and sums Blink5's placed code words against the sum planted at address 28. The store is `0xA11C0DE5` xor that OR. The delay loop in `tests/Blink5.Mod` is unchanged (`maxIterations := 65536`). The same N=65536 image was SRAM-loaded on both boards. Simulation patches that delay to 5.
+
+Verilator of the N=5 image reaches edges at 3291119, 3294027, and 3296935. Both periods are 2908, which is `462*5+598`. Edge PC `0x2070`, R5 0, R9 0, mask `0xffffffffff`. The prologue sits before that loop, so the CPU-cycle law is unchanged. `--break-arm` plants `code_sum+1` at address 28: 0 LED edges in 5,000,000 cycles, LED still 0, PC `0x2224` inside the delay loop. Blink2 is unchanged: six edges, mean 84.00, cycles 98, 182, 266, 350, 434, 518.
+
+`IMAGE=ddr3modules sim/run_ddr3_cpu_phy.sh +max_pclk=12000000` prints `PHY_SCORE pass` and exits 0. Calibration is `wstep=1a/1a`, `run=16/17`, `rclkpos=1`, `rclksel=3`, at cycle 1984. Three edges, at pclk 9936550, 9948222, and 9959894. Both intervals are 11672. Edge PC `00002070`, R5 0, R9 0, mask `ffffffffff`, 74969 reads, no Micron `ERROR`. The bench counts pclk and the CPU clock is pclk/4, so a stall-free copy of the 2908-cycle edge is 11632 pclk. The measured edge is `4*(462*5+598)+40`. The constant this bench used to require, 10512, is `1852*5+1252`, the body at PC `0x101c`. The arm store is before the first edge. At N=65536 those extra 40 pclk are under a microsecond, so the Dock rate stays the Proof 7 law: 30278230 CPU cycles at 24.187 MHz, a full blink of 0.3995 Hz.
+
+The Nano place is 06:00 (`modules_n65536`). Logic 3967/4608 (87%; 3666 LUT, 301 ALU), was 4004/4608 (3703 LUT, 301 ALU). CLS 2173/2304 (95%, 131 free), was 2229/2304 (75 free). That is 37 logic and 56 CLS back. Registers 1629 FF, was 1627. BSRAM 10/10. Clock Fmax 101.066 MHz at the 27 MHz constraint (level 8), HyperRAM clkdiv 64.987 MHz (level 6), cpu_div 18.244 MHz at 13.5 MHz (level 20). Setup TNS 0.000, 0 endpoints.
+
+Webcam `measure_blink`, `roi=nano4k`, duration 22, warmup 2: `/home/lypanov/fpga/blink-measure/20261108-arm-nano`, status blinking, edge 0.429982 Hz, period 2.325678 s, 19 edges, duty 0.487, FFT 0.408 Hz, SNR 320, confidence 0.9978, 661 frames, 29.991 fps, ROI `268,240` 30×23. The Proof 7 law at 27 MHz is 0.4459 Hz. This is the same 3.7% slow as the standing modules clip (0.430473 Hz). Clip: `/home/lypanov/fpga/blink-measure/20261108-arm-nano/clip.mkv`.
+
+The Dock netlist does not train with `route_option` 2. That place leaves a one-point eye (best pop 16, no 3-wide window), holds the CPU at `0x0080`, and reports F `4B`. `place_option` 0 with `route_option` 1 trains it. `tools/gowin_build.sh` sets `DDR3_ROUTE_OPTION=1` for `ddr3modules` only. Other DDR3 images stay on `route_option` 2. The loaded bitstream is that route, placed 13:14.
+
+The Dock place: logic 5200/20736 (26%; 4740 LUT, 460 ALU), was 5257 (4797 LUT, 460 ALU). CLS 3612/10368 (35%, 6756 free), was 3625 (6743 free). BSRAM 8/46. pclk Fmax 101.713 MHz at 96.749 MHz (level 13), cpu_clk Fmax 39.930 MHz at 24.187 MHz (level 20). Setup TNS 0.000, 0 endpoints.
+
+SRAM load, bus 3 address 078 only, no flash flag:
+
+```bash
+openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
+  gowin/primer20k/impl/pnr/ddr3modules_n65536.fs
+```
+
+UART is FTDI channel B of that device, 115200 8N1, purged after the load. 82 of 82 lines are `C.` with mask `FFFFFFFFFF`, R5 0, R9 0, G `A55A`, F `AB`. Sixty-eight lines are steps `000D`/`0002`, E0 `A55A`, C0 `01`, C1 `0F`. The last fourteen snap to steps `000C`/`0003`, E0 `FF5A`, C0 `02`, C1 `0D`, still G `A55A` and F `AB`, with PC in the delay loop. One line:
+
+```
+C.222C FFFFFFFFFF 00000000 00001117 000080D0 000010F9 00000000 00000000 000D 0002 E0 A55A G A55A C0 01 C1 0F BO 10 F AB
+```
+
+Webcam `measure_blink`, `roi=primer20k`, duration 32, warmup 2, filmed after that capture: `/home/lypanov/fpga/blink-measure/20261108-arm-dock`, status blinking, edge 0.397817 Hz, period 2.513717 s, 26 edges, duty 0.514, FFT 0.405 Hz, SNR 440, confidence 0.9977, 962 frames, 30.002 fps, ROI `328,71` 26×29. Against 0.3995 Hz that is the same match as the Proof 7 Dock clip (0.397984 Hz). Clip: `/home/lypanov/fpga/blink-measure/20261108-arm-dock/clip.mkv`.
+
 ## The flash disk (decided 8 Nov 2026)
 
 Item B showed the Nano 4K design can use its external NOR. The maintainer has narrowed the flash rule for this one use (see `AGENTS.md`, "Loading boards"): openFPGALoader may write a data file to the 4K's external NOR, inside `0x200000`–`0x3FFFFF`, and nothing else. A `modules_n65536.fs` is about 1.77 MB, so a bitstream at address 0 would end below `0x200000`. The board boots from its internal flash in any case.

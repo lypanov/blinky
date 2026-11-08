@@ -10,6 +10,10 @@ The instruction ROM is one 4096-word array. It holds the stub, the packed
 reachable code, the init stream, and the three sector pages. A second read
 port serves GetSector while the first port is the fetch. HyperRAM keeps
 the other two blocks, so the Nano 4K stays at 10.
+
+Blink5's placed code starts with the arm sequence. Address 28 holds the
+sum of that code after Load's fixups. The LED arms only if the store at
+0x7C0 is 0xA11C0DE5.
 """
 from __future__ import annotations
 
@@ -235,11 +239,36 @@ cd "{PAYLOAD}"
     return mods
 
 
-def _patch_delay(raw: bytes, code: list[int], n: int) -> bytes:
-    hits = [i for i, word in enumerate(code) if (word & 0xF0F00000) == 0x60000000 and (word & 0xFFFF) == 1]
+def _mhi_imm1(word: int) -> bool:
+    return (word & 0xF0F00000) == 0x60000000 and (word & 0xFFFF) == 1
+
+
+def _low_half(word: int, rd: int) -> bool:
+    """The second half of a 32-bit constant: IOR or ADD into the same register."""
+    if (word >> 28) not in (4, 5):
+        return False
+    if ((word >> 24) & 0xF) != rd or ((word >> 20) & 0xF) != rd:
+        return False
+    return ((word >> 16) & 0xF) in (6, 8)
+
+
+def _delay_mhi(code: list[int]) -> int:
+    """The 65536 assignment is the bare MHI. MemLim and the root are MHI plus a low half."""
+    hits = []
+    for i, word in enumerate(code):
+        if not _mhi_imm1(word):
+            continue
+        rd = (word >> 24) & 0xF
+        nxt = code[i + 1] if i + 1 < len(code) else 0
+        if not _low_half(nxt, rd):
+            hits.append(i)
     if len(hits) != 1:
-        raise SystemExit(f"Blink5 has {len(hits)} MHI 1 words, wanted the 65536 assignment")
-    index = hits[0]
+        raise SystemExit(f"Blink5 has {len(hits)} bare MHI 1 words, wanted the 65536 assignment")
+    return hits[0]
+
+
+def _patch_delay(raw: bytes, code: list[int], n: int) -> tuple[bytes, int, int]:
+    index = _delay_mhi(code)
     rd = (code[index] >> 24) & 0xF
     if n == 65536:
         word = code[index]
@@ -253,6 +282,218 @@ def _patch_delay(raw: bytes, code: list[int], n: int) -> bytes:
     buf = bytearray(raw)
     struct.pack_into("<I", buf, origin + index * 4, word)
     return bytes(buf), word, index
+
+
+# The LED arms only when Blink5 stores this word at this address.
+ARM_ADDR = 0x7C0
+ARM_WORD = 0xA11C0DE5
+SUM_ADDR = 28
+EXPECT_ROOT = 0x161A0
+BLINK_MT = 0x38
+PLANTED_NUM = 4
+EQ = 1
+ALWAYS = 7
+
+
+def _arm_prologue() -> list[int]:
+    """OR the differences, then store ARM_WORD xor that OR.
+
+    R8 is the accumulator. R12 and R14 stay. The caller branches to the
+    compiled delay loop after the store.
+    """
+    a = Asm()
+    a.word(f1(0, 8, 0, 0))
+
+    def fold(addr: int, expected: int) -> None:
+        for word in load_const(1, addr):
+            a.word(word)
+        a.word(ldw(0, 1, 0))
+        for word in load_const(1, expected):
+            a.word(word)
+        a.word(f0(9, 0, 0, 1))
+        a.word(f0(6, 8, 8, 0))
+
+    fold(12, MEMLIM)
+    fold(16, ALLOC)
+    fold(20, EXPECT_ROOT)
+    fold(24, STACK)
+    a.word(f1(0, 0, 0, 58))
+    a.word(f1(0, 1, 0, 29))
+    a.word(f0(11, 0, 0, 1))
+    a.word(f1(9, 0, 0, 2))
+    a.word(f0(6, 8, 8, 0))
+    a.word(0x20000000)  # MOV R0, H. The remainder of 58 DIV 29 is 0.
+    a.word(f0(6, 8, 8, 0))
+    for word in load_const(0, BLINK_MT):
+        a.word(word)
+    a.word(ldw(0, 0, 0))
+    a.word(f1(9, 1, 0, 24))
+    a.word(ldw(1, 1, 0))
+    a.word(f1(9, 2, 0, 20))
+    a.word(ldw(2, 2, 0))
+    a.word(f1(0, 3, 0, 0))
+    a.label("sum")
+    a.word(f0(9, 0, 1, 2))
+    a.branch("summed", EQ)
+    a.word(ldw(0, 1, 0))
+    a.word(f0(8, 3, 3, 0))
+    a.word(f1(8, 1, 1, 4))
+    a.branch("sum", ALWAYS)
+    a.label("summed")
+    for word in load_const(0, SUM_ADDR):
+        a.word(word)
+    a.word(ldw(0, 0, 0))
+    a.word(f0(9, 0, 3, 0))
+    a.word(f0(6, 8, 8, 0))
+    for word in load_const(0, ARM_WORD):
+        a.word(word)
+    a.word(f0(7, 0, 0, 8))
+    for word in load_const(1, ARM_ADDR):
+        a.word(word)
+    a.word(stw(0, 1, 0))
+    words = a.encode(0)
+    if any(_mhi_imm1(word) and not _low_half(words[i + 1], (word >> 24) & 0xF)
+           for i, word in enumerate(words) if _mhi_imm1(word)):
+        # A bare MHI 1 here would be the delay assignment. The prologue has none.
+        raise SystemExit("arm prologue contains the delay MHI")
+    return words
+
+
+def _rsc_spots(data: bytes) -> dict:
+    offset = data.index(b"\0") + 1
+    offset += 5  # key, version
+    size_at = offset
+    offset += 4
+    while True:
+        if data[offset] == 0:
+            offset += 1
+            break
+        offset = data.index(b"\0", offset) + 1 + 4
+    td_size = struct.unpack_from("<I", data, offset)[0]
+    offset += 4 + td_size
+    offset += 4  # variable-space count; the bytes are not in the file
+    strx = struct.unpack_from("<I", data, offset)[0]
+    offset += 4 + strx
+    code_len_at = offset
+    ncode = struct.unpack_from("<I", data, offset)[0]
+    code_at = offset + 4
+    offset = code_at + ncode * 4
+    while True:
+        if data[offset] == 0:
+            offset += 1
+            break
+        offset = data.index(b"\0", offset) + 1 + 4
+    nofent = struct.unpack_from("<I", data, offset)[0]
+    offset += 4 + nofent * 4
+    while True:
+        ptr = struct.unpack_from("<I", data, offset)[0]
+        offset += 4
+        if ptr == 0xFFFFFFFF:
+            break
+    fix_at = offset
+    entry_at = offset + 12
+    if entry_at + 4 >= len(data) or data[entry_at + 4] != ord("O"):
+        raise SystemExit("Blink5.rsc has no O marker after the entry point")
+    return {
+        "size_at": size_at,
+        "code_len_at": code_len_at,
+        "code_at": code_at,
+        "ncode": ncode,
+        "fix_at": fix_at,
+        "entry_at": entry_at,
+    }
+
+
+def _append_arm(raw: bytes, prologue: list[int]) -> bytes:
+    """The arm sequence follows the compiled loop. The entry point moves to it.
+
+    Prepending would stretch the fixup displacements, which count back to the
+    first word. The sequence branches to that word when the store has retired.
+    """
+    spot = _rsc_spots(raw)
+    ncode = spot["ncode"]
+    code_at = spot["code_at"]
+    branch_at = (ncode + len(prologue)) * 4
+    enter_loop = cond_branch(branch_at, 0, ALWAYS)
+    extra = list(prologue) + [enter_loop]
+    buf = bytearray()
+    buf += raw[: spot["code_len_at"]]
+    buf += struct.pack("<I", ncode + len(extra))
+    buf += raw[code_at : code_at + ncode * 4]
+    for word in extra:
+        buf += struct.pack("<I", word & 0xFFFFFFFF)
+    buf += raw[code_at + ncode * 4 :]
+    # The tail shifted by the extra code bytes. Fixups stay in the old words.
+    entry_at = spot["entry_at"] + 4 * len(extra)
+    fix_at = spot["fix_at"] + 4 * len(extra)
+    fp, fd, ft = struct.unpack_from("<III", buf, fix_at)
+    if (fp, fd, ft) != struct.unpack_from("<III", raw, spot["fix_at"]):
+        raise SystemExit("appending the arm sequence moved a fixup origin")
+    entry = struct.unpack_from("<I", buf, entry_at)[0]
+    if entry != 0:
+        raise SystemExit(f"Blink5 entry {entry:#x} is not the compiled body")
+    struct.pack_into("<I", buf, entry_at, ncode * 4)
+    size = struct.unpack_from("<I", buf, spot["size_at"])[0]
+    struct.pack_into("<I", buf, spot["size_at"], size + 4 * len(extra))
+    if len(buf) > SECTOR - HEADER_SIZE:
+        raise SystemExit(f"Blink5.rsc is {len(buf)} bytes; one sector holds {SECTOR - HEADER_SIZE}")
+    return bytes(buf)
+
+
+def _reload_blink(raw: bytes) -> dict:
+    path = os.path.join(PAYLOAD, "Blink5.rsc")
+    with open(path, "wb") as out:
+        out.write(raw)
+    parsed = parse_rsc(path, output_format="quiet")
+    parsed["raw"] = raw
+    return parsed
+
+
+def _module_code(base: int, parsed: dict) -> int:
+    return (
+        base
+        + DESC_SIZE
+        + len(parsed["type_descriptors"]) * 4
+        + parsed["data_size"]
+        + len(parsed["string_table"])
+    )
+
+
+def _module_end(base: int, parsed: dict) -> int:
+    size = parsed["file_size"] + DESC_SIZE
+    return ((base + size + 0x100) // 0x20) * 0x20
+
+
+def _placed_sum(ammt: dict, blink: dict) -> tuple[int, int, int]:
+    """Sum of Blink5's code words after Load's fixups. Returns sum, code address, word count."""
+    ammt_base = ALLOC
+    ammt_code = _module_code(ammt_base, ammt)
+    ammt_data = ammt_base + DESC_SIZE
+    blink_base = _module_end(ammt_base, ammt)
+    blink_code = _module_code(blink_base, blink)
+    blink_end = _module_end(blink_base, blink)
+    if blink_end > BODY_HI:
+        raise SystemExit(f"Blink5 allocation ends at {blink_end:#x}, body window ends at {BODY_HI:#x}")
+    ammt_num = PLANTED_NUM + 1
+    blink_num = ammt_num + 1
+    if blink_num != 6 or BLINK_MT != 0x20 + blink_num * 4:
+        raise SystemExit(f"Blink5 is module {blink_num}, prologue reads {BLINK_MT:#x}")
+    code = list(blink["code"])
+    imp = ImportedModule(
+        ammt_num,
+        code=ammt_code,
+        data=ammt_data,
+        entries=ammt["entries"],
+    )
+    fix_p, fix_d, fix_t = blink["fix_org"]
+    if fix_t:
+        raise SystemExit(f"Blink5 fixorgT {fix_t:#x}")
+    fixup_bl(code, fix_p, code_base=blink_code, imports=[imp])
+    fixup_ldr_str_add(code, fix_d, blink_num, None, imports=[imp])
+    total = 0
+    for word in code:
+        total = (total + word) & 0xFFFFFFFF
+    return total, blink_code, len(code)
 
 
 def _load_modules() -> dict[str, dict]:
@@ -347,19 +588,31 @@ def _light(ammt: dict) -> int:
     return data
 
 
-def link(max_iter: int) -> dict:
+def link(max_iter: int, break_arm: bool = False) -> dict:
     mods = _load_modules()
     payload = _compile_payload()
     blink_key = payload["AMemoryMappedToggle"]["key"]
     got = [k for name, k in payload["Blink5"]["imports"] if name == "AMemoryMappedToggle"]
     if got != [blink_key]:
         raise SystemExit(f"Blink5 import key {got} != AMemoryMappedToggle {blink_key:#x}")
+    prologue = _arm_prologue()
+    armed_raw = _append_arm(payload["Blink5"]["raw"], prologue)
+    payload["Blink5"] = _reload_blink(armed_raw)
     raw, delay_word, delay_index = _patch_delay(
         payload["Blink5"]["raw"], payload["Blink5"]["code"], max_iter
     )
     payload["Blink5"]["raw"] = raw
+    payload["Blink5"]["code"][delay_index] = delay_word
+    with open(os.path.join(PAYLOAD, "Blink5.rsc"), "wb") as out:
+        out.write(raw)
 
     data_base, _, desc_at = _assign(mods)
+    if desc_at != EXPECT_ROOT:
+        raise SystemExit(f"planted root {desc_at:#x} != prologue constant {EXPECT_ROOT:#x}")
+    code_sum, blink_at, blink_words = _placed_sum(
+        payload["AMemoryMappedToggle"], payload["Blink5"]
+    )
+    planted_sum = (code_sum + (1 if break_arm else 0)) & 0xFFFFFFFF
     lengths = {name: len(mods[name]["code"]) for name in ORDER}
     old_base = {}
     cursor = CORE_BASE
@@ -518,6 +771,7 @@ def link(max_iter: int) -> dict:
         raise SystemExit(f"Modules string at +{rel:#x} is {blob[rel : rel + 8]!r}")
 
     pairs = _pairs(data_base, mods, desc_at, desc, {})
+    pairs.append((SUM_ADDR, planted_sum))
     stream = []
     for dest, value in pairs:
         stream.extend((dest, value & 0xFFFFFFFF))
@@ -622,6 +876,13 @@ def link(max_iter: int) -> dict:
         "delay_word": delay_word,
         "delay_index": delay_index,
         "desc": desc_at,
+        "arm_addr": ARM_ADDR,
+        "arm_word": ARM_WORD,
+        "code_sum": code_sum,
+        "planted_sum": planted_sum,
+        "blink_at": blink_at,
+        "blink_words": blink_words,
+        "break_arm": int(break_arm),
         "data": data_base,
         "string": string_at,
         "counts": {name: sum(1 for n, _i in seen if n == name) for name in ORDER},
@@ -637,6 +898,7 @@ def write_map(info: dict, path: str) -> None:
         "init_base", "init_words", "init_rom",
         "body_lo", "body_hi", "body", "light",
         "sector_rom", "sector_words", "sector_pairs", "rom_words", "delay_word", "desc", "string",
+        "arm_addr", "arm_word",
     )
     with open(path, "w") as out:
         out.write("split=1\n")
@@ -657,9 +919,11 @@ def main() -> int:
     parser.add_argument("--mov-iter", type=int, default=None)
     parser.add_argument("--pad", type=int, default=ROM_WORDS)
     parser.add_argument("--out", default=os.path.join(ROOT, "sim", "visualizer", "imem", "modules.words"))
+    parser.add_argument("--break-arm", action="store_true",
+                        help="Plant the code checksum plus one, so the LED stays dark")
     args = parser.parse_args()
     n = args.mov_iter if args.mov_iter is not None else args.max_iter
-    info = link(n)
+    info = link(n, break_arm=args.break_arm)
     write_words(info["words"], args.out)
     write_map(info, MAP_PATH)
     counts = " ".join(f"{name} {info['counts'][name]}" for name in ORDER)
@@ -672,6 +936,12 @@ def main() -> int:
     print(
         f"[ok] body {info['body']:#x} light {info['light']:#x} "
         f"desc {info['desc']:#x} string {info['string']:#x} delay {info['delay_word']:08x}"
+    )
+    print(
+        f"[ok] arm {info['arm_addr']:#x} word {info['arm_word']:08x} "
+        f"sum {info['code_sum']:08x} planted {info['planted_sum']:08x} "
+        f"blink {info['blink_at']:#x} words {info['blink_words']}"
+        + (" BREAK" if info["break_arm"] else "")
     )
     print(f"[ok] map {MAP_PATH}")
     return 0

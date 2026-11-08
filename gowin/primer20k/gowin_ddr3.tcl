@@ -39,11 +39,17 @@ set_option -synthesis_tool gowinsynthesis
 # place_option 2 on the 2-port register file trains the write eye to
 # G=FF00 (F=EB) and the CPU holds at 0x1D8C. route_option 1 on that
 # placement holds at 0x1D90 with the same G. place_option 0 with
-# route_option 2 trains to G=A55A (F=AB) and runs the placed loop.
-# The earlier netlist needed route_option 2 as well: route_option 1
-# left the eye path at -0.018 ns and trained to G=FF5A.
+# route_option 2 trains the pre-arm netlist to G=A55A (F=AB).
+# The arm-word netlist is the other way around. route_option 2 leaves
+# a one-tap eye (best pop 16, CPU held at 0x0080, F=4B). route_option 1
+# trains that netlist to G=A55A (F=AB) and runs the placed loop.
+# DDR3_ROUTE_OPTION selects it; other images stay on route_option 2.
 set_option -place_option 0
-set_option -route_option 2
+if {[info exists ::env(DDR3_ROUTE_OPTION)] && $::env(DDR3_ROUTE_OPTION) ne ""} {
+  set_option -route_option $::env(DDR3_ROUTE_OPTION)
+} else {
+  set_option -route_option 2
+}
 set_option -use_done_as_gpio 1
 set_option -use_ready_as_gpio 1
 set_option -use_sspi_as_gpio 1

@@ -2,7 +2,7 @@
 
 One item at a time, from the top. This file is an index. The write-up is in the file each item names.
 
-Next: 11.
+Next: 12.
 
 1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay. Done. The measured result is in the ledger.
 
@@ -18,7 +18,7 @@ Ledger items 2–5 are not to-dos. If a later item cannot fit on the Nano 4K wit
 
 9. Count every Nano 4K block RAM and remove the dead ones. [`docs/bringup-ledger.md`](bringup-ledger.md), "Block RAM, item A". Done. Nothing among the ten blocks is dead. The list is in the ledger.
 10. Pathfinder: write the Nano 4K's external SPI flash, SRAM-reload, read it back. Same file, "Block RAM, item B". Nano 4K only. Done. The measured result is in the ledger. JEDEC `85 60 16`, and the page survived a fresh SRAM load.
-11. Replace the pre-armed check mask with an arm word that software must compute. Same file, "Block RAM, item C".
+11. Replace the pre-armed check mask with an arm word that software must compute. Same file, "Block RAM, item C". Done. The measured result is in the ledger.
 
 12. The disk image builder, and the host writes the 4K's flash disk. Same file, "Block RAM, item D". Nano 4K only.
 13. Boot the 4K from the flash disk: the ROM becomes a bootstrap. Same file, "Block RAM, item E". Nano 4K only.
