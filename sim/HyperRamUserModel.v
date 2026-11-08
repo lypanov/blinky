@@ -54,11 +54,10 @@ module HyperRamUserModel (
   input  [3:0]  data_mask
 );
 
-  // 32768 words is 128 KB. The compiled image uses the 32 KB
-  // reserve, the heap under MemLim 0x14000, and the static data
-  // that Kernel and Modules allocate above it. 10240 words stopped
-  // at 0x9FFC and faulted the first store past that.
-  localparam integer WORDS = 32768;
+  // 40960 words is 160 KB. The packed core ends just under 128 KB.
+  // The flash bootstrap also parks the init stream at 0x20000, which
+  // is the first byte past 32768 words. 10240 words stopped at 0x9FFC.
+  localparam integer WORDS = 40960;
   localparam integer INIT_CYCLES = 64;
   // See the header. 12 is the pre-load model. 13 is the post-measurement fit.
   parameter integer FIRST_VALID = 12;

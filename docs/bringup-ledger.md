@@ -337,3 +337,38 @@ The 4K ROM holds only a bootstrap, about one block. It reads the header from `0x
 The checksum result also feeds item C's arm word. A stale or damaged disk leaves the LED dark.
 
 Blink law: Blink5's loop already runs from HyperRAM, so the period formula should be unchanged, and only the first edge moves (the SPI copy at boot). Compute both before the board is trusted. Record ROM words and block RAM before and after. The expectation is the ROM going from 4096 words to 512 or fewer, and block RAM from 10/10 to about 3/10. Prove it in sim (the SPI flash model loaded with `disk.bin`), then on the 4K. No Dock stage, and say so in the write-up.
+
+### Item E, measured
+
+The 4K boots from the disk. The ROM is a 102-word bootstrap in a 512-word block. It reads the header at `0x200000`, checks magic `0x314B5344`, build `0xE1`, and the payload checksum, copies the core into HyperRAM, and branches to the Modules body. From then on every instruction is fetched from HyperRAM, and `SpiSector` reads its sectors from the NOR. There is no Dock stage. `ddr3modules` is not linked with `--flash-boot`, and the Primer was not placed or loaded. It stayed on its current image.
+
+The period was fixed before the board was trusted. Blink5's loop is `462*N+598` bridge cycles at 27 MHz. For `N=65536` that is 30,278,230 cycles, an edge every 1.121416 s, a full blink of 0.4459 Hz. The SPI copy moves only the first edge.
+
+`sim/run_disk_boot.sh` builds the Verilator top: `CPUSimTop` plus `sim/spi_disk_model.v` loaded with `sim/out/disk.bin`. HyperRAM starts as ones (`+init_fill=ffffffff`). The model is on the bridge clock. No DDR3 device and no Micron model.
+
+The `N=65536` image, the one on the board: edge 1 at cycle 42,566,064 (LED 1), edge 2 at cycle 72,844,294 (LED 0). The interval is 30,278,230. Mask `ffffffffff`, R5 0, R9 0, not halted, PC `0x2070`. A disk whose build byte is `0xE2` halts at cycle 3238, LED 0, PC `0x214`. Flipping payload byte 40 halts at cycle 4,944,516, LED 0, PC `0x214`. Neither negative image turns the LED on.
+
+The standing modules image used 3930 of 4096 ROM words and 10/10 block RAM: 8 pROM plus the HyperRAM controller's SDPB and SDPX9B. This image uses 102 of 512. The other 410 words are the halt word `E7FFFFFF`. The place at 00:40 (Europe/Amsterdam), `modules_n65536`, reports one pROM. Block RAM is 3/10: 1 pROM, 1 SDPB, 1 SDPX9B. Logic 3871/4608 (84%; 3574 LUT, 297 ALU, 0 ROM16), was 3967/4608 on the item C place. Registers 1791/3612 (1786 FF). CLS 2164/2304 (94%, 140 free), was 2173/2304.
+
+The host image is build `0xE1`, so the `0xD1` disk item D left on the board fails the build check and stays dark. Header checksum `0x8A0987D4`. The elaborated arm word is `0xA11C0DE5` xor that checksum, `0x2B158A31`. The bootstrap stores the checked sum at address 8. The arm prologue xors that word in. The checksum is not an immediate in the payload. The directory is unchanged in shape: core at `0x18000`, 3549 code words, body `0x1B740`, 151 init words, sectors 29, 58, and 87. The file is 17928 bytes. The delay word in `Blink5.rsc` is still `0x60000001`.
+
+Bitstreams stay SRAM-loaded. The data-file write is inside `0x200000`–`0x3FFFFF`. Nothing was written below `0x200000`, and no bitstream was written to flash. Bus 3 address 081, idcode `0x100981b`, GW1NSR-4C. The 256 bytes at `0x1FFF00` were `FF` before the write and `FF` after. `--verify` passed, and `cmp` of the 17928-byte dump against `disk.bin` passed. The SRAM load printed `write to ram` and `CRC check: Success`.
+
+```bash
+openFPGALoader --busdev-num 003:081 -b tangnano4k \
+  --external-flash --dump-flash -o 0x1FFF00 --file-size 256 \
+  sim/out/guard_before.bin
+openFPGALoader --busdev-num 003:081 -b tangnano4k \
+  -f --external-flash -o 0x200000 --verify \
+  sim/out/disk.bin
+openFPGALoader --busdev-num 003:081 -b tangnano4k \
+  --external-flash --dump-flash -o 0x200000 --file-size 17928 \
+  sim/out/disk_readback.bin
+openFPGALoader --busdev-num 003:081 -b tangnano4k \
+  --external-flash --dump-flash -o 0x1FFF00 --file-size 256 \
+  sim/out/guard_after.bin
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/impl/pnr/modules_n65536.fs
+```
+
+Webcam `measure_blink`, `/dev/video2`, `roi=nano4k`, duration 22, warmup 2. The analyzer's Blink3 "expected" field is not this rate. Status blinking, edge 0.431 Hz, FFT 0.438 Hz, confidence 1.0, 480 frames at 30 fps, ROI `264,222` 48×39. Against 0.4459 Hz that is the same slow side as the item C clip (0.430 Hz). The LED was not dark. Clip: `/home/lypanov/fpga/blink-measure/20261109-004330-mcp/clip.mkv`.

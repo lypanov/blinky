@@ -2,7 +2,7 @@
 
 One item at a time, from the top. This file is an index. The write-up is in the file each item names.
 
-Next: 13.
+Next: none. 13 is the last item in this list.
 
 1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay. Done. The measured result is in the ledger.
 
@@ -21,6 +21,6 @@ Ledger items 2–5 are not to-dos. If a later item cannot fit on the Nano 4K wit
 11. Replace the pre-armed check mask with an arm word that software must compute. Same file, "Block RAM, item C". Done. The measured result is in the ledger.
 
 12. The disk image builder, and the host writes the 4K's flash disk. Same file, "Block RAM, item D". Nano 4K only. Done. The measured result is in the ledger.
-13. Boot the 4K from the flash disk: the ROM becomes a bootstrap. Same file, "Block RAM, item E". Nano 4K only.
+13. Boot the 4K from the flash disk: the ROM becomes a bootstrap. Same file, "Block RAM, item E". Nano 4K only. Done. The measured result is in the ledger.
 
 The rest of `docs/modules-mod-plan.md` is the original fifteen and the boot path. Read a section when the proof cites it. Those headings are not a second queue.

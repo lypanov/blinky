@@ -22,6 +22,7 @@ class CPUSimTop(
     chainFix: Boolean = false,
     bodyFetch: Boolean = false,
     core: Option[CoreMap] = None,
+    flashBoot: Boolean = false,
     // When set, the DDR3 command port is an IO. The Micron ddr3.v bench
     // drives it. The command-port stand-in is not instantiated.
     externalPhy: Boolean = false
@@ -43,6 +44,10 @@ class CPUSimTop(
     val memWriteData = Output(UInt(32.W))
     val memWrite = Output(Bool())
     val memRead = Output(Bool())
+    val spiCsN = Output(Bool())
+    val spiClk = Output(Bool())
+    val spiMosi = Output(Bool())
+    val spiMiso = Input(Bool())
   })
   val phy = if (ddr3 && externalPhy) Some(IO(new Ddr3UserBundle)) else None
 
@@ -66,8 +71,13 @@ class CPUSimTop(
     fetchStored = fetchStored,
     chainFix = chainFix,
     bodyFetch = bodyFetch,
-    core = core
+    core = core,
+    flashBoot = flashBoot
   )) }
+  io.spiCsN := cpu.io.spiCsN
+  io.spiClk := cpu.io.spiClk
+  io.spiMosi := cpu.io.spiMosi
+  cpu.io.spiMiso := io.spiMiso
   if (hyper) {
     val bridge = Module(new HyperRamBridge)
     val model = Module(new HyperRamUserModel(hyperFirstValid))
@@ -311,8 +321,9 @@ object CPUSimTop {
             throw new RuntimeException("modules needs sim/visualizer/imem/core.map — run sim/link_inner.py")
           ))
         } else None
+        val flashBoot = image == "modules" && coreMap.exists(_.romWords <= 512)
         println(s"CPUSimTop: $image IMEM ${words.length} words from $imemPath")
-        println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix bodyFetch=$bodyFetch")
+        println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix bodyFetch=$bodyFetch flashBoot=$flashBoot")
         (
           () => new CPUSimTop(
             Seq.empty,
@@ -323,7 +334,8 @@ object CPUSimTop {
             fetchStored = fetchStored,
             chainFix = chainFix,
             bodyFetch = bodyFetch,
-            core = coreMap
+            core = coreMap,
+            flashBoot = flashBoot
           ),
           s"$targetDir/CPUSimTopHyper.v",
           image

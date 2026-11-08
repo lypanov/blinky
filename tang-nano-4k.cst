@@ -21,3 +21,18 @@ IO_LOC "io_uart_tx" 19;
 IO_PORT "io_uart_tx" IO_TYPE=LVCMOS18 PULL_MODE=NONE DRIVE=8;
 IO_LOC "io_uart_rx" 18;
 IO_PORT "io_uart_rx" IO_TYPE=LVCMOS18 PULL_MODE=UP;
+
+# External NOR, MSPI pins. Same locs as gowin/spi_flash.cst.
+# WP# and HOLD# are driven high. The bitstream is not written here.
+IO_LOC "spi_clk" 1;
+IO_PORT "spi_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "spi_cs_n" 2;
+IO_PORT "spi_cs_n" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC "spi_mosi" 48;
+IO_PORT "spi_mosi" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "spi_miso" 47;
+IO_PORT "spi_miso" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "spi_wp" 8;
+IO_PORT "spi_wp" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC "spi_hold" 9;
+IO_PORT "spi_hold" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;

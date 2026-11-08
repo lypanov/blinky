@@ -15,6 +15,11 @@ class CpuWrapHyper extends CpuWrapBase {
   val hr = new HyperRamUserBundle
   // Modules image only. clk_out/2. The bridge stays on clock.
   val cpu_clock = Input(Clock())
+  // External NOR. Idle unless this image is the flash bootstrap.
+  val spi_cs_n = Output(Bool())
+  val spi_clk = Output(Bool())
+  val spi_mosi = Output(Bool())
+  val spi_miso = Input(Bool())
 }
 
 class CpuWrapDdr3 extends CpuWrapBase {
@@ -41,6 +46,7 @@ class CPUMinimalWrapper(
     chainFix: Boolean = false,
     bodyFetch: Boolean = false,
     core: Option[CoreMap] = None,
+    flashBoot: Boolean = false,
     // DDR3 elaborations keep the Logger. Nano 4K images leave it out.
     // The Dock training UART is ddr3_uart_tx, not this module.
     enableLogger: Boolean = false
@@ -84,8 +90,18 @@ class CPUMinimalWrapper(
       fetchStored = fetchStored,
       chainFix = chainFix,
       bodyFetch = bodyFetch,
-      core = core
+      core = core,
+      flashBoot = flashBoot
     ))
+  }
+  if (exposeHyper) {
+    val pins = io.asInstanceOf[CpuWrapHyper]
+    pins.spi_cs_n := cpu.io.spiCsN
+    pins.spi_clk := cpu.io.spiClk
+    pins.spi_mosi := cpu.io.spiMosi
+    cpu.io.spiMiso := pins.spi_miso
+  } else {
+    cpu.io.spiMiso := false.B
   }
   io.led := cpu.io.led
   

@@ -42,7 +42,10 @@ class SectorRom(hexPath: String) extends BlackBox {
 // instead of a flat sector ROM. The table is the live words of the three
 // pages. A missing index returns 0. Ready stays low for the scan, which is
 // what Kernel.SPI polls.
-class SpiSector(pairCount: Int = 0) extends Module {
+// nor reads those same words from the SPI NOR. sectorBase is the flash
+// byte address of page 0. The CPU lends the one SpiNor; this side pulses
+// norStart and waits for norDone. Ready stays low for the shift.
+class SpiSector(pairCount: Int = 0, nor: Boolean = false) extends Module {
   val io = IO(new Bundle {
     val write = Input(Bool())
     val ctrl = Input(Bool())
@@ -53,10 +56,17 @@ class SpiSector(pairCount: Int = 0) extends Module {
     val romAddr = Output(UInt(12.W))
     val romData = Input(UInt(32.W))
     val scanning = Output(Bool())
+    val sectorBase = Input(UInt(24.W))
+    val norStart = Output(Bool())
+    val norAddr = Output(UInt(24.W))
+    val norWord = Input(UInt(32.W))
+    val norDone = Input(Bool())
   })
   io.romAddr := 0.U
+  io.norStart := false.B
+  io.norAddr := 0.U
 
-  val internal = if (pairCount == 0) {
+  val internal = if (pairCount == 0 && !nor) {
     val root = sys.env.getOrElse("CHISEL_CPU_PROJECT_ROOT", new File(".").getAbsolutePath)
     val hex = new File(root, "sim/visualizer/imem/sector.hex")
     if (!hex.isFile) {
@@ -191,7 +201,21 @@ class SpiSector(pairCount: Int = 0) extends Module {
     }
   }
 
-  if (pairCount == 0) {
+  val norArmed = if (nor) RegInit(false.B) else false.B
+  if (nor) {
+    when (wordWait && !norArmed) {
+      io.norStart := true.B
+      io.norAddr := io.sectorBase + Cat(wordAddr, 0.U(2.W))
+      norArmed := true.B
+    }
+    when (norArmed && io.norDone) {
+      deliver(Mux(inRange, io.norWord, 0.U))
+      norArmed := false.B
+    }
+    when (io.write && !io.ctrl && !wordWait && !norArmed) {
+      acceptByte()
+    }
+  } else if (pairCount == 0) {
     when (wordWait) {
       deliver(Mux(inRange, internal.get.io.data, 0.U))
     } .elsewhen (io.write && !io.ctrl) {

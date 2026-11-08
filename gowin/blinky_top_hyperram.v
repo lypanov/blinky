@@ -19,7 +19,13 @@ module blinky_top (
   (* syn_tristate = 1 *) inout [7:0] IO_hpram_dq,
   (* syn_tristate = 1 *) inout [0:0] IO_hpram_rwds,
   output [0:0] O_hpram_cs_n,
-  output [0:0] O_hpram_reset_n
+  output [0:0] O_hpram_reset_n,
+  output spi_cs_n,
+  output spi_clk,
+  output spi_mosi,
+  input  spi_miso,
+  output spi_wp,
+  output spi_hold
 );
 
   wire memory_clk;
@@ -87,8 +93,16 @@ module blinky_top (
     .io_hr_data_mask   (hr_data_mask),
     .io_hr_rd_data     (hr_rd_data),
     .io_hr_rd_data_valid (hr_rd_data_valid),
-    .io_hr_init_calib  (hr_init_calib)
+    .io_hr_init_calib  (hr_init_calib),
+    .io_spi_cs_n       (spi_cs_n),
+    .io_spi_clk        (spi_clk),
+    .io_spi_mosi       (spi_mosi),
+    .io_spi_miso       (spi_miso)
   );
+
+  // WP# and HOLD# stay deasserted. They are not part of the CPU.
+  assign spi_wp = 1'b1;
+  assign spi_hold = 1'b1;
 
   (* syn_hier = "hard" *) HyperRAM_Memory_Interface_Top u_hpram (
     .clk             (clock),

@@ -129,6 +129,7 @@ if [[ "$FPGA_IMAGE" == "modules" ]]; then
   echo "==> Modules IMEM (compiled Init and Load of Blink5, maxIterations=$BLINK3_MAXITER)"
   python3 "$ROOT/sim/link_inner.py" \
     --max-iter "$BLINK3_MAXITER" \
+    --flash-boot \
     --out "$BLINK3_IMEM"
   EXPECT_MHI="$(printf '%08x' "$(awk -F= '$1=="delay_word"{print $2}' "$ROOT/sim/visualizer/imem/core.map")")"
   GOWIN_OUT_NAME="modules_n${BLINK3_MAXITER}"
@@ -311,22 +312,28 @@ echo "==> Checking delay word 0x$EXPECT_MHI in the instruction ROM"
 if [[ "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3modules" ]]; then
   # Blink5's assignment is inside the .rsc, so it is not a ROM line of its own.
   # The sector pairs store the file bytes little-endian.
-  python3 - "$IMEM_HEX" "$ROOT/sim/visualizer/imem/core.map" "$EXPECT_MHI" << 'PY'
+  python3 - "$IMEM_HEX" "$ROOT/sim/visualizer/imem/core.map" "$EXPECT_MHI" "$ROOT/sim/out/disk.bin" << 'PY'
 import sys
-hex_path, map_path, delay = sys.argv[1:]
+hex_path, map_path, delay, disk_path = sys.argv[1:]
 words = [int(line, 16) for line in open(hex_path) if line.strip()]
 meta = {}
 for line in open(map_path):
     key, value = line.strip().split("=")
     meta[key] = int(value)
-base = meta["sector_rom"]
-sector = [0] * 768
-for i in range(meta["sector_pairs"]):
-    sector[words[base + 2 * i]] = words[base + 2 * i + 1]
-blob = b"".join(word.to_bytes(4, "little") for word in sector)
-if bytes.fromhex(delay)[::-1] not in blob:
-    raise SystemExit(f"delay word {delay} is not in the sector image")
-print(f"    sector image contains {delay}")
+needle = bytes.fromhex(delay)[::-1]
+if meta.get("flash_boot") == 1:
+    blob = open(disk_path, "rb").read()
+    where = "disk"
+else:
+    base = meta["sector_rom"]
+    sector = [0] * 768
+    for i in range(meta["sector_pairs"]):
+        sector[words[base + 2 * i]] = words[base + 2 * i + 1]
+    blob = b"".join(word.to_bytes(4, "little") for word in sector)
+    where = "sector image"
+if needle not in blob:
+    raise SystemExit(f"delay word {delay} is not in the {where}")
+print(f"    {where} contains {delay}")
 PY
 else
   if grep -qi "$EXPECT_MHI" "$IMEM_HEX"; then
@@ -362,18 +369,40 @@ if [[ "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "ddr3pd" ]]; then
 elif [[ "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3modules" ]]; then
   echo "==> Checking the compiled stub at ROM[0]"
   entry="$(sed -n '1p' "$IMEM_HEX")"
-  if [[ "$entry" == "4c000020" ]]; then
-    echo "    ROM[0] is MOV R12, 0x20 ($entry)"
-  else
-    echo "error: ROM[0] is $entry, expected 4c000020" >&2
-    exit 1
-  fi
   lines="$(wc -l < "$IMEM_HEX")"
-  if [[ "$lines" -eq 4096 ]]; then
-    echo "    ROM is 4096 words"
+  flash_boot="$(awk -F= '$1=="flash_boot"{print $2}' "$ROOT/sim/visualizer/imem/core.map")"
+  if [[ "$FPGA_IMAGE" == "modules" && "$flash_boot" == "1" ]]; then
+    if [[ "$entry" == "40000000" ]]; then
+      echo "    ROM[0] is MOV R0, 0 ($entry)"
+    else
+      echo "error: ROM[0] is $entry, expected the bootstrap MOV R0, 0" >&2
+      exit 1
+    fi
+    if [[ "$lines" -eq 512 ]]; then
+      echo "    ROM is 512 words"
+    else
+      echo "error: ROM is $lines words, expected 512" >&2
+      exit 1
+    fi
+    if grep -qi 'c7000001' "$IMEM_HEX"; then
+      echo "    bootstrap branches with B R1"
+    else
+      echo "error: bootstrap B R1 is not in the ROM" >&2
+      exit 1
+    fi
   else
-    echo "error: ROM is $lines words, expected 4096" >&2
-    exit 1
+    if [[ "$entry" == "4c000020" ]]; then
+      echo "    ROM[0] is MOV R12, 0x20 ($entry)"
+    else
+      echo "error: ROM[0] is $entry, expected 4c000020" >&2
+      exit 1
+    fi
+    if [[ "$lines" -eq 4096 ]]; then
+      echo "    ROM is 4096 words"
+    else
+      echo "error: ROM is $lines words, expected 4096" >&2
+      exit 1
+    fi
   fi
 elif [[ "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "ddr3moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "ddr3files" ]]; then
   echo "==> Checking the procedure-variable call and the unfixed BL placeholder"

@@ -295,11 +295,16 @@ EQ = 1
 ALWAYS = 7
 
 
-def _arm_prologue() -> list[int]:
+def _arm_prologue(with_disk: bool = False) -> list[int]:
     """OR the differences, then store ARM_WORD xor that OR.
 
     R8 is the accumulator. R12 and R14 stay. The caller branches to the
     compiled delay loop after the store.
+
+    The flash image also xors mem[8]. The bootstrap stores the disk
+    checksum there. A stale disk stores a different sum, the hardware
+    arm word was elaborated from this build's checksum, and the LED
+    stays dark. The checksum is not an immediate in this sequence.
     """
     a = Asm()
     a.word(f1(0, 8, 0, 0))
@@ -348,6 +353,10 @@ def _arm_prologue() -> list[int]:
     for word in load_const(0, ARM_WORD):
         a.word(word)
     a.word(f0(7, 0, 0, 8))
+    if with_disk:
+        a.word(f1(0, 1, 0, 8))
+        a.word(ldw(1, 1, 0))
+        a.word(f0(7, 0, 0, 1))
     for word in load_const(1, ARM_ADDR):
         a.word(word)
     a.word(stw(0, 1, 0))
@@ -588,14 +597,177 @@ def _light(ammt: dict) -> int:
     return data
 
 
-def link(max_iter: int, break_arm: bool = False) -> dict:
+FLASH_MAGIC = 0x314B5344
+FLASH_BUILD = 0xE1
+FLASH_BASE = 0x200000
+CHECK_ADDR = 8
+DIR_AT = 0x60
+BOOT_ROM = 512
+HALT_WORD = 0xE7FFFFFF
+
+
+def _io(off: int) -> int:
+    return off & 0xFFFFF
+
+
+def _plant(a: Asm, static_end: int, flash: bool) -> None:
+    """Clear the static image, replay the init stream, then leave for the body.
+
+    HyperRAM powers up as ones. The init stream stores only non-zero
+    words. On the flash image the body address is in R5, saved before
+    this runs, because the init pointer uses R1.
+    """
+    a.word(f1(0, 12, 0, 0x20))
+    a.word(f1(0, 14, 0, STACK))
+    a.word(f1(0, 0, 0, 0))
+    for word in load_const(2, MEMLIM):
+        a.word(word)
+    for word in load_const(3, static_end):
+        a.word(word)
+    a.label("clear")
+    a.word(stw(0, 2, 0))
+    a.word(f1(8, 2, 2, 4))
+    a.word(f0(9, 4, 2, 3))
+    a.branch("clear", 9)
+    a.word(mhi(1, INIT_BASE >> 16))
+    a.label("loop")
+    a.word(ldw(2, 1, 0))
+    a.branch("done", 1)
+    a.word(f1(8, 1, 1, 4))
+    a.word(ldw(0, 1, 0))
+    a.word(f1(8, 1, 1, 4))
+    a.word(stw(0, 2, 0))
+    a.branch("loop", 7)
+    a.label("done")
+    if flash:
+        a.word(f0(0, 1, 0, 5))
+        a.word(f1(0, 5, 0, 0))
+        a.word(0xC7000001)
+
+
+def _bootstrap(static_end: int) -> list[int]:
+    """Read the disk header, copy the core, then run the old stub tail.
+
+    One NOR word per load from -64. The pointer advances in the CPU.
+    A failed check branches at the flag the compare just set. Later
+    arithmetic is not allowed to sit between that compare and the branch.
+    """
+    a = Asm()
+    a.word(f1(0, 0, 0, 0))
+    a.word(f1(0, 4, 0, 0))
+    for word in load_const(1, FLASH_BASE):
+        a.word(word)
+    a.word(stw(1, 0, _io(-64)))
+
+    def expect(value: int) -> None:
+        a.word(ldw(1, 0, _io(-64)))
+        for word in load_const(2, value):
+            a.word(word)
+        a.word(f0(9, 3, 1, 2))
+        a.branch("halt", 9)
+
+    expect(FLASH_MAGIC)
+    expect(1)
+    expect(FLASH_BUILD)
+    a.word(ldw(7, 0, _io(-64)))
+    a.word(f0(9, 6, 7, 0))
+    a.branch("halt", 1)
+    a.word(f1(4, 6, 7, 3))
+    a.word(f0(9, 6, 6, 0))
+    a.branch("halt", 9)
+    a.word(mhi(6, 1))
+    a.word(f1(8, 6, 6, 1))
+    a.word(f0(9, 3, 6, 7))
+    a.branch("halt", 1)
+    a.branch("halt", 0)
+    a.word(ldw(8, 0, _io(-64)))
+
+    a.word(f1(0, 5, 0, DIR_AT))
+    a.word(f1(0, 6, 0, 9))
+    a.label("dir")
+    a.word(f0(9, 3, 6, 0))
+    a.branch("dirdone", 1)
+    a.word(ldw(1, 0, _io(-64)))
+    a.word(f0(8, 4, 4, 1))
+    a.word(stw(1, 5, 0))
+    a.word(f1(8, 5, 5, 4))
+    a.word(f1(9, 7, 7, 4))
+    a.word(f1(9, 6, 6, 1))
+    a.branch("dir", 7)
+    a.label("dirdone")
+
+    def copy(label: str, count_at: int, dest_at: int | None, dest: int | None) -> None:
+        if dest is not None:
+            for word in load_const(2, dest):
+                a.word(word)
+        else:
+            a.word(ldw(2, 0, dest_at))
+        a.word(ldw(6, 0, count_at))
+        a.label(label)
+        a.word(f0(9, 3, 6, 0))
+        a.branch(label + "x", 1)
+        a.word(ldw(1, 0, _io(-64)))
+        a.word(f0(8, 4, 4, 1))
+        a.word(stw(1, 2, 0))
+        a.word(f1(8, 2, 2, 4))
+        a.word(f1(9, 6, 6, 4))
+        a.word(f1(9, 7, 7, 4))
+        a.branch(label, 7)
+        a.label(label + "x")
+
+    copy("code", 0x64, 0x60, None)
+    copy("init", 0x6C, None, INIT_BASE)
+
+    a.label("tail")
+    a.word(f0(9, 3, 7, 0))
+    a.branch("summed", 1)
+    a.word(ldw(1, 0, _io(-64)))
+    a.word(f0(8, 4, 4, 1))
+    a.word(f1(9, 7, 7, 4))
+    a.branch("tail", 7)
+    a.label("summed")
+    a.word(f0(9, 3, 4, 8))
+    a.branch("halt", 9)
+    a.word(stw(4, 0, CHECK_ADDR))
+    for word in load_const(1, FLASH_BASE + 20 + 36):
+        a.word(word)
+    a.word(ldw(2, 0, 0x64))
+    a.word(ldw(3, 0, 0x6C))
+    a.word(f0(8, 1, 1, 2))
+    a.word(f0(8, 1, 1, 3))
+    a.word(stw(1, 0, _io(-60)))
+    a.word(ldw(5, 0, 0x68))
+    _plant(a, static_end, flash=True)
+    a.label("halt")
+    a.word(HALT_WORD)
+    boot = a.encode(STUB_PC)
+    if len(boot) > 400:
+        raise SystemExit(f"bootstrap is {len(boot)} words; it must stay under PC 0x800")
+    if boot[-1] != HALT_WORD:
+        raise SystemExit("bootstrap does not end on the halt word")
+    return boot
+
+
+def _finalize_flash(info: dict) -> dict:
+    """The arm word is ARM_WORD xor the disk checksum. Build the disk first."""
+    import importlib
+    disk = importlib.import_module("build_disk_image")
+    image = disk.build(info)
+    total = int.from_bytes(image[16:20], "little")
+    info["arm_word"] = (ARM_WORD ^ total) & 0xFFFFFFFF
+    info["disk_checksum"] = total
+    info["disk"] = image
+    return info
+
+
+def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False) -> dict:
     mods = _load_modules()
     payload = _compile_payload()
     blink_key = payload["AMemoryMappedToggle"]["key"]
     got = [k for name, k in payload["Blink5"]["imports"] if name == "AMemoryMappedToggle"]
     if got != [blink_key]:
         raise SystemExit(f"Blink5 import key {got} != AMemoryMappedToggle {blink_key:#x}")
-    prologue = _arm_prologue()
+    prologue = _arm_prologue(with_disk=flash_boot)
     armed_raw = _append_arm(payload["Blink5"]["raw"], prologue)
     payload["Blink5"] = _reload_blink(armed_raw)
     raw, delay_word, delay_index = _patch_delay(
@@ -783,42 +955,17 @@ def link(max_iter: int, break_arm: bool = False) -> dict:
     if 0x20 in planted:
         raise SystemExit("the stub writes MT[0]; Kernel.Init installs the trap there")
 
-    a = Asm()
-    a.word(f1(0, 12, 0, 0x20))
-    a.word(f1(0, 14, 0, STACK))
-    # HyperRAM powers up as ones. The init stream stores only non-zero
-    # words, so a NIL link or a zero variable would stay 0xFFFFFFFF and
-    # Load would walk the module list forever. Clear the static image
-    # first; the pairs below overwrite the live words.
     static_end = desc_at + DESC_SIZE
-    a.word(f1(0, 0, 0, 0))
-    for word in load_const(2, MEMLIM):
-        a.word(word)
-    for word in load_const(3, static_end):
-        a.word(word)
-    a.label("clear")
-    a.word(stw(0, 2, 0))
-    a.word(f1(8, 2, 2, 4))
-    a.word(f0(9, 4, 2, 3))
-    a.branch("clear", 9)
-    a.word(mhi(1, INIT_BASE >> 16))
-    a.label("loop")
-    a.word(ldw(2, 1, 0))
-    a.branch("done", 1)
-    a.word(f1(8, 1, 1, 4))
-    a.word(ldw(0, 1, 0))
-    a.word(f1(8, 1, 1, 4))
-    a.word(stw(0, 2, 0))
-    a.branch("loop", 7)
-    a.label("done")
-    a.at(lambda pc: cond_branch(pc, body, 7))
-    stub = a.encode(STUB_PC)
-    if a.labels["done"] + 0 != a.labels["done"]:
-        raise SystemExit("stub labels")
-    # The branch at done must reach the Modules body.
-    done_pc = a.labels["done"]
-    if cond_branch(done_pc, body, 7) != stub[(done_pc - STUB_PC) // 4]:
-        raise SystemExit("stub branch does not encode the body")
+    if flash_boot:
+        stub = _bootstrap(static_end)
+    else:
+        a = Asm()
+        _plant(a, static_end, flash=False)
+        a.at(lambda pc: cond_branch(pc, body, 7))
+        stub = a.encode(STUB_PC)
+        done_pc = a.labels["done"]
+        if cond_branch(done_pc, body, 7) != stub[(done_pc - STUB_PC) // 4]:
+            raise SystemExit("stub branch does not encode the body")
 
     names = (b"AMemoryMappedToggle.rsc", b"Blink5.rsc")
     if names != tuple(sorted(names)):
@@ -838,40 +985,60 @@ def link(max_iter: int, break_arm: bool = False) -> dict:
     for index, word in nz:
         sector.extend((index, word))
 
-    rom = [0] * ROM_WORDS
-    regions = [
-        ("stub", 0, stub),
-        ("code", len(stub), words),
-        ("init", len(stub) + len(words), stream),
-        ("sector", len(stub) + len(words) + len(stream), sector),
-    ]
-    used = 0
-    for _name, at, chunk in regions:
-        if at + len(chunk) > ROM_WORDS:
-            raise SystemExit(
-                f"ROM needs {at + len(chunk)} words, {ROM_WORDS} exist "
-                f"(stub {len(stub)}, code {len(words)}, init {len(stream)}, sector {len(sector)})"
-            )
-        for i, word in enumerate(chunk):
-            rom[at + i] = word & 0xFFFFFFFF
-        used = at + len(chunk)
+    if flash_boot:
+        rom = [(w & 0xFFFFFFFF) for w in stub]
+        rom.extend([HALT_WORD] * (BOOT_ROM - len(rom)))
+        used = len(stub)
+        nrom = BOOT_ROM
+        # The core, the init stream, and the sectors live in the disk.
+        # The ROM is the bootstrap only. sector_pairs stays 0 so nothing
+        # elaborates a second ROM port.
+        map_sector_words = 0
+        map_sector_pairs = 0
+        map_core_rom = 0
+        map_init_rom = 0
+        map_sector_rom = 0
+    else:
+        rom = [0] * ROM_WORDS
+        regions = [
+            ("stub", 0, stub),
+            ("code", len(stub), words),
+            ("init", len(stub) + len(words), stream),
+            ("sector", len(stub) + len(words) + len(stream), sector),
+        ]
+        used = 0
+        for _name, at, chunk in regions:
+            if at + len(chunk) > ROM_WORDS:
+                raise SystemExit(
+                    f"ROM needs {at + len(chunk)} words, {ROM_WORDS} exist "
+                    f"(stub {len(stub)}, code {len(words)}, init {len(stream)}, sector {len(sector)})"
+                )
+            for i, word in enumerate(chunk):
+                rom[at + i] = word & 0xFFFFFFFF
+            used = at + len(chunk)
+        nrom = ROM_WORDS
+        map_sector_words = len(sector)
+        map_sector_pairs = len(sector) // 2
+        map_core_rom = len(stub)
+        map_init_rom = len(stub) + len(words)
+        map_sector_rom = len(stub) + len(words) + len(stream)
     light = _light(payload["AMemoryMappedToggle"])
     info = {
         "stub_words": len(stub),
         "core_base": CORE_BASE,
         "core_words": len(words),
-        "core_rom": len(stub),
+        "core_rom": map_core_rom,
         "init_base": INIT_BASE,
         "init_words": len(stream),
-        "init_rom": len(stub) + len(words),
+        "init_rom": map_init_rom,
         "body_lo": BODY_LO,
         "body_hi": BODY_HI,
         "body": body,
         "light": light,
-        "sector_rom": len(stub) + len(words) + len(stream),
-        "sector_words": len(sector),
-        "sector_pairs": len(sector) // 2,
-        "rom_words": ROM_WORDS,
+        "sector_rom": map_sector_rom,
+        "sector_words": map_sector_words,
+        "sector_pairs": map_sector_pairs,
+        "rom_words": nrom,
         "used": used,
         "delay_word": delay_word,
         "delay_index": delay_index,
@@ -883,6 +1050,7 @@ def link(max_iter: int, break_arm: bool = False) -> dict:
         "blink_at": blink_at,
         "blink_words": blink_words,
         "break_arm": int(break_arm),
+        "flash_boot": int(flash_boot),
         "data": data_base,
         "string": string_at,
         "counts": {name: sum(1 for n, _i in seen if n == name) for name in ORDER},
@@ -894,6 +1062,8 @@ def link(max_iter: int, break_arm: bool = False) -> dict:
         "init_stream": list(stream),
         "sector_pages": dict(pages),
     }
+    if flash_boot:
+        info = _finalize_flash(info)
     return info
 
 
@@ -910,6 +1080,9 @@ def write_map(info: dict, path: str) -> None:
         out.write("split=1\n")
         for key in fields:
             out.write(f"{key}={info[key]}\n")
+        if "disk_checksum" in info:
+            out.write(f"disk_checksum={info['disk_checksum']}\n")
+            out.write(f"flash_boot={info['flash_boot']}\n")
 
 
 def write_words(words: list[int], path: str) -> None:
@@ -927,9 +1100,11 @@ def main() -> int:
     parser.add_argument("--out", default=os.path.join(ROOT, "sim", "visualizer", "imem", "modules.words"))
     parser.add_argument("--break-arm", action="store_true",
                         help="Plant the code checksum plus one, so the LED stays dark")
+    parser.add_argument("--flash-boot", action="store_true",
+                        help="ROM is the disk bootstrap. Write sim/out/disk.bin")
     args = parser.parse_args()
     n = args.mov_iter if args.mov_iter is not None else args.max_iter
-    info = link(n, break_arm=args.break_arm)
+    info = link(n, break_arm=args.break_arm, flash_boot=args.flash_boot)
     write_words(info["words"], args.out)
     write_map(info, MAP_PATH)
     counts = " ".join(f"{name} {info['counts'][name]}" for name in ORDER)
@@ -950,6 +1125,16 @@ def main() -> int:
         + (" BREAK" if info["break_arm"] else "")
     )
     print(f"[ok] map {MAP_PATH}")
+    if args.flash_boot:
+        disk_path = os.path.join(ROOT, "sim", "out", "disk.bin")
+        os.makedirs(os.path.dirname(disk_path), exist_ok=True)
+        with open(disk_path, "wb") as out:
+            out.write(info["disk"])
+        print(
+            f"[ok] disk {disk_path} bytes {len(info['disk'])} "
+            f"checksum {info['disk_checksum']:08x} "
+            f"arm {info['arm_word']:08x} boot {info['stub_words']}"
+        )
     return 0
 
 

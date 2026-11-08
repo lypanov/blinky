@@ -45,7 +45,7 @@ if {[info exists ::env(GOWIN_OUT_NAME)] && $::env(GOWIN_OUT_NAME) ne ""} {
 }
 set_option -synthesis_tool gowinsynthesis
 set_option -place_option 2
-set_option -use_mspi_as_gpio 0
+set_option -use_mspi_as_gpio 1
 set_option -use_sspi_as_gpio 1
 set_option -use_ready_as_gpio 1
 set_option -use_done_as_gpio 1

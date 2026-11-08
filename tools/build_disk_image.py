@@ -8,7 +8,7 @@ Header, 5 little-endian words. The checksum does not cover these.
 
   +0x00  magic      0x314B5344   bytes 44 53 4B 31 ('D','S','K','1')
   +0x04  version    1
-  +0x08  build      0xD1
+  +0x08  build      0xE1
   +0x0C  length     payload bytes, a multiple of 4
   +0x10  checksum   sum of the payload words, little-endian, mod 2^32
 
@@ -55,7 +55,7 @@ from sector_image import (  # noqa: E402
 
 MAGIC = 0x314B5344
 VERSION = 1
-BUILD = 0xD1
+BUILD = 0xE1
 HEADER_WORDS = 5
 HEADER_BYTES = HEADER_WORDS * 4
 DIR_WORDS = 9
@@ -106,11 +106,12 @@ def build(info: dict) -> bytes:
         raise SystemExit("code word count does not match the ROM")
     if len(stream) != info["init_words"]:
         raise SystemExit("init stream length does not match the ROM")
-    rom = info["words"]
-    if rom[info["core_rom"] : info["core_rom"] + len(code)] != code:
-        raise SystemExit("packed code is not the ROM slice")
-    if rom[info["init_rom"] : info["init_rom"] + len(stream)] != stream:
-        raise SystemExit("init stream is not the ROM slice")
+    if not info.get("flash_boot"):
+        rom = info["words"]
+        if rom[info["core_rom"] : info["core_rom"] + len(code)] != code:
+            raise SystemExit("packed code is not the ROM slice")
+        if rom[info["init_rom"] : info["init_rom"] + len(stream)] != stream:
+            raise SystemExit("init stream is not the ROM slice")
     if not stream or stream[-1] != 0:
         raise SystemExit("init stream does not end with a zero dest")
     raw_pages = b""
@@ -119,7 +120,7 @@ def build(info: dict) -> bytes:
         if len(page) != SECTOR:
             raise SystemExit(f"sector {sec} is {len(page)} bytes")
         raw_pages += page
-    if raw_pages != _pages_from_pairs(info):
+    if not info.get("flash_boot") and raw_pages != _pages_from_pairs(info):
         raise SystemExit("sector pages are not the ROM pairs expanded")
     if int.from_bytes(pages[DIR_ROOT][:4], "little") != DIR_MARK:
         raise SystemExit("directory page has no directory mark")

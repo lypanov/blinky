@@ -34,7 +34,7 @@ class InstrRom(depth: Int, addrBits: Int, hexPath: String) extends BlackBox {
        |  input overlayEn,
        |  input [31:0] overlayData
        |);
-       |  reg [31:0] mem [0:${depth - 1}];
+       |  ${if (depth <= 512) "(* syn_ramstyle = \"block_ram\" *) " else ""}reg [31:0] mem [0:${depth - 1}];
        |  initial $$readmemh("${hexPath}", mem);
        |  always @(posedge clk) begin
        |    if (overlayEn)
@@ -105,7 +105,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
                  // page compare is one constant, not a table of addresses.
                  bodyFetch: Boolean = false,
                  chiselRom: Boolean = false,
-                 core: Option[CoreMap] = None) extends Module {
+                 core: Option[CoreMap] = None,
+                 // Nano 4K disk boot. The ROM is only the bootstrap. The core
+                 // is copied into HyperRAM and every later fetch comes from
+                 // there. The coreRom translation is not elaborated.
+                 flashBoot: Boolean = false) extends Module {
   val io = IO(new Bundle {
     val r0 = Output(UInt(32.W))  // Output register R0 for testing
     val r1 = Output(UInt(32.W))  // Output register R1 for testing
@@ -141,6 +145,12 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val messageCode = Output(UInt(4.W))
     val trigger = Output(Bool())
     val logByte = Output(UInt(8.W))
+
+    // External NOR. Idle (CS high) unless this image is the flash bootstrap.
+    val spiCsN = Output(Bool())
+    val spiClk = Output(Bool())
+    val spiMosi = Output(Bool())
+    val spiMiso = Input(Bool())
   })
   
   // Initialize the logByte signal with a default value
@@ -184,9 +194,19 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val splitFetch = core.isDefined
   val useArm = splitFetch
   val chainOn = chainFix && !splitFetch
+  // The disk image keeps the core in HyperRAM. coreRom / holdForCode would
+  // fetch those addresses back out of the bootstrap ROM, so they are not
+  // elaborated. The Dock image keeps the translation.
+  val translateRom = splitFetch && !flashBoot
+  if (flashBoot && (!splitFetch || !bodyFetch || chiselRom)) {
+    throw new RuntimeException("flash boot needs the core map, the body fetch, and the BSRAM ROM")
+  }
   if (splitFetch && (!bodyFetch || chiselRom)) {
     throw new RuntimeException("the core map needs the body fetch and the BSRAM ROM")
   }
+  io.spiCsN := true.B
+  io.spiClk := false.B
+  io.spiMosi := false.B
   val checkMask = if (totalChecks > 0 && !useArm) {
     Some(RegInit(0.U(totalChecks.W)))
   } else None
@@ -349,9 +369,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // the issue path is only these bits and not the data mux.
   val patchLoad = if (chainOn) RegInit(false.B) else false.B
   val patchLoadHit = if (chainOn) Reg(Vec(nPatch, Bool())) else VecInit(Seq.fill(nPatch)(false.B))
-  val romPhase = if (chainOn || splitFetch) RegInit(0.U(2.W)) else 0.U(2.W)
-  val romDest = if (chainOn || splitFetch) Reg(UInt(4.W)) else 0.U(4.W)
-  if (chainOn || splitFetch) {
+  val romPhase = if (chainOn || translateRom) RegInit(0.U(2.W)) else 0.U(2.W)
+  val romDest = if (chainOn || translateRom) Reg(UInt(4.W)) else 0.U(4.W)
+  if (chainOn || translateRom) {
     chainHold := romPhase =/= 0.U
   }
 
@@ -431,11 +451,17 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // Proof 6. The SPI window is -48/-44. Only the placed-body image has
   // it, so the other elaborations keep the memory path they already had.
   val spi = if (bodyFetch) {
-    val mod = Module(new SpiSector(pairCount = core.map(_.sectorPairs).getOrElse(0)))
+    val mod = Module(new SpiSector(
+      pairCount = if (flashBoot) 0 else core.map(_.sectorPairs).getOrElse(0),
+      nor = flashBoot
+    ))
     mod.io.write := false.B
     mod.io.ctrl := false.B
     mod.io.wdata := 0.U
-    if (splitFetch) {
+    mod.io.sectorBase := 0.U
+    mod.io.norWord := 0.U
+    mod.io.norDone := false.B
+    if (translateRom) {
       // The scan reads the same single-port ROM as fetch. The CPU
       // lends it the address while a sector word is in flight.
       mod.io.romData := instruction
@@ -444,6 +470,25 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     }
     Some(mod)
   } else None
+  // -64 is the bootstrap's word port: a store sets the flash address, a
+  // load reads one word and adds 4. -60 is the sector base SpiSector adds
+  // its word index to. Both are below the SD window at -48/-44.
+  val norPtr = if (flashBoot) RegInit(0.U(24.W)) else 0.U(24.W)
+  val sectorBase = if (flashBoot) RegInit(0.U(24.W)) else 0.U(24.W)
+  val norPending = if (flashBoot) RegInit(false.B) else false.B
+  val norKick = if (flashBoot) WireDefault(false.B) else false.B
+  val nor = if (flashBoot) Some(Module(new SpiNor(half = 4))) else None
+  if (flashBoot) {
+    val eng = nor.get
+    eng.io.start := false.B
+    eng.io.addr := 0.U
+    eng.io.miso := io.spiMiso
+    io.spiCsN := eng.io.csN
+    io.spiClk := eng.io.sclk
+    io.spiMosi := eng.io.mosi
+    spi.get.io.sectorBase := sectorBase
+    spi.get.io.norWord := eng.io.word
+  }
   val spiLoad = if (bodyFetch) RegInit(false.B) else false.B
   val spiLoadCtrl = if (bodyFetch) RegInit(false.B) else false.B
   if (bodyFetch) {
@@ -489,7 +534,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // branches to R12. ROM[0] is the stub, so that address must not
   // fall through to it.
   val inBody = if (!bodyFetch) false.B
-    else if (splitFetch) {
+    else if (flashBoot) {
+      // The ROM is only the bootstrap. The trap, the copied core, and
+      // the placed body are all fetched from HyperRAM.
+      !(pc >= 0x80.U && pc < core.get.stubEnd.U)
+    } else if (splitFetch) {
       (pc >= core.get.bodyLo.U && pc < core.get.bodyHi.U) || (pc < 0x80.U)
     } else pc(31, 8) === 0x22.U(24.W) && pc(1, 0) === 0.U
   val haveBody = if (bodyFetch) bodyReady && pc === bodyFor else false.B
@@ -538,7 +587,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     // Unpatched code-window load. Phase 1 writes the ROM word that the
     // issue cycle addressed. Phase 2 refetches PC+4 and only then advances,
     // so the following instruction is not the data word.
-      if (chainOn || splitFetch) {
+      if (chainOn || translateRom) {
       when (romPhase === 1.U) {
         regWrite := true.B
         regWriteAddr := romDest
@@ -552,7 +601,21 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       pcNext := pc
     }
   } .elsewhen (memoryAccessPending) {
-    when (!io.memStall) {
+    // A -64 load owns the NOR for many cycles. HyperRAM is not in that
+    // transfer, so memStall stays low and must not complete the load.
+    val norHold = if (flashBoot) norPending else false.B
+    if (flashBoot) {
+      when (norPending && nor.get.io.done) {
+        regWrite := true.B
+        regWriteAddr := memoryTargetReg
+        regWriteData := nor.get.io.word
+        memoryAccessPending := false.B
+        norPending := false.B
+        norPtr := norPtr + 4.U
+        printf(p"NOR word ${Hexadecimal(nor.get.io.word)} next ${Hexadecimal(norPtr + 4.U)}\n")
+      }
+    }
+    when (!norHold && !io.memStall) {
       when (memoryIsLoad) {
         // RISC5 inbus1: LDB zero-extends the lane adr[1:0] selects.
         // LDW returns the word. Same completion cycle either way.
@@ -725,6 +788,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     } else {
       false.B
     }
+    // -64 (0xFFFFFFC0) is one NOR word. -60 (0xFFFFFFC4) is the sector base.
+    val norPtrHit = if (flashBoot) effectiveAddr === "hFFFFFFC0".U else false.B
+    val norBaseHit = if (flashBoot) effectiveAddr === "hFFFFFFC4".U else false.B
 
     when (isLoad) {  // LDW and LDB. The byte extract is on the completion cycle.
         val useHyper = WireDefault(true.B)
@@ -750,7 +816,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
             romPhase := 1.U
           }
         }
-        if (splitFetch) {
+        if (translateRom) {
           val m = core.get
           val aligned = !isByte && effectiveAddr(1, 0) === 0.U
           val inCore = aligned && effectiveAddr >= m.coreBase.U && effectiveAddr < m.coreEnd.U
@@ -771,6 +837,18 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
             useHyper := false.B
             spiLoad := true.B
             spiLoadCtrl := effectiveAddr(2)
+            memoryAccessPending := true.B
+            memoryIsLoad := true.B
+            memoryIsByte := false.B
+            memoryLane := 0.U
+            memoryTargetReg := regA
+          }
+        }
+        if (flashBoot) {
+          when (norPtrHit) {
+            useHyper := false.B
+            norPending := true.B
+            norKick := true.B
             memoryAccessPending := true.B
             memoryIsLoad := true.B
             memoryIsByte := false.B
@@ -799,6 +877,15 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         memoryIsLoad := false.B
         memoryIsByte := false.B
         memoryAccessPending := waitForStores.B
+      } .elsewhen (if (flashBoot) norPtrHit || norBaseHit else false.B) {
+        if (flashBoot) {
+          when (norPtrHit) {
+            norPtr := rdX(23, 0)
+          }
+          when (norBaseHit) {
+            sectorBase := rdX(23, 0)
+          }
+        }
       } .elsewhen (!isByte) {  // STW - Store Word
         // Start a memory write operation
         io.memAddr := effectiveAddr
@@ -1121,7 +1208,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       romOverlayData := bodyWord
     }
   }
-  if (splitFetch) {
+  if (flashBoot) {
+    // Bootstrap words sit at ROM index 0. The core is not in this ROM.
+    romAddr := ((pcNext - 0x80.U) >> 2)(addrBits - 1, 0)
+  }
+  if (translateRom) {
     val m = core.get
     def romIndex(addr: UInt): UInt = {
       val idx = Wire(UInt(addrBits.W))
@@ -1148,7 +1239,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   when (reset.asBool) {
     romAddr := (if (splitFetch) 0.U(addrBits.W) else (0x80.U(32.W) >> 2)(addrBits - 1, 0))
   }
-  if (splitFetch) {
+  if (translateRom) {
     // GW1NSR-4C BSRAM is single-port. A second read becomes LUT RAM
     // and does not fit. The sector scan borrows this ROM; fetch waits,
     // then one more cycle reloads the instruction the stall held.
@@ -1167,6 +1258,22 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     }
   }
   
+  if (flashBoot) {
+    val eng = nor.get
+    when (!eng.io.busy) {
+      when (norKick) {
+        eng.io.start := true.B
+        eng.io.addr := norPtr
+      } .elsewhen (spi.get.io.norStart) {
+        eng.io.start := true.B
+        eng.io.addr := spi.get.io.norAddr
+      }
+    }
+    // A bootstrap load owns the returning word. The sector side only
+    // sees a completion when it asked for one.
+    spi.get.io.norDone := eng.io.done && !norPending
+  }
+
   // Register write logic
   when (regWrite) {
     regs(regWriteAddr) := regWriteData
@@ -1377,7 +1484,8 @@ object CPUSubset0 {
         fetchStored = fetchbl || ddr3fetch,
         chainFix = pdchain || moddesc || files || modules || ddr3pd || ddr3moddesc || ddr3files || ddr3modules,
         bodyFetch = modules || ddr3modules,
-        core = coreMap
+        core = coreMap,
+        flashBoot = modules && coreMap.exists(_.romWords <= 512)
       ),
       firtoolOpts = firtoolOpts
     )
@@ -1394,6 +1502,7 @@ object CPUSubset0 {
         chainFix = pdchain || moddesc || files || modules || ddr3pd || ddr3moddesc || ddr3files || ddr3modules,
         bodyFetch = modules || ddr3modules,
         core = coreMap,
+        flashBoot = modules && coreMap.exists(_.romWords <= 512),
         enableLogger = ddr3
       ),
       firtoolOpts = firtoolOpts
@@ -1411,6 +1520,7 @@ object CPUSubset0 {
         chainFix = pdchain || moddesc || files || modules || ddr3pd || ddr3moddesc || ddr3files || ddr3modules,
         bodyFetch = modules || ddr3modules,
         core = coreMap,
+        flashBoot = modules && coreMap.exists(_.romWords <= 512),
         enableLogger = ddr3
       ),
       firtoolOpts = firtoolOpts
