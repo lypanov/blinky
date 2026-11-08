@@ -201,3 +201,27 @@ Hardware: on those two images, drop `checkMask`, `CheckTail`, and their store co
 Software: before its delay loop, Blink5 (or the stub, whichever runs after `Modules.Load`) reads values that are known in advance: `MemLim`, `AllocPtr`, `root`, and the stack origin at 12, 16, 20, and 24, one `DIV` and `MOD` result, and a checksum of Blink5's own placed code that the linker computes. It combines their differences from the expected values into the stored word, so only all-correct values produce the constant. A skipped or wrong check stores a different word, and the LED stays dark. `ASSERT`s may be added as well, but the arm word is what gates the LED.
 
 Proof: sim, 4K, and Dock, as usual. The extra instructions run before the loop, so only the first edge moves and the period formula stays. Also prove the negative: an image with one expected value deliberately wrong must stay dark in simulation, and on the 4K if time allows. Record the logic and CLS freed on the 4K.
+
+## The flash disk (decided 8 Nov 2026)
+
+Item B showed the Nano 4K design can use its external NOR. The maintainer has narrowed the flash rule for this one use (see `AGENTS.md`, "Loading boards"): openFPGALoader may write a data file to the 4K's external NOR, inside `0x200000`–`0x3FFFFF`, and nothing else. A `modules_n65536.fs` is about 1.77 MB, so a bitstream at address 0 would end below `0x200000`. The board boots from its internal flash in any case.
+
+The plan: an image builder on the host makes the disk, openFPGALoader writes it, and the 4K's ROM shrinks to a bootstrap that copies the inner core from the disk into HyperRAM and runs it there. This is the book's boot path, with the NOR as the disk. It is also scaffolding step B (the core runs from memory), and it is how the 4K gets its block RAM back. The Dock is not part of D or E. It has room, and its disk will be the SD card later.
+
+Item C (the arm word) comes first, so that a wrong or stale disk keeps the LED dark.
+
+### Item D — the disk image builder, and the host writes the disk
+
+Builder: a new `tools/build_disk_image.py` that reuses `sim/link_inner.py`'s layout and writes `disk.bin`. The image starts with a header: a magic word, a format version, a build number, the length, and a checksum over everything after the header. After the header come the inner core image (the code and the initial data the stub copies today), then the sector pages the core reads through `SpiSector` (today's directory, `AMemoryMappedToggle.rsc` and `Blink5.rsc`). Write the layout down in this section. Item E's bootstrap and the sector reader both depend on it.
+
+Find the openFPGALoader options that write a raw data file to the Nano 4K's external flash at an offset, and that read it back. Record the exact commands. If openFPGALoader cannot reach this board's external flash, stop and record why. The fallback is an installer bitstream that holds the image in its ROM and writes it from the design, which item B already proved. Name that fallback, but do not build it in this item.
+
+Write `disk.bin` at `0x200000`. Read it back on the host and compare. Then the LED proof: a pathfinder-style reader image, SRAM-loaded, reads the header, checks the magic and the build number, and checksums the whole image. It blinks at a rate published beforehand, and stays dark otherwise. The negative: a reader expecting a different build number stays dark. Simulate the reader first against the SPI flash model loaded with the same `disk.bin`.
+
+### Item E — boot the 4K from the flash disk
+
+The 4K ROM holds only a bootstrap, about one block. It reads the header from `0x200000`, checks the magic, the build number and the checksum, copies the core into HyperRAM, and branches to the `Modules` body, as the book's boot loader does. From then on every instruction is fetched from HyperRAM: the core translation (`CoreMap` `coreRom`/`coreBase`, `holdForCode`) is not elaborated in this image. `SpiSector` reads sectors from the NOR instead of from the ROM.
+
+The checksum result also feeds item C's arm word. A stale or damaged disk leaves the LED dark.
+
+Blink law: Blink5's loop already runs from HyperRAM, so the period formula should be unchanged, and only the first edge moves (the SPI copy at boot). Compute both before the board is trusted. Record ROM words and block RAM before and after. The expectation is the ROM going from 4096 words to 512 or fewer, and block RAM from 10/10 to about 3/10. Prove it in sim (the SPI flash model loaded with `disk.bin`), then on the 4K. No Dock stage, and say so in the write-up.

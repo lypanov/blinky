@@ -1,5 +1,11 @@
 # Agent notes
 
+## Loading boards
+
+Bitstreams are SRAM-loaded only (`openFPGALoader ... -m`), on both boards. Never write a bitstream to any flash, internal or external.
+
+One exception, Nano 4K only: openFPGALoader may write a **data file** built by the disk image builder to the board's external SPI NOR (Puya P25Q32, 4 MiB). Only inside the disk region, `0x200000`–`0x3FFFFF`. Never below `0x200000`, never a `.fs` or other bitstream, never the internal flash. Verify the write by reading it back. The Primer 20K Dock rule is unchanged: no flash writes of any kind.
+
 ## Subagents
 
 Always use non-fast for subagents. Do not pass a model slug that ends in `-fast`.
