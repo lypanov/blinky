@@ -7,7 +7,10 @@
 //   * rd/wr/refresh are one-cycle pulses, sampled when busy is low.
 //   * addr is a 16-bit-word address. din/dout are that one halfword.
 //     column = addr[9:0], row = addr[22:10], bank = addr[25:23].
-//     The array is 4096 halfwords (addr[11:0]), two bytes per column.
+//     The array is 65536 halfwords (addr[15:0]), two bytes per column.
+//     The modules image stores the static block at byte 0x14000 and the
+//     placed body at byte 0x2000. A 4096-halfword array faults those
+//     and the clear loop never finishes.
 //   * A read presents dout with data_ready nine clocks after the pulse,
 //     and drops busy on the tenth clock. A write or a refresh drops
 //     busy on the sixth clock.
@@ -102,7 +105,7 @@ module Ddr3UserModel (
   output reg         busy,
   output reg         calib
 );
-  localparam integer WORDS = 4096;
+  localparam integer WORDS = 65536;
   localparam integer INIT_CYCLES = 64;
   localparam integer GROUPS = WORDS / 4;
 
@@ -351,9 +354,13 @@ module Ddr3UserModel (
     cycle = 5'd0;
     init_cnt = 16'd0;
     hold = 16'd0;
-    for (i = 0; i < WORDS; i = i + 1) begin
-      lane0[i] = 8'd0;
-      lane1[i] = 8'd0;
+    begin : mem_init
+      reg [7:0] fill;
+      fill = $test$plusargs("ddr3_ones") ? 8'hff : 8'h00;
+      for (i = 0; i < WORDS; i = i + 1) begin
+        lane0[i] = fill;
+        lane1[i] = fill;
+      end
     end
     for (i = 0; i < GROUPS; i = i + 1) begin
       seen0[i] = 1'b0;
@@ -421,8 +428,8 @@ module Ddr3UserModel (
     end
   end
 
-  wire in_range = addr[25:12] == 14'd0;
-  wire [11:0] idx = addr[11:0];
+  wire in_range = addr[25:16] == 10'd0;
+  wire [15:0] idx = addr[15:0];
 
   integer col;
   integer beat;

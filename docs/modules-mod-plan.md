@@ -254,7 +254,31 @@ openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
 
 ### Proof 7 — real `Modules.Init` and `Modules.Load("Blink5")`
 
-This is last. It is the first proof that uses the reserve, the trap, the compiled module, and the sector reader together. Reset enters the real `Modules` body. The image copies the one string `Oberon` to `Blink5`. `oberon/src/Modules.Mod` stays unmodified. `Files.Init` runs real `Kernel.Init` and `FileDir.Init` once, before any load of Blink5. `Kernel.Init` installs the trap over `MT[0]`. `FileDir.Init` heapsorts the two sector numbers. `Init` subtracts `8000H` again. Addresses 12, 16, 20, and 24 hold `MemLim`, `AllocPtr`, `root`, and the stack origin. `Load` reads the file through real `Files`. Blink5 does not return, so `LED(res)` stays unreached. On the Nano this is feasible only if the netlist stays inside the current check width and the blink stays above the webcam floor.
+Done. Reset enters the real `Modules` body. The image copies the one string `Oberon` to `Blink5`. `oberon/src/Modules.Mod` is unmodified. `Files.Init` runs real `Kernel.Init` and `FileDir.Init` once, before the load. `Kernel.Init` installs the trap over `MT[0]`. `FileDir.Init` heapsorts the two sector numbers. `Init` subtracts `8000H` again. Addresses 12, 16, 20, and 24 hold `MemLim`, `AllocPtr`, `root`, and the stack origin. `Load` reads the file through real `Files`. Blink5 does not return, so `LED(res)` stays unreached. Both boards run this image with `N = 65536`.
+
+HyperRAM powers up as ones. The init stream stored only the non-zero words, so the module-list link stayed `0xFFFFFFFF` and `Modules.Load` walked it forever: the Nano sat in the sector copy, about 2e6 PC changes/s near `0x18700`, and never stored the LED. The stub now clears `[MEMLIM, desc + DESC_SIZE)` before it copies the pairs. Verilator of `sim/obj_dir_modules_n5/cpu_sim --no-trace --cycles 80000000 --toggles 3` reaches the first edge at cycle 32868531 and the second at 63146761 for both `+init_fill=0` and `+init_fill=ffffffff`. The period is 30278230 CPU cycles (`462 * 65536 + 598`). The edge PC is `0x2070`, `R5` is 0, `R9` is 0, and the mask is `0xffffffffff`.
+
+`modules_n65536` meets timing with zero negative slack. The CPU clock constraint is 27 MHz (Fmax 93.162 MHz) and the HyperRAM clock Fmax is 69.950 MHz. Logic 4004/4608 (87%; 3703 LUT and 301 ALU), CLS 2229/2304 (97%, 75 free), registers 1627/3456 FF, BSRAM 10/10. SRAM load was bus 3 address 081 only:
+
+```bash
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/impl/pnr/modules_n65536.fs
+```
+
+Webcam `measure_blink`, ROI `262,251,26,23`, duration 20, warmup 4: `blink-measure/20261108-nano-modules`, status blinking, edge 0.430473 Hz, period 2.323 s, duty 0.495, FFT 0.408 Hz, SNR 303, confidence 0.9976, `/dev/video2`, clip `clip.mkv`. A 27 MHz CPU would blink at 0.4459 Hz, so the board is about 3.5% slower, the same rate as the clearfix clip of this image. Ledger item 3 stays unstarted: the design fits.
+
+The Dock write eye used to lock a single match and release the CPU. That boot died at `PC 0x0004`, the interrupt vector. The scan is now one `±12` grid on both lanes, `WSTEP` is loaded at the end of settle before that point's writes, and only a window of three full-word matches releases the CPU. A miss holds the CPU in reset. `sim/run_ddr3_phy.sh` prints `PHY_SCORE pass` twice and `EYE_DECIDE pass` (eye 22/23, decide 22/28).
+
+`ddr3modules_n65536` meets timing with zero negative slack. `pclk` Fmax 118.260 MHz against 96.749 MHz. `cpu_clk` Fmax 35.658 MHz against 24.187 MHz. Logic 5257/20736 (26%; 4797 LUT and 460 ALU), CLS 3625/10368 (35%), registers 2198/15552 FF, BSRAM 8/46. SRAM load was bus 3 address 078 only:
+
+```bash
+openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
+  gowin/primer20k/impl/pnr/ddr3modules_n65536.fs
+```
+
+The UART line after that load is prefix `C.` (not held). PC stays in the delay loop (`221C` through `2238`). The write halfword is `000010F9` (byte `0x21F0`, the Blink5 counter) and the data is 0. Mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. Locked steps are lane 1 `000D` and lane 0 `0002`. Pattern 0 at the write-level edge is `A55A`. The last pattern-0 read is `A55A`. `F` is `AB`. Locked indices are `C0 01`, `C1 0F`, `BO 10`.
+
+Webcam `measure_blink`, ROI `318,95,26,28`, duration 16, warmup 3: `blink-measure/20261108-dock-eye`, status blinking, edge 0.397984 Hz, period 2.513 s, duty 0.488, FFT 0.388 Hz, SNR 157, confidence 0.9978, `/dev/video2`, clip `clip.mkv`. At 24.187 MHz the 30278230-cycle edge is a full blink of 0.3995 Hz.
 
 
 ## Where we are

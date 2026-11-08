@@ -64,6 +64,16 @@ class HyperRamBridge extends Module {
   val beat = Reg(UInt(2.W))
   val rdBeat = Reg(UInt(3.W))
 
+  // Gowin folds `en ? write : isWrite` into a write-only clock enable when
+  // `write` is a term of `en`, so a load never clears isWrite and never
+  // captures its address. The LUT stops that proof.
+  val readBit = Module(new KeepBit)
+  val writeBit = Module(new KeepBit)
+  readBit.io.i := io.cpuRead
+  writeBit.io.i := io.cpuWrite
+  val cpuRead = readBit.io.o
+  val cpuWrite = writeBit.io.o
+
   io.memStall := state =/= sIdle
   io.cpuReadData := rdata
   io.hr.cmd := isWrite
@@ -99,19 +109,27 @@ class HyperRamBridge extends Module {
 
   switch(state) {
     is(sIdle) {
-      when(io.cpuRead || io.cpuWrite) {
+      when(cpuRead || cpuWrite) {
         val lineByte = io.cpuAddr & ~15.U(32.W)
         lineAddr := lineByte(22, 1)
         slot := io.cpuAddr(3, 2)
         lane := io.cpuAddr(1, 0)
         byteOp := io.cpuByte
         wdata := io.cpuWriteData
-        isWrite := io.cpuWrite
         got := false.B
         cyc := 0.U
         beat := 1.U
         rdBeat := 0.U
         state := sCmd
+      }
+      // isWrite is 0 on every load. Kept out of the address block: Gowin
+      // synthesis folds a shared enable down to the write term and then
+      // a load neither captures its address nor clears the write flag.
+      when(cpuRead) {
+        isWrite := false.B
+      }
+      when(cpuWrite) {
+        isWrite := true.B
       }
     }
     is(sCmd) {
@@ -149,6 +167,15 @@ class HyperRamBridge extends Module {
  * firstValid 12 is the pre-load model (read data inside the 15-clock gap).
  * firstValid 13 is the one-clock-later read fitted after the 0.500 Hz measurement.
  */
+/** One LUT. Stops Gowin proving the bit is 0 on a load. See gowin/KeepBit.v. */
+class KeepBit extends BlackBox {
+  override def desiredName = "KeepBit"
+  val io = IO(new Bundle {
+    val i = Input(Bool())
+    val o = Output(Bool())
+  })
+}
+
 class HyperRamUserModel(firstValid: Int = 12) extends BlackBox(Map(
   "FIRST_VALID" -> IntParam(firstValid)
 )) {

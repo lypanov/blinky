@@ -54,10 +54,11 @@ module HyperRamUserModel (
   input  [3:0]  data_mask
 );
 
-  // 10240 words is 40 KB: the original 8 KB map plus the 32 KB
-  // reserve from 0x2000 through 0xA000. The last word is 0x9FFC.
-  // 2048 words was 8 KB and rejected that store.
-  localparam integer WORDS = 10240;
+  // 32768 words is 128 KB. The compiled image uses the 32 KB
+  // reserve, the heap under MemLim 0x14000, and the static data
+  // that Kernel and Modules allocate above it. 10240 words stopped
+  // at 0x9FFC and faulted the first store past that.
+  localparam integer WORDS = 32768;
   localparam integer INIT_CYCLES = 64;
   // See the header. 12 is the pre-load model. 13 is the post-measurement fit.
   parameter integer FIRST_VALID = 12;
@@ -69,9 +70,15 @@ module HyperRamUserModel (
 
   reg [31:0] mem [0:WORDS-1];
   integer mi;
+  reg [31:0] init_fill;
+  // The image stores only non-zero words. A zeroed model hides a board
+  // whose HyperRAM powers up as ones: the descriptor's NIL links and the
+  // string NULs that share a zero word never land.
   initial begin
+    init_fill = 32'h0000_0000;
+    if (!$value$plusargs("init_fill=%h", init_fill)) init_fill = 32'h0;
     for (mi = 0; mi < WORDS; mi = mi + 1)
-      mem[mi] = 32'h0000_0000;
+      mem[mi] = init_fill;
   end
 
   reg [31:0] cycle;
@@ -83,6 +90,31 @@ module HyperRamUserModel (
   reg        wr_busy;
   reg [2:0]  wr_beat;
   reg [21:0] wr_base;
+  // +late_last=N samples beat 3 N user clocks after the bridge presents
+  // it. N=0 is the on-time model. The bridge holds that beat through the
+  // command gap, so a late sample still writes the word.
+  reg [7:0]  late_n;
+  reg [7:0]  pend_wait;
+  reg [21:0] pend_base;
+  // +valid_stretch=N holds rd_data_valid for N clocks per beat. N=1 is
+  // the PHY the bridge was written for. N=2 makes the bridge count two
+  // beats per word, so a slot-3 load returns a different word.
+  reg [3:0]  stretch;
+  reg [3:0]  holdv;
+  // +read_ones makes every load return 0xFFFFFFFF. A string compare
+  // then never sees a zero byte and stays in the upper core.
+  reg        read_ones;
+  initial begin
+    late_n = 8'h0;
+    pend_wait = 8'h0;
+    stretch = 4'h1;
+    holdv = 4'h0;
+    read_ones = 1'b0;
+    if (!$value$plusargs("late_last=%d", late_n)) late_n = 8'h0;
+    if (!$value$plusargs("valid_stretch=%d", stretch)) stretch = 4'h1;
+    if (stretch == 4'h0) stretch = 4'h1;
+    if ($test$plusargs("read_ones")) read_ones = 1'b1;
+  end
 
   reg        rd_busy;
   reg [7:0]  rd_wait;
@@ -126,6 +158,8 @@ module HyperRamUserModel (
       else
         read_word = 32'h0000_0000;
 `else
+      else if (read_ones)
+        read_word = 32'hFFFF_FFFF;
       else
         read_word = mem[idx];
 `endif
@@ -143,10 +177,12 @@ module HyperRamUserModel (
       last_cmd <= 32'h0;
       fault <= 8'h0;
       wr_busy <= 1'b0;
+      pend_wait <= 8'h0;
       rd_busy <= 1'b0;
       wr_beat <= 3'h0;
       rd_beat <= 3'h0;
       rd_wait <= 8'h0;
+      holdv <= 4'h0;
     end else begin
       cycle <= cycle + 32'h1;
       rd_data_valid <= 1'b0;
@@ -157,12 +193,24 @@ module HyperRamUserModel (
         else
           init_cnt <= init_cnt + 8'h1;
       end else begin
+        if (pend_wait != 8'h0) begin
+          if (pend_wait == 8'h1)
+            apply_write(pend_base, 3'd3, wr_data, data_mask);
+          pend_wait <= pend_wait - 8'h1;
+        end
+
         if (wr_busy) begin
-          apply_write(wr_base, wr_beat, wr_data, data_mask);
-          if (wr_beat == 3'd3)
+          if (late_n != 8'h0 && wr_beat == 3'd3) begin
+            pend_base <= wr_base;
+            pend_wait <= late_n;
             wr_busy <= 1'b0;
-          else
-            wr_beat <= wr_beat + 3'd1;
+          end else begin
+            apply_write(wr_base, wr_beat, wr_data, data_mask);
+            if (wr_beat == 3'd3)
+              wr_busy <= 1'b0;
+            else
+              wr_beat <= wr_beat + 3'd1;
+          end
         end
 
         if (rd_busy) begin
@@ -171,10 +219,15 @@ module HyperRamUserModel (
           end else begin
             rd_data <= read_word(rd_base, rd_beat);
             rd_data_valid <= 1'b1;
-            if (rd_beat == 3'd3)
-              rd_busy <= 1'b0;
-            else
-              rd_beat <= rd_beat + 3'd1;
+            if (holdv + 4'h1 < stretch) begin
+              holdv <= holdv + 4'h1;
+            end else begin
+              holdv <= 4'h0;
+              if (rd_beat == 3'd3)
+                rd_busy <= 1'b0;
+              else
+                rd_beat <= rd_beat + 3'd1;
+            end
           end
         end
 

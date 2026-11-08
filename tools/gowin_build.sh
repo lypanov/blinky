@@ -122,16 +122,15 @@ if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" =
   fi
 fi
 if [[ "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3modules" ]]; then
-  # Written by the modules elaboration. Other images do not instantiate it.
-  export SECTOR_ROM="$ROOT/generated/SectorRom.v"
+  # The compiled image keeps the sector pairs in the instruction ROM.
+  unset SECTOR_ROM
 fi
 if [[ "$FPGA_IMAGE" == "modules" ]]; then
-  echo "==> Modules IMEM (sector 29, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
-  python3 "$ROOT/sim/build_modules_imem.py" \
+  echo "==> Modules IMEM (compiled Init and Load of Blink5, maxIterations=$BLINK3_MAXITER)"
+  python3 "$ROOT/sim/link_inner.py" \
     --max-iter "$BLINK3_MAXITER" \
-    --pad 2048 \
     --out "$BLINK3_IMEM"
-  EXPECT_MHI="$(mhi_hex "$BLINK3_MAXITER")"
+  EXPECT_MHI="$(printf '%08x' "$(awk -F= '$1=="delay_word"{print $2}' "$ROOT/sim/visualizer/imem/core.map")")"
   GOWIN_OUT_NAME="modules_n${BLINK3_MAXITER}"
   GOWIN_TCL="$ROOT/gowin/gowin_build_hyperram.tcl"
 elif [[ "$FPGA_IMAGE" == "files" ]]; then
@@ -203,11 +202,11 @@ elif [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE"
     exit 1
   fi
   if [[ "$FPGA_IMAGE" == "ddr3modules" ]]; then
-    echo "==> DDR3 Modules IMEM (32 KB reserve, compiled Modules.Check, then Load of Blink5, maxIterations=$BLINK3_MAXITER)"
-    python3 "$ROOT/sim/build_modules_imem.py" \
+    echo "==> DDR3 Modules IMEM (compiled Init and Load of Blink5, maxIterations=$BLINK3_MAXITER)"
+    python3 "$ROOT/sim/link_inner.py" \
       --max-iter "$BLINK3_MAXITER" \
-      --pad 2048 \
       --out "$BLINK3_IMEM"
+    EXPECT_MHI="$(printf '%08x' "$(awk -F= '$1=="delay_word"{print $2}' "$ROOT/sim/visualizer/imem/core.map")")"
   elif [[ "$FPGA_IMAGE" == "ddr3files" ]]; then
     echo "==> DDR3 Files IMEM (prologue, two .rsc images, Load of Blink5, maxIterations=$BLINK3_MAXITER)"
     python3 "$ROOT/sim/build_files_imem.py" \
@@ -251,7 +250,9 @@ elif [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE"
       --pad 2048 \
       --out "$BLINK3_IMEM"
   fi
-  EXPECT_MHI="$(mhi_hex "$BLINK3_MAXITER")"
+  if [[ "$FPGA_IMAGE" != "ddr3modules" ]]; then
+    EXPECT_MHI="$(mhi_hex "$BLINK3_MAXITER")"
+  fi
   GOWIN_OUT_NAME="${FPGA_IMAGE}_n${BLINK3_MAXITER}"
   GOWIN_TCL="$ROOT/gowin/primer20k/gowin_ddr3.tcl"
 elif [[ "$FPGA_IMAGE" == "blink3" ]]; then
@@ -307,11 +308,33 @@ if ! grep -q 'io_uart_tx' "$V" || ! grep -q 'io_uart_rx' "$V"; then
 fi
 
 echo "==> Checking delay word 0x$EXPECT_MHI in the instruction ROM"
-if grep -qi "$EXPECT_MHI" "$IMEM_HEX"; then
-  echo "    found $EXPECT_MHI in $IMEM_HEX"
+if [[ "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3modules" ]]; then
+  # Blink5's assignment is inside the .rsc, so it is not a ROM line of its own.
+  # The sector pairs store the file bytes little-endian.
+  python3 - "$IMEM_HEX" "$ROOT/sim/visualizer/imem/core.map" "$EXPECT_MHI" << 'PY'
+import sys
+hex_path, map_path, delay = sys.argv[1:]
+words = [int(line, 16) for line in open(hex_path) if line.strip()]
+meta = {}
+for line in open(map_path):
+    key, value = line.strip().split("=")
+    meta[key] = int(value)
+base = meta["sector_rom"]
+sector = [0] * 768
+for i in range(meta["sector_pairs"]):
+    sector[words[base + 2 * i]] = words[base + 2 * i + 1]
+blob = b"".join(word.to_bytes(4, "little") for word in sector)
+if bytes.fromhex(delay)[::-1] not in blob:
+    raise SystemExit(f"delay word {delay} is not in the sector image")
+print(f"    sector image contains {delay}")
+PY
 else
-  echo "error: $EXPECT_MHI not in $IMEM_HEX — image did not reach instruction memory" >&2
-  exit 1
+  if grep -qi "$EXPECT_MHI" "$IMEM_HEX"; then
+    echo "    found $EXPECT_MHI in $IMEM_HEX"
+  else
+    echo "error: $EXPECT_MHI not in $IMEM_HEX — image did not reach instruction memory" >&2
+    exit 1
+  fi
 fi
 
 if [[ "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "ddr3pd" ]]; then
@@ -336,7 +359,23 @@ if [[ "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "ddr3pd" ]]; then
     echo "error: fixed BL f7ffffdc is in the ROM; the device walk would not be the proof" >&2
     exit 1
   fi
-elif [[ "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "ddr3moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "ddr3files" || "$FPGA_IMAGE" == "ddr3modules" || "$FPGA_IMAGE" == "modules" ]]; then
+elif [[ "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3modules" ]]; then
+  echo "==> Checking the compiled stub at ROM[0]"
+  entry="$(sed -n '1p' "$IMEM_HEX")"
+  if [[ "$entry" == "4c000020" ]]; then
+    echo "    ROM[0] is MOV R12, 0x20 ($entry)"
+  else
+    echo "error: ROM[0] is $entry, expected 4c000020" >&2
+    exit 1
+  fi
+  lines="$(wc -l < "$IMEM_HEX")"
+  if [[ "$lines" -eq 4096 ]]; then
+    echo "    ROM is 4096 words"
+  else
+    echo "error: ROM is $lines words, expected 4096" >&2
+    exit 1
+  fi
+elif [[ "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "ddr3moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "ddr3files" ]]; then
   echo "==> Checking the procedure-variable call and the unfixed BL placeholder"
   if grep -qi 'd7000001' "$IMEM_HEX"; then
     echo "    found d7000001"
@@ -359,7 +398,7 @@ elif [[ "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "ddr3moddesc" || "$FPGA_I
     echo "error: address 0 is still the Blink3 trampoline; a zero procedure variable could blink" >&2
     exit 1
   fi
-  if [[ "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "ddr3files" || "$FPGA_IMAGE" == "ddr3modules" || "$FPGA_IMAGE" == "modules" ]]; then
+  if [[ "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "ddr3files" ]]; then
     echo "==> Checking Load's BT R1 and the Blink5 name word"
     for word in c7000001 61006e69; do
       if grep -qi "$word" "$IMEM_HEX"; then
@@ -369,29 +408,6 @@ elif [[ "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "ddr3moddesc" || "$FPGA_I
         exit 1
       fi
     done
-  fi
-  if [[ "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3modules" ]]; then
-    echo "==> Checking reset enters the Modules body"
-    entry="$(sed -n '40p' "$IMEM_HEX")"
-    if [[ "$entry" == "400006c0" ]]; then
-      echo "    ROM 0x9C is the modules body ($entry)"
-    else
-      echo "error: ROM 0x9C is $entry, expected 400006c0" >&2
-      exit 1
-    fi
-    if grep -qi '40001200' "$IMEM_HEX"; then
-      echo "    body still has the prologue MOV 40001200"
-    else
-      echo "error: prologue MOV 40001200 missing from the modules body" >&2
-      exit 1
-    fi
-    links="$(grep -ci '8dc0000c' "$IMEM_HEX" || true)"
-    if [[ "$links" == "2" ]]; then
-      echo "    ROM has both fixed Modules.Check GetSB links"
-    else
-      echo "error: compiled Check GetSB 8dc0000c appears $links times, expected 2" >&2
-      exit 1
-    fi
   fi
 elif [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" ]]; then
   echo "==> Checking Blink3 trampoline / BL Toggle encodings"
@@ -405,7 +421,7 @@ elif [[ "$FPGA_IMAGE" == "blink3" || "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE
   done
 fi
 
-if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" || "$FPGA_IMAGE" == "ddr3pd" || "$FPGA_IMAGE" == "ddr3moddesc" || "$FPGA_IMAGE" == "ddr3files" || "$FPGA_IMAGE" == "ddr3modules" ]]; then
+if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" || "$FPGA_IMAGE" == "ddr3pd" || "$FPGA_IMAGE" == "ddr3moddesc" || "$FPGA_IMAGE" == "ddr3files" ]]; then
   echo "==> Checking prologue entry MOV R0, 0x1200"
   if grep -qi '40001200' "$IMEM_HEX"; then
     echo "    found 40001200"
@@ -414,7 +430,7 @@ if [[ "$FPGA_IMAGE" == "hyperram" || "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" =
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" || "$FPGA_IMAGE" == "ddr3pd" || "$FPGA_IMAGE" == "ddr3moddesc" || "$FPGA_IMAGE" == "ddr3files" || "$FPGA_IMAGE" == "ddr3modules" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
+if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" || "$FPGA_IMAGE" == "ddr3pd" || "$FPGA_IMAGE" == "ddr3moddesc" || "$FPGA_IMAGE" == "ddr3files" || "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" ]]; then
   echo "==> Checking sign-extended MOV R1, -1"
   if grep -qi '5100ffff' "$IMEM_HEX"; then
     echo "    found 5100ffff"
@@ -423,7 +439,7 @@ if [[ "$FPGA_IMAGE" == "fixup" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE" 
     exit 1
   fi
 fi
-if [[ "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" || "$FPGA_IMAGE" == "ddr3pd" || "$FPGA_IMAGE" == "ddr3moddesc" || "$FPGA_IMAGE" == "ddr3files" || "$FPGA_IMAGE" == "ddr3modules" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" || "$FPGA_IMAGE" == "modules" ]]; then
+if [[ "$FPGA_IMAGE" == "rsc" || "$FPGA_IMAGE" == "ddr3rsc" || "$FPGA_IMAGE" == "ddr3fetch" || "$FPGA_IMAGE" == "ddr3pd" || "$FPGA_IMAGE" == "ddr3moddesc" || "$FPGA_IMAGE" == "ddr3files" || "$FPGA_IMAGE" == "fetchbl" || "$FPGA_IMAGE" == "pdchain" || "$FPGA_IMAGE" == "moddesc" || "$FPGA_IMAGE" == "files" ]]; then
   echo "==> Checking LDB R1, [R3] and STB R1, [R3]"
   for word in 91300000 b1300000; do
     if grep -qi "$word" "$IMEM_HEX"; then
@@ -463,6 +479,9 @@ mkdir -p "$ROOT/gowin/src"
   echo '`define PRINTF_COND 0'
   cat "$V"
 } > "$ROOT/gowin/src/CPUMinimalWrapper.v"
+# KeepBit is hand-written. gowin/src is the generated tree, so copy it in
+# for the Verilator line that still names that path.
+cp "$ROOT/gowin/KeepBit.v" "$ROOT/gowin/src/KeepBit.v"
 
 case "$BOARD" in
   nano4k|tangnano4k)

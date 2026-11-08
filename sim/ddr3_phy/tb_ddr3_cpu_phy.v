@@ -180,8 +180,9 @@ module tb_ddr3_cpu_phy;
     end
 
     integer waits, cycle, edges, max_cycles, cmds, reads;
-    integer first_edge, prev_edge, period;
+    integer first_edge, prev_edge, period, expect_period;
     reg [31:0] expect_r9;
+    reg [31:0] expect_r5;
     reg        prev_led;
     reg        saw_ready;
     reg [15:0] last_beat;
@@ -211,6 +212,12 @@ module tb_ddr3_cpu_phy;
         expect_r9 = EXPECT_R9_DEFAULT;
         if (!$value$plusargs("expect_r9=%h", expect_r9))
             expect_r9 = EXPECT_R9_DEFAULT;
+        expect_r5 = EXPECT_R5;
+        if (!$value$plusargs("expect_r5=%h", expect_r5))
+            expect_r5 = EXPECT_R5;
+        expect_period = EXPECT_PERIOD;
+        if (!$value$plusargs("expect_period=%d", expect_period))
+            expect_period = EXPECT_PERIOD;
 
         #10000;
         @(negedge ck);
@@ -277,9 +284,11 @@ module tb_ddr3_cpu_phy;
                 $fflush;
                 prev_pc = pc;
             end
-            // Setup's link points at this halt. Reaching it before a
-            // DRAM read means BT R0 did not enter the prologue.
-            if (reads == 0 && pc[31:4] == 28'h000000b && cycle > 80) begin
+            // The stub's branch is the last word at 0xCC. The next
+            // address is not part of the program. Reaching it before a
+            // DRAM read means that branch did not enter the body.
+            // 0xB0 is the init-pair loop, which runs before the first read.
+            if (reads == 0 && pc[31:4] == 28'h000000d && cycle > 80) begin
                 $display("END cycle=%0d edges=%0d first=%0d period=%0d pc=%h r5=%h r9=%h mask=%h reads=%0d",
                          cycle, edges, first_edge, period, pc, r5, r9, mask, reads);
                 $display("PHY_SCORE fail");
@@ -306,8 +315,8 @@ module tb_ddr3_cpu_phy;
 
         $display("END cycle=%0d edges=%0d first=%0d period=%0d pc=%h r5=%h r9=%h mask=%h reads=%0d",
                  cycle, edges, first_edge, period, pc, r5, r9, mask, reads);
-        if (edges >= 2 && period == EXPECT_PERIOD &&
-            r5 === EXPECT_R5 && r9 === expect_r9 && mask === EXPECT_MASK)
+        if (edges >= 2 && period == expect_period &&
+            r5 === expect_r5 && r9 === expect_r9 && mask === EXPECT_MASK)
             $display("PHY_SCORE pass");
         else
             $display("PHY_SCORE fail");

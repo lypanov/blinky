@@ -47,6 +47,97 @@ class Ddr3CpuPortSync extends Module {
 }
 
 /**
+ * cpu_clk to clk_out for one HyperRAM access.
+ *
+ * The CPU's request is one cpu_clk wide, so a clk_out edge can miss it
+ * or take the address from the cycle before the enable. The request
+ * flips a level instead. clk_out waits two cycles to see the new level,
+ * by which time the captured address has been sitting still, and pulses
+ * the bridge for one clk_out. The bridge stall is the handshake back:
+ * the level is not armed again until that stall has risen and fallen.
+ */
+class HyperReqCross extends Module {
+  val io = IO(new Bundle {
+    val cpuClock = Input(Clock())
+    val bridgeBusy = Input(Bool())
+    val inAddr = Input(UInt(32.W))
+    val inWriteData = Input(UInt(32.W))
+    val inWrite = Input(Bool())
+    val inRead = Input(Bool())
+    val inByte = Input(Bool())
+    val addr = Output(UInt(32.W))
+    val writeData = Output(UInt(32.W))
+    val write = Output(Bool())
+    val read = Output(Bool())
+    val byte = Output(Bool())
+  })
+  val cap = withClock(io.cpuClock) {
+    val sync = Module(new Ddr3CpuPortSync)
+    sync.io.inAddr := io.inAddr
+    sync.io.inWriteData := io.inWriteData
+    sync.io.inWrite := io.inWrite
+    sync.io.inRead := io.inRead
+    sync.io.inByte := io.inByte
+    val phase = RegInit(false.B)
+    val addr = RegInit(0.U(32.W))
+    val data = RegInit(0.U(32.W))
+    val isWrite = RegInit(false.B)
+    val isRead = RegInit(false.B)
+    val isByte = RegInit(false.B)
+    when (sync.io.read || sync.io.write) {
+      phase := !phase
+      addr := sync.io.addr
+      data := sync.io.writeData
+      isWrite := sync.io.write
+      isRead := sync.io.read
+      isByte := sync.io.byte
+    }
+    (phase, addr, data, isWrite, isRead, isByte)
+  }
+  val (phase, capAddr, capData, capWrite, capRead, capByte) = cap
+  val req1 = RegNext(phase, false.B)
+  val req2 = RegNext(req1, false.B)
+  val ack = RegInit(false.B)
+  val pend = RegInit(false.B)
+  val sawBusy = RegInit(false.B)
+  val start = req2 =/= ack && !pend
+  // Copy the slow bus onto this clock, then pulse the bridge a cycle
+  // later. Sampling the slow address on the same edge as the enable
+  // lets the bridge latch zeros.
+  val addrF = Reg(UInt(32.W))
+  val dataF = Reg(UInt(32.W))
+  val writeF = RegInit(false.B)
+  val readF = RegInit(false.B)
+  val byteF = RegInit(false.B)
+  val fire = RegInit(false.B)
+  when (start) {
+    addrF := capAddr
+    dataF := capData
+    writeF := capWrite
+    readF := capRead
+    byteF := capByte
+    fire := true.B
+    pend := true.B
+    sawBusy := false.B
+  } .elsewhen (pend && io.bridgeBusy) {
+    fire := false.B
+    sawBusy := true.B
+  } .elsewhen (pend && sawBusy && !io.bridgeBusy) {
+    fire := false.B
+    pend := false.B
+    sawBusy := false.B
+    ack := req2
+  } .otherwise {
+    fire := false.B
+  }
+  io.addr := addrF
+  io.writeData := dataF
+  io.byte := byteF
+  io.read := fire && readF
+  io.write := fire && writeF && !readF
+}
+
+/**
  * The request is registered on cpu_clk, so the bridge does not see it
  * until the cycle where the CPU samples stall. Without this, that sample
  * still reads low, the load completes as zero, and the pin stays dark.
@@ -77,6 +168,32 @@ class Ddr3StallAlign extends Module {
 /** Same divide, for Verilator. See sim/CpuClock.v. */
 class CpuClock extends BlackBox {
   override def desiredName = "CpuClock"
+  val io = IO(new Bundle {
+    val clk_in = Input(Clock())
+    val clk_out = Output(Clock())
+  })
+}
+
+/**
+ * clk_out/2 for the Modules CPU. The fetch address and the register
+ * write both leave the instruction pROM and do not meet 27 MHz on the
+ * GW1NSR-4C (worst setup about -6 ns). The HyperRAM user port stays on
+ * clk_out. CLKDIV DIV_MODE 2 is edge-aligned; the same sync the Dock
+ * uses samples the request on the following clk_out.
+ */
+class GowinClkDiv2 extends BlackBox {
+  override def desiredName = "GowinClkDiv2"
+  val io = IO(new Bundle {
+    val HCLKIN = Input(Clock())
+    val RESETN = Input(Bool())
+    val CALIB = Input(Bool())
+    val CLKOUT = Output(Clock())
+  })
+}
+
+/** Same divide, for Verilator. See sim/CpuClock2.v. */
+class CpuClock2 extends BlackBox {
+  override def desiredName = "CpuClock2"
   val io = IO(new Bundle {
     val clk_in = Input(Clock())
     val clk_out = Output(Clock())

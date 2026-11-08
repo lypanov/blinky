@@ -299,7 +299,21 @@ reg        in_run = 1'b0, have = 1'b0;
 reg [7:0]  run_lo = 8'd0, run_hi = 8'd0, best_lo = 8'd0, best_w = 8'd0;
 reg signed [3:0] box_dx = -4'sd2, box_dy = -4'sd2;
 reg        cliff_run = 1'b0, have_cliff = 1'b0;
-reg [7:0]  cliff_lo = 8'd0, cliff_hi = 8'd0, cliff_cen = 8'd0;
+reg [7:0]  cliff_lo = 8'd0, cliff_hi = 8'd0, cliff_cen = 8'd0, cliff_o0 = 8'd0;
+// Sim locks the historical window with the edge at index 4.
+// Silicon starts at index 12 so one grid covers -12..+12.
+`ifdef SIM
+reg [7:0]  eye_base = 8'd4;
+`else
+reg [7:0]  eye_base = 8'd12;
+`endif
+reg [4:0]  eye_best_pop = 5'd0;
+reg [15:0] eye_best_got = 16'd0;
+reg [7:0]  eye_best_o0 = 8'd0, eye_best_bo = 8'd0;
+// First grid point where each byte of A55A matched. FF means never.
+reg        eye_low_hit = 1'b0, eye_high_hit = 1'b0;
+reg [7:0]  eye_low_o0 = 8'hff, eye_low_bo = 8'hff;
+reg [7:0]  eye_high_o0 = 8'hff, eye_high_bo = 8'hff;
 
 wire [25:0] cmd_addr = eye_mode ? eye_addr : addr;
 wire [15:0] cmd_din  = eye_mode ? eye_din  : din;
@@ -322,18 +336,19 @@ function [15:0] eye_pattern;
     end
 endfunction
 
-// Index 0..EYE_LAST is the write-level edge plus an offset of -4..+12.
-// The leveling edge is the first code that sees the DQS pulse, so the
-// data eye is that code and the ones after it. Index 4 is offset 0.
-// Indices 0..3 are the downward cliff: silicon read A500 there (high
-// byte right, low byte zero). Stopping at the first three matches
-// locks that cliff when it false-passes (Dock steps 0007/0009,
-// C1 01, BO 02) and a later store comes back with its high byte
-// replaced. Silicon keeps that row open until three matches at the
-// edge or above lock. Only a row with no such match locks the cliff.
-// The Micron model slips if a write lands on its edge, so sim keeps
-// the first three matches unless +eye_decide.
-localparam [7:0] EYE_LAST = 8'd16; // offsets -4 .. +12
+// Sim: index 4 is the write-level edge, offsets -4..+12.
+// Silicon: index 12 is the edge, offsets -12..+12 on both lanes
+// at once. Two half-range scans miss a pair that sits on opposite
+// sides of the two edges. Indices below eye_base are the cliff.
+// A one-point match does not release the CPU. Silicon keeps every
+// row open until three matches at the edge or above lock. The cliff
+// is only the fallback. The Micron model slips on its own edge, so
+// sim keeps the first three matches unless +eye_decide.
+`ifdef SIM
+localparam [7:0] EYE_LAST = 8'd16;
+`else
+localparam [7:0] EYE_LAST = 8'd24;
+`endif
 function [7:0] eye_at;
     input [7:0] edge_c;
     input [7:0] idx;
@@ -341,13 +356,27 @@ function [7:0] eye_at;
     begin
         sum = edge_c;
         sum = sum + idx;
-        sum = sum - 4;
+        sum = sum - eye_base;
         if (sum < 0)
             eye_at = 8'd0;
         else if (sum > 255)
             eye_at = 8'd255;
         else
             eye_at = sum[7:0];
+    end
+endfunction
+
+function [4:0] eye_pop;
+    input [15:0] got;
+    input [15:0] expd;
+    integer k;
+    reg [4:0] n;
+    begin
+        n = 5'd0;
+        for (k = 0; k < 16; k = k + 1)
+            if (got[k] === expd[k])
+                n = n + 5'd1;
+        eye_pop = n;
     end
 endfunction
 
@@ -431,6 +460,12 @@ always @(posedge pclk) begin
     dq_oen[0:3] <= 4'b1111;
     dqs_hold <= 1'b0;
     wload_n <= 1'b0;
+    // Settle has already presented the new WSTEP. Load it before
+    // this point's writes. The read-end pulse only loads the
+    // previous point, so a real window was compared one step off
+    // and a narrow one was missed.
+    if (eye_mode && eye_st == E_SETTLE && eye_wait == 5'd15)
+        wload_n <= 1'b1;
     if (eye_cap_clear)
         eye_cap <= 1'b0;
 
@@ -846,8 +881,9 @@ wire       close_wider = !have || (close_w >= best_w);
 // Lane 1 is the inner sweep. EYE_LAST is the last offset index.
 wire       inner_end = (eye_bo >= EYE_LAST);
 wire       outer_end = (eye_o0 >= EYE_LAST);
-// Index 4 is the write-level edge. 0..3 are the cliff.
-wire       eye_above = (eye_bo >= 8'd4);
+// eye_base is the write-level edge inside this scan. Indices
+// below it are the cliff.
+wire       eye_above = (eye_bo >= eye_base);
 wire [7:0] cliff_w = cliff_hi - cliff_lo + 8'd1;
 // Three matches at or above the edge end the row. A cliff match
 // does not, and neither does a miss: the rest of this row can
@@ -864,6 +900,15 @@ wire silicon_eye = 1'b1;
 `endif
 wire       eye_close = (!eye_bad && span_w >= 8'd3 && (eye_above || !silicon_eye))
                     || (eye_bad && in_run && !silicon_eye);
+// The width compare misses pclk when it lands in the same cycle as
+// the mark. E_GAP holds the inputs steady, so the mark uses the
+// registered copy.
+reg        span_wider_r = 1'b0, close_wider_r = 1'b0, eye_close_r = 1'b0;
+always @(posedge pclk) begin
+    span_wider_r <= span_wider;
+    close_wider_r <= close_wider;
+    eye_close_r <= eye_close;
+end
 always @(posedge pclk) begin
     eye_pulse_rd <= 1'b0;
     eye_pulse_wr <= 1'b0;
@@ -880,7 +925,13 @@ always @(posedge pclk) begin
         eye_idx <= 4'd0;
         eye_bo <= 8'd0;
         eye_o0 <= 8'd0;
+`ifdef SIM
+        eye_base <= 8'd4;
+`else
+        eye_base <= 8'd12;
+`endif
         best_row <= 8'd0;
+        eye_best_pop <= 5'd0;
         eye_wait <= 5'd0;
         eye_bad <= 1'b0;
         eye_pass <= 1'b0;
@@ -906,6 +957,18 @@ always @(posedge pclk) begin
         eye_s1 <= wstep1;
         eye_ph <= 2'd0;
         eye_bo <= 8'd0;
+`ifdef SIM
+        eye_base <= 8'd4;
+`else
+        eye_base <= 8'd12;
+`endif
+        eye_best_pop <= 5'd0;
+        eye_low_hit <= 1'b0;
+        eye_high_hit <= 1'b0;
+        eye_low_o0 <= 8'hff;
+        eye_low_bo <= 8'hff;
+        eye_high_o0 <= 8'hff;
+        eye_high_bo <= 8'hff;
         eye_st <= E_SETTLE;
         eye_wait <= 5'd0;
         in_run <= 1'b0;
@@ -970,6 +1033,22 @@ always @(posedge pclk) begin
                         eye_bad <= 1'b1;
                     if (eye_idx == 4'd0) begin
                         eye_g0 <= eye_got;
+                        if (eye_pop(eye_got, 16'hA55A) > eye_best_pop) begin
+                            eye_best_pop <= eye_pop(eye_got, 16'hA55A);
+                            eye_best_got <= eye_got;
+                            eye_best_o0 <= eye_o0;
+                            eye_best_bo <= eye_bo;
+                        end
+                        if (!eye_low_hit && eye_got[7:0] === 8'h5A) begin
+                            eye_low_hit <= 1'b1;
+                            eye_low_o0 <= eye_o0;
+                            eye_low_bo <= eye_bo;
+                        end
+                        if (!eye_high_hit && eye_got[15:8] === 8'hA5) begin
+                            eye_high_hit <= 1'b1;
+                            eye_high_o0 <= eye_o0;
+                            eye_high_bo <= eye_bo;
+                        end
                         if (eye_o0 == 8'd0 && eye_bo == 8'd0)
                             eye_g0_edge <= eye_got;
                     end
@@ -1012,6 +1091,7 @@ always @(posedge pclk) begin
                     if (!have_cliff && cliff_w >= 8'd3) begin
                         have_cliff <= 1'b1;
                         cliff_cen <= cliff_lo + 8'd1;
+                        cliff_o0 <= eye_o0;
                     end
                 end
                 if (!eye_bad && !eye_above && silicon_eye) begin
@@ -1026,14 +1106,14 @@ always @(posedge pclk) begin
                         run_lo <= eye_bo;
                     in_run <= 1'b1;
                     run_hi <= eye_bo;
-                    if (span_wider) begin
+                    if (span_wider_r) begin
                         have <= 1'b1;
                         best_lo <= span_lo;
                         best_w <= span_w;
                     end
                 end else if (eye_bad && in_run) begin
                     in_run <= 1'b0;
-                    if (close_wider) begin
+                    if (close_wider_r) begin
                         have <= 1'b1;
                         best_lo <= run_lo;
                         best_w <= close_w;
@@ -1042,7 +1122,7 @@ always @(posedge pclk) begin
                 $display("EYE o0=%0d bo=%0d s=%0d/%0d g0=%h g1=%h bad=%b",
                          eye_o0, eye_bo, eye_s0, eye_s1, eye_g0, eye_g1, eye_bad);
                 $fflush();
-                if (!inner_end && !eye_close) begin
+                if (!inner_end && !eye_close_r) begin
                     eye_bo <= eye_bo + 8'd1;
                     eye_st <= E_SETTLE;
                 end else
@@ -1058,11 +1138,14 @@ always @(posedge pclk) begin
                     eye_lock <= 1'b1;
                     eye_mode <= 1'b0;
                     eye_commit <= 1'b1;
+                    eye_bad <= 1'b0;
                     $display("EYE pass %0d/%0d",
                              eye_at(eye_edge0, eye_o0),
                              eye_at(eye_edge1, best_lo + (best_w >> 1)));
                     $fflush();
-                end else if (have_cliff) begin
+                end else if (have_cliff && !silicon_eye) begin
+                    // Sim still locks the first cliff. Silicon waits
+                    // until both scans have no edge-or-above window.
                     eye_cen0 <= eye_o0;
                     eye_cen1 <= cliff_cen;
                     eye_lock0 <= eye_at(eye_edge0, eye_o0);
@@ -1070,47 +1153,78 @@ always @(posedge pclk) begin
                     eye_lock <= 1'b1;
                     eye_mode <= 1'b0;
                     eye_commit <= 1'b1;
+                    eye_bad <= 1'b0;
                     $display("EYE pass %0d/%0d",
                              eye_at(eye_edge0, eye_o0),
                              eye_at(eye_edge1, cliff_cen));
                     $fflush();
-                end else if (have && best_w > best_row) begin
+                end else if (have && best_w > best_row && !outer_end) begin
                     eye_cen0 <= eye_o0;
                     eye_cen1 <= best_lo + (best_w >> 1);
                     best_row <= best_w;
-                    if (outer_end) begin
-                        eye_lock0 <= eye_at(eye_edge0, eye_o0);
-                        eye_lock1 <= eye_at(eye_edge1, best_lo + (best_w >> 1));
-                        eye_lock <= 1'b1;
-                        eye_mode <= 1'b0;
-                        eye_commit <= 1'b1;
-                        $display("EYE pass %0d/%0d",
-                                 eye_at(eye_edge0, eye_o0),
-                                 eye_at(eye_edge1, best_lo + (best_w >> 1)));
-                        $fflush();
-                    end else begin
-                        eye_o0 <= eye_o0 + 8'd1;
-                        eye_bo <= 8'd0;
-                        in_run <= 1'b0;
-                        have <= 1'b0;
-                        best_w <= 8'd0;
-                        cliff_run <= 1'b0;
-                        have_cliff <= 1'b0;
-                        eye_st <= E_SETTLE;
-                    end
-                end else if (outer_end && best_row != 8'd0) begin
+                    eye_o0 <= eye_o0 + 8'd1;
+                    eye_bo <= 8'd0;
+                    in_run <= 1'b0;
+                    have <= 1'b0;
+                    best_w <= 8'd0;
+                    cliff_run <= 1'b0;
+                    eye_st <= E_SETTLE;
+                end else if (outer_end && best_row >= 8'd3) begin
                     eye_lock0 <= eye_at(eye_edge0, eye_cen0);
                     eye_lock1 <= eye_at(eye_edge1, eye_cen1);
                     eye_lock <= 1'b1;
                     eye_mode <= 1'b0;
                     eye_commit <= 1'b1;
+                    eye_bad <= 1'b0;
                     $display("EYE pass %0d/%0d",
                              eye_at(eye_edge0, eye_cen0),
                              eye_at(eye_edge1, eye_cen1));
                     $fflush();
-                end else if (outer_end) begin
+                end else if (outer_end && eye_base == 8'd4) begin
+                    // No three-wide window in -4..+12. Scan -12..+4
+                    // before using a cliff. A late leveling edge still
+                    // reaches the data eye, and a one-point match does
+                    // not release the CPU.
+                    eye_base <= 8'd12;
+                    eye_o0 <= 8'd0;
+                    eye_bo <= 8'd0;
+                    in_run <= 1'b0;
+                    have <= 1'b0;
+                    best_w <= 8'd0;
+                    best_row <= 8'd0;
+                    cliff_run <= 1'b0;
+                    have_cliff <= 1'b0;
+                    eye_pass <= 1'b0;
+                    eye_st <= E_SETTLE;
+                    $display("EYE retry base 12");
+                    $fflush();
+                end else if (outer_end && have_cliff) begin
+                    eye_cen0 <= cliff_o0;
+                    eye_cen1 <= cliff_cen;
+                    eye_lock0 <= eye_at(eye_edge0, cliff_o0);
+                    eye_lock1 <= eye_at(eye_edge1, cliff_cen);
+                    eye_lock <= 1'b1;
                     eye_mode <= 1'b0;
-                    $display("EYE fail");
+                    eye_commit <= 1'b1;
+                    eye_bad <= 1'b0;
+                    $display("EYE pass %0d/%0d",
+                             eye_at(eye_edge0, cliff_o0),
+                             eye_at(eye_edge1, cliff_cen));
+                    $fflush();
+                end else if (outer_end) begin
+                    // No window, CPU stays reset. E0 is the first grid
+                    // point whose low byte was 5A. G is the first point
+                    // whose high byte was A5. FF means that byte never
+                    // matched. BO is the best full-word popcount.
+                    eye_mode <= 1'b0;
+                    eye_g0_edge <= {eye_low_o0, eye_low_bo};
+                    eye_g0 <= {eye_high_o0, eye_high_bo};
+                    eye_cen0 <= eye_best_o0;
+                    eye_cen1 <= eye_best_bo;
+                    eye_bo <= {3'b0, eye_best_pop};
+                    $display("EYE fail low %0d/%0d high %0d/%0d best %h pop=%0d",
+                             eye_low_o0, eye_low_bo, eye_high_o0, eye_high_bo,
+                             eye_best_got, eye_best_pop);
                     $fflush();
                 end else begin
                     eye_o0 <= eye_o0 + 8'd1;
@@ -1119,7 +1233,6 @@ always @(posedge pclk) begin
                     have <= 1'b0;
                     best_w <= 8'd0;
                     cliff_run <= 1'b0;
-                    have_cliff <= 1'b0;
                     eye_st <= E_SETTLE;
                 end
             end

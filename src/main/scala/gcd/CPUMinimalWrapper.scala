@@ -13,6 +13,8 @@ class CpuWrapBase extends Bundle {
 
 class CpuWrapHyper extends CpuWrapBase {
   val hr = new HyperRamUserBundle
+  // Modules image only. clk_out/2. The bridge stays on clock.
+  val cpu_clock = Input(Clock())
 }
 
 class CpuWrapDdr3 extends CpuWrapBase {
@@ -38,6 +40,7 @@ class CPUMinimalWrapper(
     fetchStored: Boolean = false,
     chainFix: Boolean = false,
     bodyFetch: Boolean = false,
+    core: Option[CoreMap] = None,
     // DDR3 elaborations keep the Logger. Nano 4K images leave it out.
     // The Dock training UART is ddr3_uart_tx, not this module.
     enableLogger: Boolean = false
@@ -57,8 +60,21 @@ class CPUMinimalWrapper(
   // HyperRAM uses that image plus the walking-pattern prologue, and stalls
   // loads and stores. Block RAM keeps waitForStores false.
   // The DDR3 CPU is on pclk/4. The bridge stays on pclk.
-  val cpuClock = if (ddr3 && useRealGowin) io.asInstanceOf[CpuWrapDdr3].cpu_clock else clock
-  val cpu = withClock(cpuClock) {
+  // The Modules CPU is on clk_out/2. The HyperRAM bridge stays on clk_out.
+  val hyperSlow = hyper && useRealGowin && core.isDefined
+  val cpuClock = if (ddr3 && useRealGowin) io.asInstanceOf[CpuWrapDdr3].cpu_clock
+    else if (hyperSlow) io.asInstanceOf[CpuWrapHyper].cpu_clock
+    else clock
+  val cpuReset = if (hyperSlow) {
+    withClock(cpuClock) {
+      val s1 = RegInit(true.B)
+      val s2 = RegInit(true.B)
+      s1 := reset.asBool
+      s2 := s1
+      s2
+    }
+  } else reset
+  val cpu = withClockAndReset(cpuClock, cpuReset) {
     Module(new CPUSubset0(
       programInstructions,
       customMemoryImage = customMemoryImage,
@@ -67,7 +83,8 @@ class CPUMinimalWrapper(
       extraChecks = extraChecks,
       fetchStored = fetchStored,
       chainFix = chainFix,
-      bodyFetch = bodyFetch
+      bodyFetch = bodyFetch,
+      core = core
     ))
   }
   io.led := cpu.io.led
@@ -77,13 +94,34 @@ class CPUMinimalWrapper(
   
   if (hyper) {
     val bridge = Module(new HyperRamBridge)
-    bridge.io.cpuAddr := cpu.io.memAddr
-    bridge.io.cpuWriteData := cpu.io.memWriteData
-    bridge.io.cpuWrite := cpu.io.memWrite
-    bridge.io.cpuRead := cpu.io.memRead
-    bridge.io.cpuByte := cpu.io.memByte
-    cpu.io.memReadData := bridge.io.cpuReadData
-    cpu.io.memStall := bridge.io.memStall
+    if (core.isDefined && useRealGowin) {
+      val cross = Module(new HyperReqCross)
+      cross.io.cpuClock := cpuClock
+      cross.io.bridgeBusy := bridge.io.memStall
+      cross.io.inAddr := cpu.io.memAddr
+      cross.io.inWriteData := cpu.io.memWriteData
+      cross.io.inWrite := cpu.io.memWrite
+      cross.io.inRead := cpu.io.memRead
+      cross.io.inByte := cpu.io.memByte
+      bridge.io.cpuAddr := cross.io.addr
+      bridge.io.cpuWriteData := cross.io.writeData
+      bridge.io.cpuWrite := cross.io.write
+      bridge.io.cpuRead := cross.io.read
+      bridge.io.cpuByte := cross.io.byte
+      cpu.io.memReadData := bridge.io.cpuReadData
+      val align = withClock(cpuClock) { Module(new Ddr3StallAlign) }
+      align.io.req := cpu.io.memRead || cpu.io.memWrite
+      align.io.bridgeStall := bridge.io.memStall
+      cpu.io.memStall := align.io.stall
+    } else {
+      bridge.io.cpuAddr := cpu.io.memAddr
+      bridge.io.cpuWriteData := cpu.io.memWriteData
+      bridge.io.cpuWrite := cpu.io.memWrite
+      bridge.io.cpuRead := cpu.io.memRead
+      bridge.io.cpuByte := cpu.io.memByte
+      cpu.io.memReadData := bridge.io.cpuReadData
+      cpu.io.memStall := bridge.io.memStall
+    }
     if (useRealGowin) {
       val hr = io.asInstanceOf[CpuWrapHyper].hr
       hr.cmd := bridge.io.hr.cmd

@@ -406,6 +406,7 @@ sim/obj_dir_modules/
 sim/obj_dir_sector/
 sim/obj_dir_modules_split/
 sim/inner-core/
+sim/payload/
 sim/obj_dir_ddr3_n5/
 sim/obj_dir_ddr3_align/
 sim/visualizer/trace.json

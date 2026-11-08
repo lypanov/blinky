@@ -45,6 +45,7 @@ struct Options {
   int max_cycles = 800;
   int reset_cycles = 4;
   int min_toggles = 6;
+  bool quiet = false;
   std::string program = "blink2";
   std::string fst_path = "sim/out/blink2.fst";
   std::string led_path = "sim/out/led_toggles.csv";
@@ -61,7 +62,8 @@ static void usage(const char* argv0) {
           "  --program NAME   Label stored in the JSON (blink2 / blink3)\n"
           "  --fst PATH       FST waveform output\n"
           "  --trace PATH     JSON cycle trace output\n"
-          "  --led PATH       LED toggle CSV output\n",
+          "  --led PATH       LED toggle CSV output\n"
+          "  --no-trace       Skip the JSON, wave CSV, and FST\n",
           argv0);
 }
 
@@ -82,6 +84,7 @@ static Options parse_args(int argc, char** argv) {
     else if (!strcmp(argv[i], "--fst")) o.fst_path = need("--fst");
     else if (!strcmp(argv[i], "--trace")) o.trace_path = need("--trace");
     else if (!strcmp(argv[i], "--led")) o.led_path = need("--led");
+    else if (!strcmp(argv[i], "--no-trace")) o.quiet = true;
     else if (argv[i][0] == '+') {
       // Plusarg for the behavioural memory model. commandArgs already kept it.
     } else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
@@ -102,19 +105,22 @@ int main(int argc, char** argv) {
   Options opt = parse_args(argc, argv);
 
   VCPUSimTop* top = new VCPUSimTop;
-  VerilatedFstC* tfp = new VerilatedFstC;
-  top->trace(tfp, 99);
-  tfp->open(opt.fst_path.c_str());
+  VerilatedFstC* tfp = nullptr;
+  if (!opt.quiet) {
+    tfp = new VerilatedFstC;
+    top->trace(tfp, 99);
+    tfp->open(opt.fst_path.c_str());
+  }
 
   // 10 ns per half-cycle (20 ns period ≈ 50 MHz) so GTKWave's time axis is readable.
   auto tick = [&]() {
     top->clock = 0;
     top->eval();
-    tfp->dump(main_time);
+    if (tfp) tfp->dump(main_time);
     main_time += 10;
     top->clock = 1;
     top->eval();
-    tfp->dump(main_time);
+    if (tfp) tfp->dump(main_time);
     main_time += 10;
   };
 
@@ -141,11 +147,17 @@ int main(int argc, char** argv) {
   bool first_json = true;
 
   int cycle = 0;
+  uint32_t last_pc = 0;
   for (; cycle < opt.max_cycles; cycle++) {
     tick();
 
     const int led = top->io_led ? 1 : 0;
     const uint32_t pc = static_cast<uint32_t>(top->io_pc);
+    last_pc = pc;
+    if (opt.quiet && cycle > 0 && (cycle % 2000000) == 0) {
+      printf("[SIM] cycle=%d pc=0x%08x led=%d\n", cycle, pc, led);
+      fflush(stdout);
+    }
     const uint32_t r0 = static_cast<uint32_t>(top->io_r0);
     const uint32_t r1 = static_cast<uint32_t>(top->io_r1);
     const uint32_t r2 = static_cast<uint32_t>(top->io_r2);
@@ -159,33 +171,38 @@ int main(int argc, char** argv) {
     const int zflag = top->rootp->CPUSimTop__DOT__cpu__DOT__z ? 1 : 0;
     const int mem_rd = top->io_memRead ? 1 : 0;
 
-    wave_csv << cycle << "," << led << "," << pc << "," << halted << ","
-             << mem_wr << "," << mem_addr << "," << mem_wdata << ","
-             << r0 << "," << r1 << "," << r2 << "," << r3 << "\n";
+    if (!opt.quiet) {
+      wave_csv << cycle << "," << led << "," << pc << "," << halted << ","
+               << mem_wr << "," << mem_addr << "," << mem_wdata << ","
+               << r0 << "," << r1 << "," << r2 << "," << r3 << "\n";
 
-    if (!first_json) trace << ",\n";
-    first_json = false;
-    trace << "    {\"cycle\":" << cycle
-          << ",\"pc\":" << pc
-          << ",\"led\":" << led
-          << ",\"halted\":" << halted
-          << ",\"memWrite\":" << (mem_wr ? "true" : "false")
-          << ",\"memRead\":" << (mem_rd ? "true" : "false")
-          << ",\"memAddr\":" << mem_addr
-          << ",\"memWriteData\":" << mem_wdata
-          << ",\"n\":" << nflag
-          << ",\"z\":" << zflag;
-    for (int ri = 0; ri < 16; ri++) {
-      trace << ",\"r" << ri << "\":" << cpu_reg(top, ri);
+      if (!first_json) trace << ",\n";
+      first_json = false;
+      trace << "    {\"cycle\":" << cycle
+            << ",\"pc\":" << pc
+            << ",\"led\":" << led
+            << ",\"halted\":" << halted
+            << ",\"memWrite\":" << (mem_wr ? "true" : "false")
+            << ",\"memRead\":" << (mem_rd ? "true" : "false")
+            << ",\"memAddr\":" << mem_addr
+            << ",\"memWriteData\":" << mem_wdata
+            << ",\"n\":" << nflag
+            << ",\"z\":" << zflag;
+      for (int ri = 0; ri < 16; ri++) {
+        trace << ",\"r" << ri << "\":" << cpu_reg(top, ri);
+      }
+      trace << "}";
     }
-    trace << "}";
 
     if (led != prev_led) {
       toggles++;
       toggle_cycles.push_back(cycle);
       led_csv << cycle << "," << prev_led << "," << led << "," << pc << "," << r0 << "\n";
-      printf("[LED] cycle=%d  %d -> %d  pc=0x%08x r0=%u\n",
-             cycle, prev_led, led, pc, r0);
+      printf("[LED] cycle=%d  %d -> %d  pc=0x%08x r0=%u r5=%u r9=%u mask=0x%llx\n",
+             cycle, prev_led, led, pc, r0,
+             static_cast<uint32_t>(top->io_r5),
+             static_cast<uint32_t>(top->io_r9),
+             static_cast<unsigned long long>(top->io_mask));
       fflush(stdout);
       prev_led = led;
       if (opt.min_toggles > 0 && toggles >= opt.min_toggles) {
@@ -209,13 +226,15 @@ int main(int argc, char** argv) {
   }
   trace << "]\n}\n";
 
-  tfp->close();
+  if (tfp) {
+    tfp->close();
+    delete tfp;
+  }
   top->final();
-  delete tfp;
   delete top;
 
-  printf("[SIM] ran %d cycles after reset, %d LED edges, FST=%s\n",
-         cycle, toggles, opt.fst_path.c_str());
+  printf("[SIM] ran %d cycles after reset, %d LED edges, pc=0x%08x FST=%s\n",
+         cycle, toggles, last_pc, opt.fst_path.c_str());
   if (toggle_cycles.size() >= 2) {
     printf("[SIM] LED edge cycles:");
     for (int cyc : toggle_cycles) printf(" %d", cyc);

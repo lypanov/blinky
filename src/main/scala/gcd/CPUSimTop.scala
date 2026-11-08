@@ -21,6 +21,7 @@ class CPUSimTop(
     fetchStored: Boolean = false,
     chainFix: Boolean = false,
     bodyFetch: Boolean = false,
+    core: Option[CoreMap] = None,
     // When set, the DDR3 command port is an IO. The Micron ddr3.v bench
     // drives it. The command-port stand-in is not instantiated.
     externalPhy: Boolean = false
@@ -45,8 +46,14 @@ class CPUSimTop(
   })
   val phy = if (ddr3 && externalPhy) Some(IO(new Ddr3UserBundle)) else None
 
+  // Modules fetch and register write miss 27 MHz. The CPU runs at half
+  // the bridge clock, the same split the Dock uses for its command port.
   val cpuClock = if (ddr3) {
     val half = Module(new CpuClock)
+    half.io.clk_in := clock
+    half.io.clk_out
+  } else if (hyper && core.isDefined) {
+    val half = Module(new CpuClock2)
     half.io.clk_in := clock
     half.io.clk_out
   } else clock
@@ -58,18 +65,40 @@ class CPUSimTop(
     extraChecks = extraChecks,
     fetchStored = fetchStored,
     chainFix = chainFix,
-    bodyFetch = bodyFetch
+    bodyFetch = bodyFetch,
+    core = core
   )) }
   if (hyper) {
     val bridge = Module(new HyperRamBridge)
     val model = Module(new HyperRamUserModel(hyperFirstValid))
-    bridge.io.cpuAddr := cpu.io.memAddr
-    bridge.io.cpuWriteData := cpu.io.memWriteData
-    bridge.io.cpuWrite := cpu.io.memWrite
-    bridge.io.cpuRead := cpu.io.memRead
-    bridge.io.cpuByte := cpu.io.memByte
-    cpu.io.memReadData := bridge.io.cpuReadData
-    cpu.io.memStall := bridge.io.memStall
+    if (core.isDefined) {
+      val cross = Module(new HyperReqCross)
+      cross.io.cpuClock := cpuClock
+      cross.io.bridgeBusy := bridge.io.memStall
+      cross.io.inAddr := cpu.io.memAddr
+      cross.io.inWriteData := cpu.io.memWriteData
+      cross.io.inWrite := cpu.io.memWrite
+      cross.io.inRead := cpu.io.memRead
+      cross.io.inByte := cpu.io.memByte
+      bridge.io.cpuAddr := cross.io.addr
+      bridge.io.cpuWriteData := cross.io.writeData
+      bridge.io.cpuWrite := cross.io.write
+      bridge.io.cpuRead := cross.io.read
+      bridge.io.cpuByte := cross.io.byte
+      cpu.io.memReadData := bridge.io.cpuReadData
+      val align = withClock(cpuClock) { Module(new Ddr3StallAlign) }
+      align.io.req := cpu.io.memRead || cpu.io.memWrite
+      align.io.bridgeStall := bridge.io.memStall
+      cpu.io.memStall := align.io.stall
+    } else {
+      bridge.io.cpuAddr := cpu.io.memAddr
+      bridge.io.cpuWriteData := cpu.io.memWriteData
+      bridge.io.cpuWrite := cpu.io.memWrite
+      bridge.io.cpuRead := cpu.io.memRead
+      bridge.io.cpuByte := cpu.io.memByte
+      cpu.io.memReadData := bridge.io.cpuReadData
+      cpu.io.memStall := bridge.io.memStall
+    }
     model.io.clk := clock
     model.io.memory_clk := clock
     model.io.pll_lock := true.B
@@ -219,6 +248,11 @@ object CPUSimTop {
           )
         ).getAbsolutePath
         val words = loadInstructionsFromFile(imemPath)
+        val coreMap: Option[CoreMap] = if (image == "ddr3modules") {
+          Some(CoreMap.load(projectRoot).getOrElse(
+            throw new RuntimeException("ddr3modules needs sim/visualizer/imem/core.map — run sim/link_inner.py")
+          ))
+        } else None
         println(s"CPUSimTop: $image IMEM ${words.length} words extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix bodyFetch=$bodyFetch externalPhy=$externalPhy from $imemPath")
         (
           () => new CPUSimTop(
@@ -229,6 +263,7 @@ object CPUSimTop {
             fetchStored = fetchStored,
             chainFix = chainFix,
             bodyFetch = bodyFetch,
+            core = coreMap,
             externalPhy = externalPhy
           ),
           s"$targetDir/CPUSimTopDdr3.v",
@@ -271,6 +306,11 @@ object CPUSimTop {
         // of the code window. The walk loads zeros and the pin stays dark.
         val chainFix = (image == "pdchain" || image == "moddesc" || image == "files" || image == "modules") && sys.env.getOrElse("CHAIN_FIX", "1") != "0"
         val bodyFetch = image == "modules" && sys.env.getOrElse("BODY_FETCH", "1") != "0"
+        val coreMap: Option[CoreMap] = if (image == "modules") {
+          Some(CoreMap.load(projectRoot).getOrElse(
+            throw new RuntimeException("modules needs sim/visualizer/imem/core.map — run sim/link_inner.py")
+          ))
+        } else None
         println(s"CPUSimTop: $image IMEM ${words.length} words from $imemPath")
         println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix bodyFetch=$bodyFetch")
         (
@@ -282,7 +322,8 @@ object CPUSimTop {
             extraChecks = extra,
             fetchStored = fetchStored,
             chainFix = chainFix,
-            bodyFetch = bodyFetch
+            bodyFetch = bodyFetch,
+            core = coreMap
           ),
           s"$targetDir/CPUSimTopHyper.v",
           image

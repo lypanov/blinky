@@ -38,7 +38,11 @@ class SectorRom(hexPath: String) extends BlackBox {
 // bit is set during the ReadSD payload. Ready is bit 0 of the control
 // read. It drops on a fast word and is set again with the word, which
 // is what the poll in Kernel.SPI waits for.
-class SpiSector extends Module {
+// pairCount > 0 reads a packed (index, word) table through romAddr/romData
+// instead of a flat sector ROM. The table is the live words of the three
+// pages. A missing index returns 0. Ready stays low for the scan, which is
+// what Kernel.SPI polls.
+class SpiSector(pairCount: Int = 0) extends Module {
   val io = IO(new Bundle {
     val write = Input(Bool())
     val ctrl = Input(Bool())
@@ -46,15 +50,22 @@ class SpiSector extends Module {
     val ready = Output(Bool())
     val rdata = Output(UInt(32.W))
     val cdata = Output(UInt(32.W))
+    val romAddr = Output(UInt(12.W))
+    val romData = Input(UInt(32.W))
+    val scanning = Output(Bool())
   })
+  io.romAddr := 0.U
 
-  val root = sys.env.getOrElse("CHISEL_CPU_PROJECT_ROOT", new File(".").getAbsolutePath)
-  val hex = new File(root, "sim/visualizer/imem/sector.hex")
-  if (!hex.isFile) {
-    throw new RuntimeException(s"sector ROM missing at ${hex.getAbsolutePath}")
-  }
-  val rom = Module(new SectorRom(hex.getAbsolutePath))
-  rom.io.clk := clock
+  val internal = if (pairCount == 0) {
+    val root = sys.env.getOrElse("CHISEL_CPU_PROJECT_ROOT", new File(".").getAbsolutePath)
+    val hex = new File(root, "sim/visualizer/imem/sector.hex")
+    if (!hex.isFile) {
+      throw new RuntimeException(s"sector ROM missing at ${hex.getAbsolutePath}")
+    }
+    val rom = Module(new SectorRom(hex.getAbsolutePath))
+    rom.io.clk := clock
+    Some(rom)
+  } else None
 
   val ctrlReg = RegInit(0.U(4.W))
   val readyReg = RegInit(true.B)
@@ -74,7 +85,25 @@ class SpiSector extends Module {
   val inRange = isFs && index >= 1.U && index <= 3.U
   val which = index - 1.U
   val wordAddr = Cat(which(1, 0), half, idx(6, 0))
-  rom.io.addr := Mux(inRange, wordAddr, 0.U)
+  internal.foreach { rom =>
+    rom.io.addr := Mux(inRange, wordAddr, 0.U)
+  }
+  val scan = if (pairCount > 0) RegInit(false.B) else false.B
+  val scanAt = if (pairCount > 0) RegInit(0.U(8.W)) else 0.U
+  val scanPhase = if (pairCount > 0) RegInit(0.U(2.W)) else 0.U
+  val scanKey = if (pairCount > 0) Reg(UInt(10.W)) else 0.U(10.W)
+  if (pairCount > 0) {
+    when (scan) {
+      when (scanPhase === 0.U) {
+        io.romAddr := scanAt << 1
+        scanPhase := 1.U
+      } .elsewhen (scanPhase === 1.U) {
+        scanKey := io.romData(9, 0)
+        io.romAddr := (scanAt << 1) + 1.U
+        scanPhase := 2.U
+      }
+    }
+  }
 
   val byte = io.wdata(7, 0)
   val ocr = MuxLookup(idx(2, 0), 0.U(8.W))(Seq(
@@ -89,8 +118,8 @@ class SpiSector extends Module {
     ctrlReg := io.wdata(3, 0)
   }
 
-  when (wordWait) {
-    rx := Mux(inRange, rom.io.data, 0.U)
+  def deliver(word: UInt): Unit = {
+    rx := word
     readyReg := true.B
     wordWait := false.B
     when (idx === 127.U) {
@@ -99,10 +128,18 @@ class SpiSector extends Module {
     } .otherwise {
       idx := idx + 1.U
     }
-  } .elsewhen (io.write && !io.ctrl) {
+  }
+
+  def acceptByte(): Unit = {
     when (phase === 4.U && ctrlReg(2)) {
       readyReg := false.B
-      wordWait := true.B
+      if (pairCount > 0) {
+        scan := true.B
+        scanAt := 0.U
+        scanPhase := 0.U
+      } else {
+        wordWait := true.B
+      }
     } .otherwise {
       readyReg := true.B
       when (phase === 0.U) {
@@ -154,7 +191,30 @@ class SpiSector extends Module {
     }
   }
 
+  if (pairCount == 0) {
+    when (wordWait) {
+      deliver(Mux(inRange, internal.get.io.data, 0.U))
+    } .elsewhen (io.write && !io.ctrl) {
+      acceptByte()
+    }
+  } else {
+    when (scan && scanPhase === 2.U) {
+      val hit = scanKey === wordAddr
+      val last = scanAt === (pairCount - 1).U(8.W)
+      when (hit || last || !inRange) {
+        deliver(Mux(hit && inRange, io.romData, 0.U))
+        scan := false.B
+      } .otherwise {
+        scanAt := scanAt + 1.U
+        scanPhase := 0.U
+      }
+    } .elsewhen (io.write && !io.ctrl && !scan) {
+      acceptByte()
+    }
+  }
+
   io.ready := readyReg
   io.rdata := rx
   io.cdata := Cat(0.U(31.W), readyReg)
+  io.scanning := scan
 }

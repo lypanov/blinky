@@ -1,6 +1,8 @@
 // Tang Nano 4K wrapper for the HyperRAM data port.
 //
-// The CPU and the bridge run on the IP's clk_out (memory clock / 2).
+// The bridge runs on the IP's clk_out (memory clock / 2, 27 MHz).
+// The Modules CPU runs on clk_out/2 (13.5 MHz): the fetch address and
+// the register write leave the instruction pROM and miss 27 MHz.
 // The HyperRAM IP itself is clocked by the 27 MHz crystal (clk) and by
 // the 54 MHz PLL (memory_clk). O_hpram_* / IO_hpram_* are the embedded
 // W956 pins. They must be top-level ports with these names and they must
@@ -26,14 +28,18 @@ module blinky_top (
   wire [15:0] unused_deadbeef;
   wire [2:0]  unused_addr;
 
-  wire        hr_cmd;
-  wire        hr_cmd_en;
-  wire [21:0] hr_addr;
-  wire [31:0] hr_wr_data;
-  wire [3:0]  hr_data_mask;
-  wire [31:0] hr_rd_data;
-  wire        hr_rd_data_valid;
-  wire        hr_init_calib;
+  // syn_keep keeps the HyperRAM user ports. Without it, synthesis
+  // pulls cmd_en, wr_data, data_mask, and addr into the encrypted PHY,
+  // and the netlist no longer has those pins. The proofs that blinked
+  // drove the PHY through these ports.
+  (* syn_keep = 1 *) wire        hr_cmd;
+  (* syn_keep = 1 *) wire        hr_cmd_en;
+  (* syn_keep = 1 *) wire [21:0] hr_addr;
+  (* syn_keep = 1 *) wire [31:0] hr_wr_data;
+  (* syn_keep = 1 *) wire [3:0]  hr_data_mask;
+  (* syn_keep = 1 *) wire [31:0] hr_rd_data;
+  (* syn_keep = 1 *) wire        hr_rd_data_valid;
+  (* syn_keep = 1 *) wire        hr_init_calib;
 
   hpram_pllvr u_pll (
     .clkout (memory_clk),
@@ -54,9 +60,20 @@ module blinky_top (
   end
   wire cpu_reset = (por != 8'h00) | reset;
   wire hr_rst_n = pll_lock & ~reset;
+  wire cpu_clk;
 
-  CPUMinimalWrapper u_cpu (
+  // Runs as soon as the PLL locks, including while the CPU is still in
+  // the power-on reset. DIV_MODE 2 is edge-aligned with clk_out.
+  GowinClkDiv2 u_cpu_div (
+    .HCLKIN (clk_out),
+    .RESETN (pll_lock),
+    .CALIB  (1'b0),
+    .CLKOUT (cpu_clk)
+  );
+
+  (* syn_hier = "hard" *) CPUMinimalWrapper u_cpu (
     .clock             (clk_out),
+    .io_cpu_clock      (cpu_clk),
     .reset             (cpu_reset),
     .io_led            (io_led),
     .io_deadbeef       (unused_deadbeef),
@@ -73,7 +90,7 @@ module blinky_top (
     .io_hr_init_calib  (hr_init_calib)
   );
 
-  HyperRAM_Memory_Interface_Top u_hpram (
+  (* syn_hier = "hard" *) HyperRAM_Memory_Interface_Top u_hpram (
     .clk             (clock),
     .memory_clk      (memory_clk),
     .pll_lock        (pll_lock),

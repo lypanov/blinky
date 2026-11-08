@@ -30,7 +30,7 @@ fi
 
 IMAGE="${IMAGE:-ddr3moddesc}"
 case "$IMAGE" in
-  ddr3modules) BUILD=sim/build_modules_imem.py ;;
+  ddr3modules) BUILD=sim/link_inner.py ;;
   ddr3files) BUILD=sim/build_files_imem.py ;;
   ddr3moddesc) BUILD=sim/build_moddesc_imem.py ;;
   *)
@@ -58,9 +58,6 @@ OUT=sim/obj_dir/ddr3_cpu_phy.vvp
 LOG=sim/obj_dir/ddr3_cpu_phy.log
 echo "iverilog $(iverilog -V 2>&1 | head -1)"
 ROM_V=(generated/InstrRom.v)
-if [[ "$IMAGE" == "ddr3modules" ]]; then
-  ROM_V+=(generated/SectorRom.v)
-fi
 if ! iverilog -g2012 -s tb_ddr3_cpu_phy -o "$OUT" \
   -D SIM -D den1024Mb -D sg25 -D x16 -DPRINTF_COND=0 \
   -I sim/micron \
