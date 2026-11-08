@@ -414,6 +414,8 @@ sim/visualizer/program.json
 sim/visualizer/imem/
 .mill/
 gowin/impl/
+gowin/spi_flash_cfg.vh
+gowin/spi-fs/
 gowin/ip/hpram/hpram_local_define.v
 gowin/ip/hpram/hpram_local_param.v
 gowin/ip/hpram/hpram_code_1N2A.v

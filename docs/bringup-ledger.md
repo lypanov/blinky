@@ -127,6 +127,71 @@ Steps, each with its own blink rate published before loading:
 
 Simulate first with a simple SPI flash model. There is no Dock stage. The Dock has its own storage path, so say that in the write-up rather than skipping silently. A power-cycle check (unplug, replug, load the reader) needs a person and can be left for the morning.
 
+### Item B, measured
+
+The external NOR can be the 4K's disk. A fresh SRAM load read back the page the previous image had written. The Dock was not loaded. Its storage path is the DDR3 image, and this pathfinder does not use it. A power-cycle of the reader is left for the morning. `oberon/src/Modules.Mod` was not edited.
+
+The chip is the Puya P25Q32 on schematic `Tang_Nano_4K_3603` (WSON-8, 32 Mbit, 4 MiB). The GW1NSR-4C QN48P pinout and that schematic put it on the MSPI pins:
+
+| Flash | FPGA pin | Config name | Net |
+|---|---|---|---|
+| CLK | 1 | IOT10A/MCLK | `MSPI_CLK`, 1 kΩ series R39 |
+| CS# | 2 | IOT10B/MCS_N | `MSPI_CS`, 4.7 kΩ pull-up R35 |
+| SI | 48 | IOT11A/MO | `MSPI_DI` |
+| SO | 47 | IOT11B/MI | `MSPI_DO` |
+| WP# | 8 | IOT4B/JTAGSEL_N | `MSPI_WP`, 4.7 kΩ pull-up R37, driven high |
+| HOLD# | 9 | IOT5B/DONE | `MSPI_HOLD`, 4.7 kΩ pull-up, driven high |
+
+Pin 10 is IOT7A/MODE1 and IOT7B/MODE2 bonded together, and it is the user LED (anode, R32 330 Ω). UG292 gives GW1NSR-4C QN48P JTAG, AUTO BOOT, MSPI, and DUAL BOOT. MODE `000` is AUTO BOOT from internal flash. MODE `110` is DUAL BOOT. With MODE1 and MODE2 tied, the board can select those two and not MSPI alone (`010`). The strap rests low, so power-up configures from the internal flash. The external chip can hold a bitstream only if pin 10 is high when configuration is sampled, and Gowin reads that image from address 0.
+
+A `modules_n65536.fs` for this part is 1,772,222 bytes. The last 4 KB sector starts at byte 4,190,208 (`0x3FF000`). The gap under a bitstream at address 0 is 2,417,986 bytes. The pathfinder erases that sector and programs only its first 256-byte page. Nothing in the size or the boot address suggests the page overlaps a bitstream.
+
+The MSPI pins are configuration pins. After SRAM configuration they are ordinary I/O when the project sets "Use MSPI as Regular IO" (`set_option -use_mspi_as_gpio 1`). HOLD# is the DONE pin, so "Use DONE as Regular IO" is on as well. JTAG stays the SRAM-load port.
+
+The image is a state machine, not the modules CPU. SPI is mode 0 at 250 kHz. The only commands are `9Fh`, `05h`, `06h`, `20h`, `02h`, and `03h`. The page pattern is `A5 5A`, then the build byte, then `i xor build`. The build byte is `7Bh`. The negative reader is the same reader with `7Ch`. The LED is active high and stays low unless the check passes. Rates, fixed before any load, at the 27 MHz PLLVR bypass:
+
+| Check | Half-period | Rate |
+|---|---:|---:|
+| A, JEDEC `85 60 16` | 9,000,000 | 1.5 Hz |
+| B, erase, program, read-back | 5,400,000 | 2.5 Hz |
+| C, fresh SRAM load reads the page | 3,375,000 | 4.0 Hz |
+
+`sim/run_spi_flash_pathfinder.sh` (Icarus, a 4 KB NOR model, no DDR3) prints `SPI_FLASH PASS all`. The ID image blinks on `85 60 16`. A model that answers `EF 40 16` stays dark and does not erase. A reader of a blank page stays dark. The writer erases `0x3FF000` once, programs 256 bytes, and blinks. A second reader instance on that same array blinks. Build `7Ch` stays dark.
+
+The place runs were at 03:38 (Europe/Amsterdam). BSRAM is 0/10 (synthesis of `spi_neg`; the place tables list no block). Each image is 149 FF.
+
+| Image | Logic | CLS | Free CLS |
+|---|---|---|---:|
+| `spi_id` | 314/4608 (272 LUT, 42 ALU) | 188/2304 | 2116 |
+| `spi_write` | 309/4608 (267 LUT, 42 ALU) | 186/2304 | 2118 |
+| `spi_read` | 308/4608 (266 LUT, 42 ALU) | 185/2304 | 2119 |
+| `spi_neg` | 312/4608 (270 LUT, 42 ALU) | 187/2304 | 2117 |
+
+SRAM loads were bus 3 address 081 only. Idcode `0x100981b`, GW1NSR-4C. Each load printed `write to ram` and `CRC check: Success`. No flash-writing flag was passed. The Primer was not opened.
+
+```bash
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/spi-fs/spi_id.fs
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/spi-fs/spi_write.fs
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/spi-fs/spi_read.fs
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/spi-fs/spi_neg.fs
+```
+
+Webcam `measure_blink`, `/dev/video2`, `roi=nano4k`, duration 20, warmup 2. The analyzer's Blink3 "expected" field is not this pathfinder's rate.
+
+| Check | Edge | FFT | Edges | Confidence | Clip |
+|---|---:|---:|---:|---:|---|
+| A | 1.499438 Hz | 1.497 Hz | 66 | 1.0 | `/home/lypanov/fpga/blink-measure/20261108-spi-id/clip.mkv` |
+| B | 2.495420 Hz | 2.495 Hz | 110 | 0.9961 | `/home/lypanov/fpga/blink-measure/20261108-spi-write/clip.mkv` |
+| C | 3.995439 Hz | 3.992 Hz | 176 | 0.9767 | `/home/lypanov/fpga/blink-measure/20261108-spi-read/clip.mkv` |
+
+Rate A is the JEDEC record: the image blinks only for `85 60 16`, and the board blinked at 1.5 Hz. That is Puya, type `60h`, capacity `16h` (32 Mbit). Rate B means the erase, the page program, and the read-back matched. Rate C is a separate SRAM load, so the page was still in the NOR.
+
+The negative load used the same camera box as the lit LED (`268,240`, 30×24) so the detector would not hunt another lamp. In the three blink clips that box peaks near 62 and averages about 31. On the negative image it peaks at 0.644 and averages 0.189. The tool's headline 7.11 Hz has confidence 0.35, FFT SNR 2.9, and the warning that the on/off gap is small. That is the noise floor. The LED stayed dark. Clip: `/home/lypanov/fpga/blink-measure/20261108-spi-neg/clip.mkv`.
+
 ### Item C — replace the pre-armed check mask with an arm word
 
 On the `modules` and `ddr3modules` images, `checkMask` and `CheckTail` start all-ones at reset (`splitFetch`), because the image has no room for the forty zero stores. So today no self-check gates the LED. This item puts a real one back and removes the dead mask.

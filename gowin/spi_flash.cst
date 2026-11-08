@@ -1,0 +1,31 @@
+# SPI-flash pathfinder. Tang Nano 4K, GW1NSR-4C QN48P.
+# Schematic Tang_Nano_4K_3603: Puya P25Q32 on the MSPI nets.
+#   pin 1  IOT10A/MCLK  MSPI_CLK  flash CLK   (1k series, R39)
+#   pin 2  IOT10B/MCS_N MSPI_CS   flash CS#   (4.7k pull-up, R35)
+#   pin 48 IOT11A/MO    MSPI_DI   flash SI
+#   pin 47 IOT11B/MI    MSPI_DO   flash SO
+#   pin 8  IOT4B/JTAGSEL_N MSPI_WP   flash WP#  (4.7k pull-up, R37)
+#   pin 9  IOT5B/DONE   MSPI_HOLD flash HOLD# (4.7k pull-up)
+# Pin 10 is MODE1 and MODE2 tied, and the user LED. Bank 0 is 3.3 V.
+
+IO_LOC "io_led" 10;
+IO_PORT "io_led" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+IO_LOC "reset" 15;
+IO_PORT "reset" IO_TYPE=LVCMOS18 PULL_MODE=DOWN;
+
+IO_LOC "clock" 45;
+IO_PORT "clock" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+IO_LOC "spi_clk" 1;
+IO_PORT "spi_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "spi_cs_n" 2;
+IO_PORT "spi_cs_n" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC "spi_mosi" 48;
+IO_PORT "spi_mosi" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "spi_miso" 47;
+IO_PORT "spi_miso" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "spi_wp" 8;
+IO_PORT "spi_wp" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC "spi_hold" 9;
+IO_PORT "spi_hold" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
