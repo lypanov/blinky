@@ -13,4 +13,4 @@ Prove every ladder step in this order and do not skip a stage. First run simulat
 
 A full Icarus plus Micron run through Modules.Init to two LED edges (`IMAGE=ddr3modules sim/run_ddr3_cpu_phy.sh`) is only for a real DDR3 failure: calibration, the write eye, the controller, or the Micron protocol. N=5 does not skip the boot. That image still runs Modules.Init before the delay loop, so the ladder must not demand the run just to print a blink score.
 
-A failed 4K or Dock stage sends the step back to simulation. Fix the cause, then run the ladder again from sim. Loop until sim, 4K, and 20K agree. Stop the loop when the Nano 4K does not fit. Report that stage.
+A failed 4K stage returns to Verilator. A Dock failure in calibration, the write eye, the controller, or the Micron protocol returns to the full Icarus plus Micron run. Any other Dock failure returns to Verilator. Fix the cause, then run the ladder again from sim. Loop until sim, 4K, and 20K agree. Stop the loop when the Nano 4K does not fit. Report that stage.
