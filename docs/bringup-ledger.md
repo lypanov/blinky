@@ -80,7 +80,7 @@ Item 3 was not taken.
 
 ## Block RAM (8 Nov 2026)
 
-After Proof 7, block RAM is the wall on the Nano 4K: `modules_n65536` uses 10/10. `sim/link_inner.py` reports `ROM 3930/4096 stub 20 code 3549 init 149 sector 212`. The 4096-word instruction ROM is 8 blocks (512 words of 32 bits each). The inner core's code alone is 3549 words, so the ROM cannot shrink while the core runs from it. The way out is to keep the core on a "disk" and copy it into HyperRAM at boot, as the book does. Item B tests whether the board's external SPI flash can be that disk. Items A and C are space work on the way.
+After Proof 7, block RAM is the wall on the Nano 4K: `modules_n65536` uses 10/10. `sim/link_inner.py` reports `ROM 3930/4096 stub 20 code 3549 init 149 sector 212`. The 4096-word instruction ROM is 8 blocks. Each block is a 4-bit pROM of all 4096 words (item A), not a 512-word slice of the 32-bit word. The inner core's code alone is 3549 words, so the ROM cannot shrink while the core runs from it. The way out is to keep the core on a "disk" and copy it into HyperRAM at boot, as the book does. Item B tests whether the board's external SPI flash can be that disk. Items A and C are space work on the way.
 
 The Nano 4K has no distributed (LUT) RAM and its block RAM has no dual-port mode, so neither can take the register file. Registers stay in flip-flops.
 
@@ -91,6 +91,22 @@ Read the Gowin resource report for `modules_n65536` and write down what each of 
 One suspect is already known. `CPUMinimalWrapper` always builds `RAMController`, a demo that cycles a `Gowin_SP` block (`GowinSP`). Its outputs `io_deadbeef` and `io_addr` go to `unused_deadbeef` and `unused_addr` in `gowin/blinky_top_hyperram.v` and `gowin/primer20k/blinky_top_ddr3.v`. Remove `RAMController` from both elaborations (and the ports from both tops), unless the report shows Gowin already pruned it. Check the HyperRAM IP for blocks too, and remove anything else that drives nothing.
 
 The CPU does not change, so both blink laws stay. Record block RAM, logic, and CLS before and after on both boards, then prove it as usual (sim, 4K webcam, Dock webcam). If nothing is dead, record the per-block list and stop. That list is still the result.
+
+### Item A, measured
+
+Nothing among the ten blocks is dead. The source is unchanged. Before and after are the same packs, because nothing was removed.
+
+The Nano report is the Proof 7 `modules_n65536` place (`f92c3c2`). Logic 4004/4608 (87%; 3703 LUT and 301 ALU), CLS 2229/2304 (97%, 75 free), registers 1627/3456 FF, BSRAM 10/10: 8 pROM, 1 SDPB, 1 SDPX9B.
+
+The eight pROMs are `InstrRom` `mem_mem_0_0_s` through `mem_mem_0_7_s`. Each has `BIT_WIDTH=4` and the Verilog address is `addr[11:0]`, so each block is one nibble of all 4096 words. Eight nibbles are the 32-bit instruction. The image uses 3930 of those words. The spare 166 words are padding inside every block, not a spare block. Shortening the ROM does not return a block while the word stays 32 bits.
+
+The other two sit in `u_hpram`, the encrypted HyperRAM controller. One is SDPB and one is SDPX9B. The place timing path names one leaf: `u_hpram/u_hpram_top/matched_rvld[0].u_matched_rvld_fifo/data_mem_data_mem_0_0_s` at `BSRAM_R10[9]`, with `DI` driven from `rd_data_d`. The power report's other BSRAM-sized leaf is `u_hpram/u_hpram_top/u_hpram_wd/data_lane_gen[0].u_hpram_lane` (1.193 mW). The read-valid FIFO leaf is 1.148 mW. The instruction ROM is 0.344 mW. Those three sit next to the 2.668 mW BSRAM total; the small gap is the logic inside the same leaves. The FIFO is on the live read path and the lane is the live data path. Synthesis did not sweep either. The controller source is encrypted, so neither block can be lifted out.
+
+`RAMController` and its `Gowin_SP` are not among the ten. Synthesis warns NL0002 and sweeps both, on this image and on `ddr3modules_n65536`. The outputs already go to `unused_deadbeef` and `unused_addr`, so the block was gone before this item. It stays in the source. `SpiSector` is flip-flops and uses no block. `CheckTail` is swept on the Nano and is not a block. It stays. That cut is item C.
+
+The Dock report is the same image, `ddr3modules_n65536`. Logic 5257/20736 (26%; 4797 LUT and 460 ALU), CLS 3625/10368 (35%, 6743 free), BSRAM 8/46, all eight the instruction pROM. The Dock has no HyperRAM, so the two controller blocks are absent. `RAMController` is swept here too.
+
+The CPU is unchanged, so both blink laws stay the Proof 7 laws. This item did not re-simulate and did not reload either board. The standing Nano clip is `/home/lypanov/fpga/blink-measure/20261108-nano-modules/clip.mkv`, edge 0.430473 Hz, against 0.4459 Hz at 27 MHz. The standing Dock clip is `/home/lypanov/fpga/blink-measure/20261108-dock-eye/clip.mkv`, edge 0.397984 Hz, against 0.3995 Hz.
 
 ### Item B — external SPI flash pathfinder (Nano 4K only)
 
