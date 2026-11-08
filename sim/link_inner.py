@@ -887,6 +887,12 @@ def link(max_iter: int, break_arm: bool = False) -> dict:
         "string": string_at,
         "counts": {name: sum(1 for n, _i in seen if n == name) for name in ORDER},
         "words": rom,
+        # The disk image is these three chunks. `words` in the ROM is the
+        # same code and the same init stream; `sector_pages` is the three
+        # 1024-byte pages before they are packed into sparse pairs.
+        "code_words": list(words),
+        "init_stream": list(stream),
+        "sector_pages": dict(pages),
     }
     return info
 

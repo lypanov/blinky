@@ -251,6 +251,85 @@ Find the openFPGALoader options that write a raw data file to the Nano 4K's exte
 
 Write `disk.bin` at `0x200000`. Read it back on the host and compare. Then the LED proof: a pathfinder-style reader image, SRAM-loaded, reads the header, checks the magic and the build number, and checksums the whole image. It blinks at a rate published beforehand, and stays dark otherwise. The negative: a reader expecting a different build number stays dark. Simulate the reader first against the SPI flash model loaded with the same `disk.bin`.
 
+Layout, little-endian. The file is the bytes at flash `0x200000`. `tools/build_disk_image.py` builds it from `sim/link_inner.py` (`link(65536)`, the board image). The checksum is the sum of the payload words, mod 2^32. It does not cover the header.
+
+Header, 5 words, 20 bytes:
+
+| Offset | Field | This image |
+|---:|---|---|
+| `0x00` | magic `0x314B5344` (`D`,`S`,`K`,`1`) | `0x314B5344` |
+| `0x04` | version | `1` |
+| `0x08` | build | `0xD1` |
+| `0x0C` | payload length, bytes | `17908` |
+| `0x10` | checksum of the payload | `0xB0F27DF4` |
+
+Payload, the `length` bytes. A 9-word directory, then the inner core, then the sector pages.
+
+| Offset | Field | This image |
+|---:|---|---|
+| `0x00` | `core_base`, HyperRAM address of the first code word | `0x18000` |
+| `0x04` | `core_bytes` | `14196` |
+| `0x08` | `body`, Modules entry | `0x1B740` |
+| `0x0C` | `init_bytes`, including the terminating 0 | `604` |
+| `0x10` | `sector_bytes`, one page | `1024` |
+| `0x14` | `sector_count` | `3` |
+| `0x18` | sec0, the directory | `29` |
+| `0x1C` | sec1, `AMemoryMappedToggle.rsc` | `58` |
+| `0x20` | sec2, `Blink5.rsc` | `87` |
+
+Then, in order: `core_bytes` of the packed code (the ROM slice the stub executes from `core_base`), `init_bytes` of the `(dest, value)` stream the stub stores (a 0 dest ends it), and `sector_count` raw pages of `sector_bytes`. The pages are the three sectors `SpiSector` serves, before the sparse-pair pack. Directory mark `0x9B1EA38D` names the two `.rsc` files. Each file page starts with mark `0x9BA71D86`.
+
+This image is 17928 bytes and ends at `0x204608`. Code starts at flash `0x200038`, the init stream at `0x2037AC`, sector 29 at `0x203A08`, sector 58 at `0x203E08`, sector 87 at `0x204208`. Item E reads the directory and adds those sizes; the addresses move if the core grows.
+
+### Item D, measured
+
+The host wrote that file and a fresh SRAM load read it back. The reader blinks at 2.0 Hz when the header matches build `0xD1` and the checksum matches. Build `0xD2` stays dark. Nano 4K only. The Primer stayed on its current image. `oberon/src/Modules.Mod` was not edited. openFPGALoader 1.2.0 reached the external NOR, so the installer bitstream item B already proved was left unbuilt.
+
+`sim/run_spi_disk_reader.sh` (Icarus, the 17928-byte image in a small NOR model, no DDR3) prints `SPI_DISK PASS all`. The reader issues one `03h` at `0x200000`, no other command. It reports magic `314b5344`, build `000000d1`, length `17908`, checksum `b0f27df4`, and 17928 bytes. With the shortened divider the high half is 20 cycles. The FPGA half-period is the published `6750000`. A reader built for `0xD2` halts after the 20-byte header and the LED stays 0. Flipping payload byte 0 keeps the header and fails the checksum, and the LED stays 0. A header of `FF` stays dark.
+
+The rate was fixed in `gowin/spi_disk_rates.vh` before either load. The PLLVR bypass is the pathfinder's 27 MHz clock. A 50% blink at 2.0 Hz is half-period 6,750,000. The negative image uses the same half-period and must stay dark.
+
+| Check | Half-period | Rate |
+|---|---:|---:|
+| Read, build `0xD1`, checksum `0xB0F27DF4` | 6,750,000 | 2.0 Hz |
+| Negative, build `0xD2` | 6,750,000 | dark |
+
+The place runs were at 23:54 (Europe/Amsterdam). The place table lists no block RAM.
+
+| Image | Logic | CLS | Free CLS |
+|---|---|---|---:|
+| `spi_disk_read` | 427/4608 (312 LUT, 115 ALU) | 355/2304 | 1949 |
+| `spi_disk_neg` | 425/4608 (310 LUT, 115 ALU) | 351/2304 | 1953 |
+
+Each image is 375 registers (372 FF). The bus was 3 address 081. Idcode `0x100981b`, GW1NSR-4C. JEDEC on the external part is `0x856016`, Puya P25Q32H, 32 Mbit. The data-file write is `-f --external-flash` with a `.bin`, which this loader parses as raw bytes and programs at `-o`. A `.fs` on that path would be a bitstream and was not used. The reader bitstreams were `-m` only. Each SRAM load printed `write to ram` and `CRC check: Success`.
+
+The erase log prints start `00200000` and the tool's 64 KB display figure `00210000`. On this part a 64 KB erase is aligned to `0x200000`, so the erased block is `0x200000`–`0x20FFFF`, inside the disk region. The 256 bytes at `0x1FFF00` were `FF` before the write and `FF` after. `--verify` passed, and `cmp` of the 17928-byte dump against `disk.bin` passed.
+
+```bash
+openFPGALoader --busdev-num 003:081 -b tangnano4k \
+  --external-flash --dump-flash -o 0x1FFF00 --file-size 256 \
+  sim/out/guard_before.bin
+openFPGALoader --busdev-num 003:081 -b tangnano4k \
+  -f --external-flash -o 0x200000 --verify \
+  sim/out/disk.bin
+openFPGALoader --busdev-num 003:081 -b tangnano4k \
+  --external-flash --dump-flash -o 0x200000 --file-size 17928 \
+  sim/out/disk_readback.bin
+openFPGALoader --busdev-num 003:081 -b tangnano4k \
+  --external-flash --dump-flash -o 0x1FFF00 --file-size 256 \
+  sim/out/guard_after.bin
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/spi-fs/spi_disk_read.fs
+openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
+  gowin/spi-fs/spi_disk_neg.fs
+```
+
+Webcam `measure_blink`, `/dev/video2`, `roi=nano4k`, duration 20, warmup 2. The analyzer's Blink3 "expected" field is not this reader's rate.
+
+The read image: edge 1.999583 Hz, period 0.500104 s, 88 edges, duty 0.516, FFT 1.996558 Hz, SNR 899, confidence 1.0, 661 frames, 29.994 fps, ROI `272,240` 28×20. The implied edge is 6,751,406 cycles against 6,750,000. Clip: `/home/lypanov/fpga/blink-measure/20261108-disk-read/clip.mkv`.
+
+The negative load used that same box. In the blink clip the on samples average 61.2 and the off samples average 5.88. On the negative image the same box averages 5.85 and peaks at 10.3, which is the off floor. The tool reports no blink: edge 0.877 Hz against FFT 0.272 Hz, SNR 13.5, confidence 0.12. The LED stayed dark. Clip: `/home/lypanov/fpga/blink-measure/20261108-disk-neg/clip.mkv`.
+
 ### Item E — boot the 4K from the flash disk
 
 The 4K ROM holds only a bootstrap, about one block. It reads the header from `0x200000`, checks the magic, the build number and the checksum, copies the core into HyperRAM, and branches to the `Modules` body, as the book's boot loader does. From then on every instruction is fetched from HyperRAM: the core translation (`CoreMap` `coreRom`/`coreBase`, `holdForCode`) is not elaborated in this image. `SpiSector` reads sectors from the NOR instead of from the ROM.
