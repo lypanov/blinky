@@ -77,3 +77,46 @@ openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
 `measure_blink`, `roi=primer20k`, duration 30, warmup 2: `blink-measure/20261107-141912`, status blinking, edge 0.3983 Hz, FFT 0.405 Hz, trusted method edge, confidence 0.9978, 962 frames, 30.004 fps, `/dev/video2`. The expected full blink is 0.398561 Hz.
 
 Item 3 was not taken.
+
+## Block RAM (8 Nov 2026)
+
+After Proof 7, block RAM is the wall on the Nano 4K: `modules_n65536` uses 10/10. `sim/link_inner.py` reports `ROM 3930/4096 stub 20 code 3549 init 149 sector 212`. The 4096-word instruction ROM is 8 blocks (512 words of 32 bits each). The inner core's code alone is 3549 words, so the ROM cannot shrink while the core runs from it. The way out is to keep the core on a "disk" and copy it into HyperRAM at boot, as the book does. Item B tests whether the board's external SPI flash can be that disk. Items A and C are space work on the way.
+
+The Nano 4K has no distributed (LUT) RAM and its block RAM has no dual-port mode, so neither can take the register file. Registers stay in flip-flops.
+
+### Item A — count every block RAM, remove the dead ones
+
+Read the Gowin resource report for `modules_n65536` and write down what each of the 10 blocks is. Expected: 8 for `InstrRom`, the rest unknown.
+
+One suspect is already known. `CPUMinimalWrapper` always builds `RAMController`, a demo that cycles a `Gowin_SP` block (`GowinSP`). Its outputs `io_deadbeef` and `io_addr` go to `unused_deadbeef` and `unused_addr` in `gowin/blinky_top_hyperram.v` and `gowin/primer20k/blinky_top_ddr3.v`. Remove `RAMController` from both elaborations (and the ports from both tops), unless the report shows Gowin already pruned it. Check the HyperRAM IP for blocks too, and remove anything else that drives nothing.
+
+The CPU does not change, so both blink laws stay. Record block RAM, logic, and CLS before and after on both boards, then prove it as usual (sim, 4K webcam, Dock webcam). If nothing is dead, record the per-block list and stop. That list is still the result.
+
+### Item B — external SPI flash pathfinder (Nano 4K only)
+
+The question: can the Nano 4K design write the board's external NOR flash (32 Mbit, the WSON8 chip) and read it back after a fresh SRAM load? If it can, that chip becomes the 4K's disk, and the ROM can shrink to a boot loader.
+
+This is a standalone pathfinder image, not the modules image. It needs no CPU: a small state machine is enough. Rules:
+
+- Every bitstream is SRAM-loaded (`openFPGALoader ... -m`). Never use any openFPGALoader flash-writing option. The only writes to the NOR come from the FPGA design itself.
+- Before writing anything, find in the Tang Nano 4K schematic and the GW1NSR-4C pinout which pins reach the NOR. Find out whether the FPGA configures from its own internal flash or from this chip. If the chip could hold a bitstream, write only the last 4 KB sector, and stop if anything suggests that overlaps a bitstream. If the pins are the MSPI configuration pins, Gowin has an option to use them as ordinary I/O after configuration. Find and record it.
+- Use only standard SPI NOR commands: `9Fh` (JEDEC ID), `05h` (status), `06h` (write enable), `20h` (4 KB sector erase), `02h` (page program), `03h` (read).
+
+Steps, each with its own blink rate published before loading:
+
+1. Read-only. Read the JEDEC ID and blink at rate A if it is the expected part and size, dark otherwise. Record the ID.
+2. Writer image. Erase the last 4 KB sector, program one 256-byte page with a known pattern that includes a per-build number, read it back, and blink at rate B if it matches.
+3. Reader image, a separate SRAM load. Read the page and blink at rate C if the pattern and build number match, dark otherwise. A dark LED here is a real result: write it down.
+4. Negative check. Load the reader built with a different build number. It must stay dark.
+
+Simulate first with a simple SPI flash model. There is no Dock stage. The Dock has its own storage path, so say that in the write-up rather than skipping silently. A power-cycle check (unplug, replug, load the reader) needs a person and can be left for the morning.
+
+### Item C — replace the pre-armed check mask with an arm word
+
+On the `modules` and `ddr3modules` images, `checkMask` and `CheckTail` start all-ones at reset (`splitFetch`), because the image has no room for the forty zero stores. So today no self-check gates the LED. This item puts a real one back and removes the dead mask.
+
+Hardware: on those two images, drop `checkMask`, `CheckTail`, and their store compares. Add one `armed` flip-flop, cleared by reset and set only by a word store of one exact 32-bit constant to one arm address. The LED is `ledState && armed`.
+
+Software: before its delay loop, Blink5 (or the stub, whichever runs after `Modules.Load`) reads values that are known in advance: `MemLim`, `AllocPtr`, `root`, and the stack origin at 12, 16, 20, and 24, one `DIV` and `MOD` result, and a checksum of Blink5's own placed code that the linker computes. It combines their differences from the expected values into the stored word, so only all-correct values produce the constant. A skipped or wrong check stores a different word, and the LED stays dark. `ASSERT`s may be added as well, but the arm word is what gates the LED.
+
+Proof: sim, 4K, and Dock, as usual. The extra instructions run before the loop, so only the first edge moves and the period formula stays. Also prove the negative: an image with one expected value deliberately wrong must stay dark in simulation, and on the 4K if time allows. Record the logic and CLS freed on the 4K.
