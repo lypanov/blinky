@@ -43,6 +43,8 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
   cpu.io.memReadData := memoryController.io.cpuReadData
   // Block RAM has no wait states. The FPGA wrappers tie this the same way.
   cpu.io.memStall := false.B
+  // These tests have no NOR. The non-flash FPGA wrapper ties MISO the same way.
+  cpu.io.spiMiso := false.B
   
   // Connect outputs
   io.r0 := cpu.io.r0
