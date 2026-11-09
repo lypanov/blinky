@@ -407,6 +407,8 @@ sim/obj_dir_disk/
 sim/obj_dir_video/
 sim/obj_dir_video_sq/
 gowin/ip/hpram/video_mode.vh
+gowin/primer20k/video_mode.vh
+gowin/primer20k/ddr3_hdmi.cst
 sim/obj_dir_sector/
 sim/obj_dir_modules_split/
 sim/inner-core/

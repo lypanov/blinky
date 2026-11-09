@@ -26,7 +26,7 @@
 #   FPGA_IMAGE=ddr3pd BOARD=primer20k tools/gowin_build.sh     # that port plus the P-chain and D-chain fixups
 #   FPGA_IMAGE=ddr3moddesc BOARD=primer20k tools/gowin_build.sh  # that port plus ModDesc and a procedure call
 #   FPGA_IMAGE=ddr3files BOARD=primer20k tools/gowin_build.sh    # that port plus Files, two .rsc images, and Load of Blink5
-#   FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # placed Blink5 body, fetched from DDR3 (N=65536)
+#   FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # placed Blink5 body, fetched from DDR3 (N=65536), screen flashes with the LED
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -552,6 +552,31 @@ case "$BOARD" in
     LOAD_HINT="tools/sram_load.sh -b tangnano4k $FS"$'\n'"  openFPGALoader -b tangnano4k -m $FS"
     ;;
   primer20k|tangprimer20k)
+    if [[ -z "${VIDEO_MODE:-}" ]]; then
+      VIDEO_MODE=off
+      if [[ "$FPGA_IMAGE" == "ddr3modules" ]]; then
+        VIDEO_MODE=flash
+      fi
+    fi
+    case "$VIDEO_MODE" in
+      off) ;;
+      flash)
+        if [[ "$FPGA_IMAGE" != "ddr3modules" ]]; then
+          echo "error: flash video is the ddr3modules image only (FPGA_IMAGE=$FPGA_IMAGE)" >&2
+          exit 1
+        fi
+        ;;
+      square|text)
+        echo "error: VIDEO_MODE=$VIDEO_MODE is a later step" >&2
+        exit 1
+        ;;
+      *)
+        echo "error: VIDEO_MODE=$VIDEO_MODE" >&2
+        exit 1
+        ;;
+    esac
+    export VIDEO_MODE
+    echo "==> VIDEO_MODE=$VIDEO_MODE"
     echo "==> Gowin syn+PNR (GW2A-LV18PG256C8/I7 Dock) out=$GOWIN_OUT_NAME"
     mkdir -p "$ROOT/gowin/primer20k/impl"
     cd "$ROOT/gowin/primer20k"

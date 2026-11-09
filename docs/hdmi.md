@@ -68,7 +68,25 @@ The stock analyzer measures red minus green, which is zero on both of these fiel
 
 ## Step 3 — Dock: full-screen flash
 
-The same as step 1, on the Dock's HDMI pins (`docs/primer20k/board-notes.md`, "HDMI / DVI-TX"). The NESTang demo already proved this port and the capture path on 3 Nov. Also build the 4K at `square` and record its size.
+The same as step 1, on the Dock's HDMI pins (`docs/primer20k/board-notes.md`, "HDMI / DVI-TX"). The screen is white while the LED is on and black while it is off, from `cpu_led`, which is already `ledState && armed`. Square is the next step. The DDR3 PLL is unchanged.
+
+Measured, `ddr3modules` N=65536, SRAM load on bus 003:078 (`-m` only). Idcode `0x81b`, GW2A-18. Bus 003:081 is the Nano and stayed on the square image. Nothing was written to flash.
+
+Pins, from the Dock schematic and the NESTang v0.4 constraints: clock G16/H15, channel 0 H14/H16, channel 1 J15/K16, channel 2 K14/K15. Bank 0 is 3.3 V, so the pairs are LVCMOS33D, drive 8, no pull. `TLVDS_OBUF` rejects that IO type. The serializer drives the positive port, and both balls of the pair are constrained on that port. The negative port is tied off.
+
+Gowin replaces the pin file when a second cst is added. Flash mode writes one file from `ddr3.cst` plus the HDMI constraints and adds only that file. The placed report names `ddr3_hdmi.cst`. Clock is H11, the blink pin is L14, and the DDR3 balls stay SSTL15.
+
+The pixel clock is the 27 MHz port. The serializer is a second rPLL at 135 MHz (FBDIV 4, ODIV 4, VCO 540). The DDR3 rPLL stays at 387 MHz out and 96.75 MHz for `pclk`. Two rPLLs of four.
+
+The blink count is the 1-port bridge law. The store added 174 cycles, so the edge is `466*N+780`. At the Dock CPU clock, 24.1875 MHz, those 174 cycles are 7 µs. N=65536 is an edge every 1.26266 s, a full blink of 0.39598 Hz. The delay word is `60000001H`. The older `576*N+788` count is the 2-port image, in controller clocks. The stand-in does not finish this image's clear loop, and the PHY run is reserved for a DDR3 failure, so that constant was left as published.
+
+Place: logic 5141/20736 (25%; 4661 LUT, 480 ALU), registers 2334/16173, CLS 3588/10368 (35%), block RAM 8/46, OSER10 4, rPLL 2/4. Setup TNS is 0. The worst setup slack is +1.251 ns. `pclk` Fmax is 110.070 MHz against 96.749. `cpu_clk` Fmax is 26.587 MHz against 24.187.
+
+The 4K square place, rebuilt and left unloaded: logic 3779/4608 (82%; 3457 LUT, 322 ALU), CLS 2161/2304 (94%, 143 free), block RAM 4/10. Same counts as step 2. Setup violations 0.
+
+The first SRAM load stayed in DDR3 training. UART on FTDI channel B, 115200 8N1: `F` was `4B`, PC `0080`, and L14 stayed dark. The load that was measured trained. `F` is `AB`, the mask is `FFFFFFFFFF`, and the PC walks the delay loop (`2214` through `2238`).
+
+Capture card UGREEN 15389, `/dev/video0`. Before that load the card showed the Nano's square on green noise, then a flat black field while training held. After it, the field is black (3,3,3) or white (209,209,209) across the whole frame. Six rising edges give five periods, each 151 or 152 frames at 60 fps. The mean period is 2.523 s, 0.3963 Hz. Same run, webcam `/dev/video2`, the Dock LED near (320, 52): eleven halves, ten of 19 frames and one of 18, at 15 fps. The mean half is 1.261 s, 0.3965 Hz. The two rates differ by under 0.1%. Against 0.39598 Hz the screen is 0.08% off. The Nano LED in the same frame, near (206, 192), keeps its own half of about 1.17 s. Clips: `/home/lypanov/fpga/blink-measure/hdmi-dock-flash-screen-fcf0/clip.mkv` and `/home/lypanov/fpga/blink-measure/hdmi-dock-flash-led-fcf0/clip.mkv`.
 
 ## Step 4 — Dock: the square
 

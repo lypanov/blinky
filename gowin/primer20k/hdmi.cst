@@ -1,0 +1,19 @@
+// Primer 20K Dock HDMI, J3. Pairs are TMDS and AC-coupled.
+// Balls agree between the Sipeed HDMI example and NESTang v0.4.
+// The positive port carries both locs. LVCMOS33D is the type NESTang
+// placed on these balls (3.3 V bank). TLVDS_OBUF will not take it,
+// so the serializer bit drives this port and the IO standard makes
+// the pair.
+//   clock  G16 / H15
+//   data0  H14 / H16
+//   data1  J15 / K16
+//   data2  K14 / K15
+
+IO_LOC "tmds_clk_p" G16,H15;
+IO_PORT "tmds_clk_p" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8;
+IO_LOC "tmds_d_p[0]" H14,H16;
+IO_PORT "tmds_d_p[0]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8;
+IO_LOC "tmds_d_p[1]" J15,K16;
+IO_PORT "tmds_d_p[1]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8;
+IO_LOC "tmds_d_p[2]" K14,K15;
+IO_PORT "tmds_d_p[2]" IO_TYPE=LVCMOS33D PULL_MODE=NONE DRIVE=8;

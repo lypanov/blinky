@@ -29,6 +29,8 @@ if {$vmode ne "off" && $vmode ne "flash" && $vmode ne "square"} {
   exit 1
 }
 set vh [open [file join $IP video_mode.vh] w]
+puts $vh "`ifndef VIDEO_MODE_INCLUDED"
+puts $vh "`define VIDEO_MODE_INCLUDED"
 if {$vmode eq "flash"} {
   puts $vh "`define VIDEO_ON"
 } elseif {$vmode eq "square"} {
@@ -37,6 +39,7 @@ if {$vmode eq "flash"} {
 } else {
   puts $vh "// VIDEO_MODE=off"
 }
+puts $vh "`endif"
 close $vh
 
 set_option -include_path $IP

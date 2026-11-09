@@ -23,9 +23,9 @@ static uint32_t cpu_reg(VCPUSimTop* top, int i) {
 }
 
 static uint64_t cpu_mask(VCPUSimTop* top) {
-  auto* r = top->rootp;
-  // 8, 28, or 40 bits depending on which image was elaborated.
-  return r->CPUSimTop__DOT__cpu__DOT__checkMask;
+  // The arm result is the wrapper port. The old internal checkMask
+  // register is not in this netlist.
+  return top->io_mask;
 }
 
 int main(int argc, char** argv) {

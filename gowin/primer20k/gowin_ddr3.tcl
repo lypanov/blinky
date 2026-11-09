@@ -19,8 +19,47 @@ add_file -type verilog [file join $HERE ddr3 gowin_clkdiv.v]
 add_file -type verilog [file join $HERE ddr3 ddr3_controller.v]
 add_file -type verilog [file join $HERE ddr3_port_test.v]
 add_file -type verilog [file join $GOWIN ip gowin_sp.v]
-add_file -type cst     [file join $HERE ddr3.cst]
 add_file -type sdc     [file join $HERE ddr3.sdc]
+
+# off or flash. Square and text are later steps. The modules image
+# defaults to flash in tools/gowin_build.sh.
+set vmode "off"
+if {[info exists ::env(VIDEO_MODE)] && $::env(VIDEO_MODE) ne ""} {
+  set vmode $::env(VIDEO_MODE)
+}
+if {$vmode ne "off" && $vmode ne "flash"} {
+  puts stderr "error: VIDEO_MODE=$vmode is not this step"
+  exit 1
+}
+set vh [open [file join $HERE video_mode.vh] w]
+if {$vmode eq "flash"} {
+  puts $vh "`ifndef VIDEO_MODE_INCLUDED"
+  puts $vh "`define VIDEO_MODE_INCLUDED"
+  puts $vh "`define VIDEO_ON"
+  puts $vh "`define VIDEO_DOCK"
+  puts $vh "`endif"
+  add_file -type verilog [file join $GOWIN video.v]
+  # A second add_file cst replaces the first. One file has to carry
+  # the DDR3 balls and the HDMI balls.
+  set combo [file join $HERE ddr3_hdmi.cst]
+  set in [open [file join $HERE ddr3.cst] r]
+  set body [read $in]
+  close $in
+  set in [open [file join $HERE hdmi.cst] r]
+  append body "\n" [read $in]
+  close $in
+  set out [open $combo w]
+  puts -nonewline $out $body
+  close $out
+  add_file -type cst $combo
+} else {
+  add_file -type cst [file join $HERE ddr3.cst]
+  puts $vh "`ifndef VIDEO_MODE_INCLUDED"
+  puts $vh "`define VIDEO_MODE_INCLUDED"
+  puts $vh "// VIDEO_MODE=off"
+  puts $vh "`endif"
+}
+close $vh
 
 set_option -top_module blinky_top_ddr3
 set_option -verilog_std sysv2017

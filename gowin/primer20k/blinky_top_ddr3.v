@@ -1,4 +1,5 @@
 `include "ddr3_eye.vh"
+`include "video_mode.vh"
 // ModDesc, Files, and Modules use the same holds as the P/D image.
 // The new blocks are not spins. A failed compare still sits on 0x1D8C.
 `ifdef DDR3_MODULES
@@ -17,9 +18,9 @@
 // Dock user LEDs are active-low. CPU io_led is active-high, so invert
 // onto L14. That is the only LED in the webcam cluster that moves.
 // A failed prologue compare leaves it dark. UART TX is M11.
-// HDMI, JTAG, and MSPI stay off this design.
-//
-// SRAM-load only. Do not flash.
+// JTAG and MSPI stay off this design. Flash mode paints the whole
+// screen from cpu_led, which is already the armed blink. Square is
+// a later step. SRAM-load only. Do not flash.
 //
 // The command-port proof (define DDR3_PORT_TEST) blinked L14 at
 // 0.720844 Hz. This build is the CPU prologue. The steady blink is
@@ -58,6 +59,11 @@ module blinky_top_ddr3 (
   inout  [15:0] DDR3_DQ,
   inout  [1:0]  DDR3_DQS,
   output        uart_tx
+`ifdef VIDEO_ON
+  ,
+  output        tmds_clk_p,
+  output [2:0]  tmds_d_p
+`endif
 );
   wire fclk;
   wire pclk;
@@ -722,6 +728,18 @@ module blinky_top_ddr3 (
     .debug        (unused_debug)
   );
   assign DDR3_A[13] = 1'b0;
+
+`ifdef VIDEO_ON
+  // cpu_led is high while the armed LED is on. The pin is the inverse.
+  video u_video (
+    .clk27      (Clock),
+    .led        (cpu_led),
+    .tmds_clk_p (tmds_clk_p),
+    .tmds_clk_n (),
+    .tmds_d_p   (tmds_d_p),
+    .tmds_d_n   ()
+  );
+`endif
 
 `ifdef DDR3_PORT_TEST
   // L14 blinks at 0.720844 Hz only after a passing attempt. C13 stays

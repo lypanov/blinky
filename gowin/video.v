@@ -1,7 +1,13 @@
-// One video module. The build switch is VIDEO_ON / VIDEO_SQUARE,
-// written by the HyperRAM Tcl from VIDEO_MODE. Flash is timing and
-// the TMDS pins. Square adds the 32×24 screen and includes flash.
-// Text is a later mode of this same module; it is not elaborated.
+// One video module. The build switch is VIDEO_ON / VIDEO_SQUARE /
+// VIDEO_DOCK, written into video_mode.vh from VIDEO_MODE. Flash is
+// timing and the TMDS pins. Square adds the 32×24 screen and includes
+// flash. Text is a later mode of this same module; it is not elaborated.
+// VIDEO_DOCK is the Primer 20K: an rPLL instead of the Nano's PLLVR.
+// The pixel clock is still the 27 MHz port, and the serializer is 5×.
+
+`ifndef VIDEO_SIM
+`include "video_mode.vh"
+`endif
 //
 // The Nano 4K has two PLLVR (DS861). HyperRAM already uses one, and
 // its spare outputs are 54, 27, and 18 MHz, not a 5× pixel clock.
@@ -67,13 +73,57 @@ module video (
   wire pll_lock;
   wire pix = clk27;
 
-  // 27 * 5 = 135. ODIV 4 puts the VCO at 540 MHz.
+  // 27 * 5 = 135. On the Nano, ODIV 4 puts the PLLVR VCO at 540.
+  // On the Dock the rPLL's CLKOUT is fin*(FBDIV+1)/(IDIV+1), the same
+  // formula as the DDR3 PLL, so FBDIV 4 is 135 MHz and ODIV 4 keeps
+  // the VCO at 540.
   wire clkoutp_unused;
   wire clkoutd_unused;
   wire clkoutd3_unused;
   wire pll_vcc = 1'b1;
   wire pll_gnd = 1'b0;
 
+`ifdef VIDEO_DOCK
+  rPLL u_pll (
+    .CLKOUT   (serial_clk),
+    .LOCK     (pll_lock),
+    .CLKOUTP  (clkoutp_unused),
+    .CLKOUTD  (clkoutd_unused),
+    .CLKOUTD3 (clkoutd3_unused),
+    .RESET    (pll_gnd),
+    .RESET_P  (pll_gnd),
+    .CLKIN    (clk27),
+    .CLKFB    (pll_gnd),
+    .FBDSEL   ({pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .IDSEL    ({pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .ODSEL    ({pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .PSDA     ({pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .DUTYDA   ({pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .FDLY     ({pll_gnd, pll_gnd, pll_gnd, pll_gnd})
+  );
+  defparam u_pll.FCLKIN = "27";
+  defparam u_pll.DYN_IDIV_SEL = "false";
+  defparam u_pll.IDIV_SEL = 0;
+  defparam u_pll.DYN_FBDIV_SEL = "false";
+  defparam u_pll.FBDIV_SEL = 4;
+  defparam u_pll.DYN_ODIV_SEL = "false";
+  defparam u_pll.ODIV_SEL = 4;
+  defparam u_pll.PSDA_SEL = "0000";
+  defparam u_pll.DYN_DA_EN = "false";
+  defparam u_pll.DUTYDA_SEL = "1000";
+  defparam u_pll.CLKOUT_FT_DIR = 1'b1;
+  defparam u_pll.CLKOUTP_FT_DIR = 1'b1;
+  defparam u_pll.CLKOUT_DLY_STEP = 0;
+  defparam u_pll.CLKOUTP_DLY_STEP = 0;
+  defparam u_pll.CLKFB_SEL = "internal";
+  defparam u_pll.CLKOUT_BYPASS = "false";
+  defparam u_pll.CLKOUTP_BYPASS = "false";
+  defparam u_pll.CLKOUTD_BYPASS = "false";
+  defparam u_pll.DYN_SDIV_SEL = 2;
+  defparam u_pll.CLKOUTD_SRC = "CLKOUT";
+  defparam u_pll.CLKOUTD3_SRC = "CLKOUT";
+  defparam u_pll.DEVICE = "GW2A-18C";
+`else
   PLLVR u_pll (
     .CLKOUT   (serial_clk),
     .LOCK     (pll_lock),
@@ -114,6 +164,7 @@ module video (
   defparam u_pll.CLKOUTD_SRC = "CLKOUT";
   defparam u_pll.CLKOUTD3_SRC = "CLKOUT";
   defparam u_pll.DEVICE = "GW1NSR-4C";
+`endif
 `endif
 
   // 640×480, 800×525. Sync pulses are negative: the control bit is 0
@@ -304,11 +355,19 @@ module video (
   defparam u_clk.GSREN = "false";
   defparam u_clk.LSREN = "false";
 
+`ifdef VIDEO_DOCK
+  // The Dock bank is 3.3 V. LVCMOS33D on the positive port makes the
+  // pair, the same IO type NESTang placed on these balls. TLVDS_OBUF
+  // rejects that type.
+  assign tmds_clk_p = ser_clk;
+  assign tmds_clk_n = 1'b0;
+`else
   TLVDS_OBUF u_clk_buf (
     .I  (ser_clk),
     .O  (tmds_clk_p),
     .OB (tmds_clk_n)
   );
+`endif
 
   wire [9:0] q_ch [0:2];
 `ifdef VIDEO_SQUARE
@@ -337,11 +396,16 @@ module video (
       defparam u_ser.GSREN = "false";
       defparam u_ser.LSREN = "false";
 
+`ifdef VIDEO_DOCK
+      assign tmds_d_p[gi] = ser[gi];
+      assign tmds_d_n[gi] = 1'b0;
+`else
       TLVDS_OBUF u_buf (
         .I  (ser[gi]),
         .O  (tmds_d_p[gi]),
         .OB (tmds_d_n[gi])
       );
+`endif
     end
   endgenerate
 `endif
