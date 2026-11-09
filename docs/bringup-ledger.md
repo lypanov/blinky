@@ -1,22 +1,42 @@
 # Bring-up ledger
 
-Ranked cuts on the Nano 4K. Three passes (the Logger, the register-file read mux, and the shifter) produced five options. This is that ranking.
+The Nano 4K space list, and a record of the work that got the 4K its room. One numbered list, like `docs/todo.md`. Each item says whether it is done or open. Results are in the "Item N, measured" sections below, in number order.
 
-CLS is the scarce resource: about 2173/2304 used (95%), 131 free. The figures are from the `modules_n262144` synthesis tree and netlist.
+**When a to-do does not fit on the Nano 4K:** take the open items, lowest number first. Items marked "later" are not taken unless the maintainer says so.
 
-The Logger, one register-file cut, and one shifter are different logic and can be stacked. The two register-file options are one mux, and the two shifter options are one barrel. Picking both of a pair counts that logic twice.
+Items 4–8 were lettered A–E until 9 Nov 2026. Older text, including the measured sections, still uses the letters. Item 9 was 4 and item 10 was 5.
 
-1. Omit the Logger on the 4K. Largest easy cut that leaves both blink laws alone: about 175 CLS, and 209 LUT plus 68 ALU (about 277 logic cells). Free CLS goes from 131 to about 306. Placed logic goes to about 80%. Easy. `103*N+142` and `576*N+788` stay as they are. The Dock training UART is a different block and stays. The trap is a shared generated wrapper: drop the Logger on the 4K elaboration only, and leave the Dock UART in place.
+CLS is the scarce resource on the 4K. After item 3 and the HDMI square (`docs/hdmi.md`, step 2), the 4K place is CLS 2161/2304 (143 free), block RAM 4/10. Estimates below came from the netlists of their day; re-measure before relying on one.
 
-2. Cut the register file to a same-cycle 2-port read. The other easy cut that leaves the blink laws alone. All 16 registers stay, and the compiler does not change. About 128 CLS and 256 LUT3 (about 480 cells). Easy. No instruction reads three registers. The 27 MHz path still runs through a port that remains.
+1. Omit the Logger on the 4K. Done. About 175 CLS. The Dock training UART is a different block and stays.
 
-3. Time-multiplex a 1-port register file. This frees the most CLS and sits behind the easy cuts. About 256 CLS and 512 LUT3 (about 960 cells). Medium, because the pipeline has to hold PC and chainFix until the read commits. The skip loop becomes about `105*N+146`. The full blink is still about 0.49 Hz.
+2. Cut the register file to a same-cycle 2-port read. Done. 32 CLS measured. All 16 registers stay, and the compiler does not change.
 
-4. Replace the 5-stage barrel with a 1-bit-per-clock shifter. Smaller CLS return than the 1-port file, same kind of effort, and the blink slope is unchanged. About 110–150 CLS and 250–280 LUT (about 95% CLS down to about 89% if that CLS comes back). Medium. The 4K netlist elaborates only the slow shifter. chainFix has to treat a pending shift like a memory stall. The delay loop does not shift.
+3. Time-multiplex a 1-port register file. Done. 43 CLS measured on the flash-boot image. The blink law became `466*N+606`.
 
-5. A 4-bit-per-clock shifter is last. The same medium change, for less area: about 90–120 CLS and 190–220 LUT. The blink slope is unchanged.
+4. Count every block RAM and remove the dead ones. Done. Nothing was dead: 8 pROM for the instruction ROM, 2 inside the encrypted HyperRAM controller.
 
-Among the easy cuts that keep both blink laws, omitting the Logger frees the most CLS.
+5. External SPI flash pathfinder. Done. The 4K design can write its Puya P25Q32 NOR and read it back after a fresh SRAM load.
+
+6. Replace the pre-armed check mask with an arm word. Done. The LED arms only when Blink5 stores a word computed from its checks.
+
+7. The disk image builder, and the host writes the 4K's flash disk. Done. `tools/build_disk_image.py` and openFPGALoader, inside `0x200000`–`0x3FFFFF`.
+
+8. Boot the 4K from the flash disk. Done. The ROM is a 102-word bootstrap. Block RAM went from 10/10 to 3/10.
+
+9. Replace the 5-stage barrel with a 1-bit-per-clock shifter. Smaller CLS return than the 1-port file, same kind of effort, and the blink slope is unchanged. About 110–150 CLS and 250–280 LUT (about 95% CLS down to about 89% if that CLS comes back). Medium. The 4K netlist elaborates only the slow shifter. chainFix has to treat a pending shift like a memory stall. The delay loop does not shift. Open.
+
+10. A 4-bit-per-clock shifter is last. The same medium change, for less area: about 90–120 CLS and 190–220 LUT. The blink slope is unchanged. Open.
+
+11. Retire the old step images from the CPU. Open. The work is `docs/todo.md` item 23. The CPU source still carries every past bring-up step (the 0x10/0x50 LED snoop, the patch table, the single fetch at 0x1F00, the zero-store checks, the ROM address translation). The 4K build switches most of them off, so the saving is mainly a simpler CPU that is easier to shrink. Measure what it frees anyway.
+
+12. Shifts on the hardware multipliers. Open, after `MUL` (`docs/todo.md` item 27). The GW1NSR-4C has 16 unused 18×18 multipliers. One 32×32→64 unsigned multiply does all three shifts: left by n is the low word of `x × 2ⁿ`, right by n is the high word of `x × 2³²⁻ⁿ`, rotate is the two ORed, and an arithmetic right shift inverts, shifts, and inverts back for negative x. A small table turns n into 2ⁿ. Replaces the 5-stage barrel. Estimate 60–100 CLS net. An alternative to 9 and 10.
+
+13. A 24-bit PC and address path. Open. Wirth's own RISC5 does this. The PC, the branch adders, and the address compares shrink from 32 to 24 bits. I/O stays at the top of the address space, decoded from the top bits as in the book. The compiler does not change. Estimate 20–40 CLS.
+
+14. `DIV` in Oberon on the 4K. Open. Remove the hardware divider from the 4K build. `DIV` traps to a short Oberon routine that divides in software. The `.rsc` files stay the same on both boards: the Dock keeps its hardware divider. Slower division on the 4K only. The delay loop does not divide.
+
+15. Sweep Gowin's synthesis and place-and-route settings. Later. A script tries placement, packing, and resource-sharing settings and records CLS. No design risk, but the gain is unknown.
 
 ## Item 1, measured
 
@@ -78,13 +98,41 @@ openFPGALoader --busdev-num 003:078 -b tangprimer20k -m \
 
 Item 3 was not taken.
 
-## Block RAM (8 Nov 2026)
+## Item 3, measured
+
+The register file has one read port. All 16 registers stay. A store, and an F0 op other than MOV H, reads twice: the first cycle latches Rb and holds PC, and the commit cycle reads Ra or Rc. chainFix does not overlay the next instruction until that commit. The instruction ROM is synchronous, so the held word is written back through the ROM overlay. A sector scan can still take the ROM. The body stays ready across the extra cycle.
+
+The period was fixed before either board was trusted. Verilator of the flash-boot modules image, on the bridge clock, gives edges at PC `0x2070`, mask `ffffffffff`, R5 0, R9 0, not halted:
+
+| N | period | edges |
+| --- | --- | --- |
+| 5 | 2936 | 12382736, 12385672, 12388608 |
+| 6 | 3402 | 12383202, 12386604, 12390006 |
+| 8 | 4334 | 12384134, 12388468, 12392802 |
+
+That is `466*N+606`. The previous law was `462*N+598`. The skip iteration gained 4 bridge cycles and the toggle gained 12, which is the half-clock form of the old `105*N+146` guess. For `N=65536` the edge is 30,540,382 cycles. At 27 MHz that is an edge every 1.131125 s, a full blink of 0.442038 Hz. At the Dock's 24.187 MHz the same count is 0.395984 Hz.
+
+The Blink2 mill image, block RAM, N=5, is not this law. Its edges are 117, 97, 97. The steady edge is 97 (four skips of 17 and one toggle of 29). The three-sample average is 103, was 89.
+
+The N=65536 disk is the one already on the NOR: checksum `0x8A0987D4`, arm word `0x2B158A31`, 17928 bytes. Nothing was written to flash.
+
+The Nano place at 16:42 (Europe/Amsterdam), `modules_n65536`. Logic 3648/4608 (80%; 3351 LUT, 297 ALU), was 3871/4608 on the item E place. Registers 1889/3612 (1884 FF), was 1791. CLS 2121/2304 (93%, 183 free), was 2164/2304 (140 free). BSRAM 3/10. `cpu_clk` Fmax 15.931 MHz against 13.500 (level 24). Setup TNS 0.000, 0 endpoints, worst slack +2.597 ns. SRAM load was bus 3 address 081 only. `write to ram`, CRC check Success. Device 078 was not opened for that load.
+
+The auto `roi=nano4k` box missed the LED. The same clip, manual box `290,190` 50×50 on the LED: edge 0.427067 Hz, FFT 0.416 Hz, confidence 0.9979, 20 edges, duty 0.515. Against 0.442038 Hz that is the same slow fraction as item E (0.431/0.4459). The LED was not dark. Clip: `/home/lypanov/fpga/blink-measure/20261109-164355/clip.mkv`.
+
+The Dock place of the same netlist with `route_option 1` fits. Logic 5112/20736 (25%; 4652 LUT, 460 ALU), CLS 3541/10368 (35%), registers 2302, BSRAM 8/46. `pclk` Fmax 100.444 MHz against 96.749, worst slack +0.380 ns. `cpu_clk` Fmax 30.038 MHz against 24.187. Setup and hold TNS 0.000. SRAM load was bus 3 address 078 only. The user LED stayed dark. The training UART, FTDI channel B, 115200 8N1, stayed on `..0080` with F `4B`, G `0000`, E0 `FFFF`. That is the route that holds the CPU, not a DDR3 protocol failure. The Micron bench was not run through the LED edges. It had already calibrated (`done=1` at pclk 1984, wstep `1a/1a`) and was stopped there.
+
+`route_option 2` of that same netlist placed at 17:01 (Europe/Amsterdam). Logic, CLS, registers, and BSRAM are unchanged. `pclk` Fmax 109.125 MHz against 96.749, worst slack +1.172 ns. `cpu_clk` Fmax 29.414 MHz against 24.187 (level 25). Setup TNS 0.000, 0 endpoints. SRAM load was bus 3 address 078 only, `write to ram`. The Nano was not opened for that load.
+
+Webcam `/dev/video2`, duration 32, warmup 4, manual box `296,28` 40×40 on the upper LED. Edge 0.396158 Hz, FFT 0.382 Hz, confidence 0.998, 27 edges, duty 0.505. Against 0.395984 Hz the edge is 0.04% high. In the same clip the Nano LED is 0.427 Hz, so the two boards are not the same spot. The LED was not dark. Clip: `/home/lypanov/fpga/blink-measure/20261109-1702-dock-r2/clip.mkv`. The training UART on this image still printed `..0080` with F `4B`. The user LED is the measurement. `tools/gowin_build.sh` now defaults the modules Dock image to `route_option 2`.
+
+## Items 4–6: block RAM (8 Nov 2026)
 
 After Proof 7, block RAM is the wall on the Nano 4K: `modules_n65536` uses 10/10. `sim/link_inner.py` reports `ROM 3930/4096 stub 20 code 3549 init 149 sector 212`. The 4096-word instruction ROM is 8 blocks. Each block is a 4-bit pROM of all 4096 words (item A), not a 512-word slice of the 32-bit word. The inner core's code alone is 3549 words, so the ROM cannot shrink while the core runs from it. The way out is to keep the core on a "disk" and copy it into HyperRAM at boot, as the book does. Item B tests whether the board's external SPI flash can be that disk. Items A and C are space work on the way.
 
 The Nano 4K has no distributed (LUT) RAM and its block RAM has no dual-port mode, so neither can take the register file. Registers stay in flip-flops.
 
-### Item A — count every block RAM, remove the dead ones
+### Item 4 (was A) — count every block RAM, remove the dead ones
 
 Read the Gowin resource report for `modules_n65536` and write down what each of the 10 blocks is. Expected: 8 for `InstrRom`, the rest unknown.
 
@@ -92,7 +140,7 @@ One suspect is already known. `CPUMinimalWrapper` always builds `RAMController`,
 
 The CPU does not change, so both blink laws stay. Record block RAM, logic, and CLS before and after on both boards, then prove it as usual (sim, 4K webcam, Dock webcam). If nothing is dead, record the per-block list and stop. That list is still the result.
 
-### Item A, measured
+### Item 4, measured
 
 Nothing among the ten blocks is dead. The source is unchanged. Before and after are the same packs, because nothing was removed.
 
@@ -108,7 +156,7 @@ The Dock report is the same image, `ddr3modules_n65536`. Logic 5257/20736 (26%; 
 
 The CPU is unchanged, so both blink laws stay the Proof 7 laws. This item did not re-simulate and did not reload either board. The standing Nano clip is `/home/lypanov/fpga/blink-measure/20261108-nano-modules/clip.mkv`, edge 0.430473 Hz, against 0.4459 Hz at 27 MHz. The standing Dock clip is `/home/lypanov/fpga/blink-measure/20261108-dock-eye/clip.mkv`, edge 0.397984 Hz, against 0.3995 Hz.
 
-### Item B — external SPI flash pathfinder (Nano 4K only)
+### Item 5 (was B) — external SPI flash pathfinder (Nano 4K only)
 
 The question: can the Nano 4K design write the board's external NOR flash (32 Mbit, the WSON8 chip) and read it back after a fresh SRAM load? If it can, that chip becomes the 4K's disk, and the ROM can shrink to a boot loader.
 
@@ -127,7 +175,7 @@ Steps, each with its own blink rate published before loading:
 
 Simulate first with a simple SPI flash model. There is no Dock stage. The Dock has its own storage path, so say that in the write-up rather than skipping silently. A power-cycle check (unplug, replug, load the reader) needs a person and can be left for the morning.
 
-### Item B, measured
+### Item 5, measured
 
 The external NOR can be the 4K's disk. A fresh SRAM load read back the page the previous image had written. The Dock was not loaded. Its storage path is the DDR3 image, and this pathfinder does not use it. A power-cycle of the reader is left for the morning. `oberon/src/Modules.Mod` was not edited.
 
@@ -192,7 +240,7 @@ Rate A is the JEDEC record: the image blinks only for `85 60 16`, and the board 
 
 The negative load used the same camera box as the lit LED (`268,240`, 30×24) so the detector would not hunt another lamp. In the three blink clips that box peaks near 62 and averages about 31. On the negative image it peaks at 0.644 and averages 0.189. The tool's headline 7.11 Hz has confidence 0.35, FFT SNR 2.9, and the warning that the on/off gap is small. That is the noise floor. The LED stayed dark. Clip: `/home/lypanov/fpga/blink-measure/20261108-spi-neg/clip.mkv`.
 
-### Item C — replace the pre-armed check mask with an arm word
+### Item 6 (was C) — replace the pre-armed check mask with an arm word
 
 On the `modules` and `ddr3modules` images, `checkMask` and `CheckTail` start all-ones at reset (`splitFetch`), because the image has no room for the forty zero stores. So today no self-check gates the LED. This item puts a real one back and removes the dead mask.
 
@@ -202,7 +250,7 @@ Software: before its delay loop, Blink5 (or the stub, whichever runs after `Modu
 
 Proof: sim, 4K, and Dock, as usual. The extra instructions run before the loop, so only the first edge moves and the period formula stays. Also prove the negative: an image with one expected value deliberately wrong must stay dark in simulation, and on the 4K if time allows. Record the logic and CLS freed on the 4K.
 
-### Item C, measured
+### Item 6, measured
 
 The LED on `modules` and `ddr3modules` arms only when a word store of `0xA11C0DE5` lands at `0x7C0`. `checkMask` and `CheckTail` are gone on those two images. One flip-flop starts clear. The pin is `ledState && armed`, and `dbgMask` is `40'hffffffffff` once that store hits and zero until then. Every other image keeps the zero-store mask. `oberon/src/Modules.Mod` was not edited.
 
@@ -235,7 +283,7 @@ C.222C FFFFFFFFFF 00000000 00001117 000080D0 000010F9 00000000 00000000 000D 000
 
 Webcam `measure_blink`, `roi=primer20k`, duration 32, warmup 2, filmed after that capture: `/home/lypanov/fpga/blink-measure/20261108-arm-dock`, status blinking, edge 0.397817 Hz, period 2.513717 s, 26 edges, duty 0.514, FFT 0.405 Hz, SNR 440, confidence 0.9977, 962 frames, 30.002 fps, ROI `328,71` 26×29. Against 0.3995 Hz that is the same match as the Proof 7 Dock clip (0.397984 Hz). Clip: `/home/lypanov/fpga/blink-measure/20261108-arm-dock/clip.mkv`.
 
-## The flash disk (decided 8 Nov 2026)
+## Items 7–8: the flash disk (decided 8 Nov 2026)
 
 Item B showed the Nano 4K design can use its external NOR. The maintainer has narrowed the flash rule for this one use (see `AGENTS.md`, "Loading boards"): openFPGALoader may write a data file to the 4K's external NOR, inside `0x200000`–`0x3FFFFF`, and nothing else. A `modules_n65536.fs` is about 1.77 MB, so a bitstream at address 0 would end below `0x200000`. The board boots from its internal flash in any case.
 
@@ -243,7 +291,7 @@ The plan: an image builder on the host makes the disk, openFPGALoader writes it,
 
 Item C (the arm word) comes first, so that a wrong or stale disk keeps the LED dark.
 
-### Item D — the disk image builder, and the host writes the disk
+### Item 7 (was D) — the disk image builder, and the host writes the disk
 
 Builder: a new `tools/build_disk_image.py` that reuses `sim/link_inner.py`'s layout and writes `disk.bin`. The image starts with a header: a magic word, a format version, a build number, the length, and a checksum over everything after the header. After the header come the inner core image (the code and the initial data the stub copies today), then the sector pages the core reads through `SpiSector` (today's directory, `AMemoryMappedToggle.rsc` and `Blink5.rsc`). Write the layout down in this section. Item E's bootstrap and the sector reader both depend on it.
 
@@ -281,7 +329,7 @@ Then, in order: `core_bytes` of the packed code (the ROM slice the stub executes
 
 This image is 17928 bytes and ends at `0x204608`. Code starts at flash `0x200038`, the init stream at `0x2037AC`, sector 29 at `0x203A08`, sector 58 at `0x203E08`, sector 87 at `0x204208`. Item E reads the directory and adds those sizes; the addresses move if the core grows.
 
-### Item D, measured
+### Item 7, measured
 
 The host wrote that file and a fresh SRAM load read it back. The reader blinks at 2.0 Hz when the header matches build `0xD1` and the checksum matches. Build `0xD2` stays dark. Nano 4K only. The Primer stayed on its current image. `oberon/src/Modules.Mod` was not edited. openFPGALoader 1.2.0 reached the external NOR, so the installer bitstream item B already proved was left unbuilt.
 
@@ -330,7 +378,7 @@ The read image: edge 1.999583 Hz, period 0.500104 s, 88 edges, duty 0.516, FFT 1
 
 The negative load used that same box. In the blink clip the on samples average 61.2 and the off samples average 5.88. On the negative image the same box averages 5.85 and peaks at 10.3, which is the off floor. The tool reports no blink: edge 0.877 Hz against FFT 0.272 Hz, SNR 13.5, confidence 0.12. The LED stayed dark. Clip: `/home/lypanov/fpga/blink-measure/20261108-disk-neg/clip.mkv`.
 
-### Item E — boot the 4K from the flash disk
+### Item 8 (was E) — boot the 4K from the flash disk
 
 The 4K ROM holds only a bootstrap, about one block. It reads the header from `0x200000`, checks the magic, the build number and the checksum, copies the core into HyperRAM, and branches to the `Modules` body, as the book's boot loader does. From then on every instruction is fetched from HyperRAM: the core translation (`CoreMap` `coreRom`/`coreBase`, `holdForCode`) is not elaborated in this image. `SpiSector` reads sectors from the NOR instead of from the ROM.
 
@@ -338,7 +386,7 @@ The checksum result also feeds item C's arm word. A stale or damaged disk leaves
 
 Blink law: Blink5's loop already runs from HyperRAM, so the period formula should be unchanged, and only the first edge moves (the SPI copy at boot). Compute both before the board is trusted. Record ROM words and block RAM before and after. The expectation is the ROM going from 4096 words to 512 or fewer, and block RAM from 10/10 to about 3/10. Prove it in sim (the SPI flash model loaded with `disk.bin`), then on the 4K. No Dock stage, and say so in the write-up.
 
-### Item E, measured
+### Item 8, measured
 
 The 4K boots from the disk. The ROM is a 102-word bootstrap in a 512-word block. It reads the header at `0x200000`, checks magic `0x314B5344`, build `0xE1`, and the payload checksum, copies the core into HyperRAM, and branches to the Modules body. From then on every instruction is fetched from HyperRAM, and `SpiSector` reads its sectors from the NOR. There is no Dock stage. `ddr3modules` is not linked with `--flash-boot`, and the Primer was not placed or loaded. It stayed on its current image.
 
@@ -372,31 +420,3 @@ openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
 ```
 
 Webcam `measure_blink`, `/dev/video2`, `roi=nano4k`, duration 22, warmup 2. The analyzer's Blink3 "expected" field is not this rate. Status blinking, edge 0.431 Hz, FFT 0.438 Hz, confidence 1.0, 480 frames at 30 fps, ROI `264,222` 48×39. Against 0.4459 Hz that is the same slow side as the item C clip (0.430 Hz). The LED was not dark. Clip: `/home/lypanov/fpga/blink-measure/20261109-004330-mcp/clip.mkv`.
-
-### Item 3, measured
-
-The register file has one read port. All 16 registers stay. A store, and an F0 op other than MOV H, reads twice: the first cycle latches Rb and holds PC, and the commit cycle reads Ra or Rc. chainFix does not overlay the next instruction until that commit. The instruction ROM is synchronous, so the held word is written back through the ROM overlay. A sector scan can still take the ROM. The body stays ready across the extra cycle.
-
-The period was fixed before either board was trusted. Verilator of the flash-boot modules image, on the bridge clock, gives edges at PC `0x2070`, mask `ffffffffff`, R5 0, R9 0, not halted:
-
-| N | period | edges |
-| --- | --- | --- |
-| 5 | 2936 | 12382736, 12385672, 12388608 |
-| 6 | 3402 | 12383202, 12386604, 12390006 |
-| 8 | 4334 | 12384134, 12388468, 12392802 |
-
-That is `466*N+606`. The previous law was `462*N+598`. The skip iteration gained 4 bridge cycles and the toggle gained 12, which is the half-clock form of the old `105*N+146` guess. For `N=65536` the edge is 30,540,382 cycles. At 27 MHz that is an edge every 1.131125 s, a full blink of 0.442038 Hz. At the Dock's 24.187 MHz the same count is 0.395984 Hz.
-
-The Blink2 mill image, block RAM, N=5, is not this law. Its edges are 117, 97, 97. The steady edge is 97 (four skips of 17 and one toggle of 29). The three-sample average is 103, was 89.
-
-The N=65536 disk is the one already on the NOR: checksum `0x8A0987D4`, arm word `0x2B158A31`, 17928 bytes. Nothing was written to flash.
-
-The Nano place at 16:42 (Europe/Amsterdam), `modules_n65536`. Logic 3648/4608 (80%; 3351 LUT, 297 ALU), was 3871/4608 on the item E place. Registers 1889/3612 (1884 FF), was 1791. CLS 2121/2304 (93%, 183 free), was 2164/2304 (140 free). BSRAM 3/10. `cpu_clk` Fmax 15.931 MHz against 13.500 (level 24). Setup TNS 0.000, 0 endpoints, worst slack +2.597 ns. SRAM load was bus 3 address 081 only. `write to ram`, CRC check Success. Device 078 was not opened for that load.
-
-The auto `roi=nano4k` box missed the LED. The same clip, manual box `290,190` 50×50 on the LED: edge 0.427067 Hz, FFT 0.416 Hz, confidence 0.9979, 20 edges, duty 0.515. Against 0.442038 Hz that is the same slow fraction as item E (0.431/0.4459). The LED was not dark. Clip: `/home/lypanov/fpga/blink-measure/20261109-164355/clip.mkv`.
-
-The Dock place of the same netlist with `route_option 1` fits. Logic 5112/20736 (25%; 4652 LUT, 460 ALU), CLS 3541/10368 (35%), registers 2302, BSRAM 8/46. `pclk` Fmax 100.444 MHz against 96.749, worst slack +0.380 ns. `cpu_clk` Fmax 30.038 MHz against 24.187. Setup and hold TNS 0.000. SRAM load was bus 3 address 078 only. The user LED stayed dark. The training UART, FTDI channel B, 115200 8N1, stayed on `..0080` with F `4B`, G `0000`, E0 `FFFF`. That is the route that holds the CPU, not a DDR3 protocol failure. The Micron bench was not run through the LED edges. It had already calibrated (`done=1` at pclk 1984, wstep `1a/1a`) and was stopped there.
-
-`route_option 2` of that same netlist placed at 17:01 (Europe/Amsterdam). Logic, CLS, registers, and BSRAM are unchanged. `pclk` Fmax 109.125 MHz against 96.749, worst slack +1.172 ns. `cpu_clk` Fmax 29.414 MHz against 24.187 (level 25). Setup TNS 0.000, 0 endpoints. SRAM load was bus 3 address 078 only, `write to ram`. The Nano was not opened for that load.
-
-Webcam `/dev/video2`, duration 32, warmup 4, manual box `296,28` 40×40 on the upper LED. Edge 0.396158 Hz, FFT 0.382 Hz, confidence 0.998, 27 edges, duty 0.505. Against 0.395984 Hz the edge is 0.04% high. In the same clip the Nano LED is 0.427 Hz, so the two boards are not the same spot. The LED was not dark. Clip: `/home/lypanov/fpga/blink-measure/20261109-1702-dock-r2/clip.mkv`. The training UART on this image still printed `..0080` with F `4B`. The user LED is the measurement. `tools/gowin_build.sh` now defaults the modules Dock image to `route_option 2`.
