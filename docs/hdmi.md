@@ -6,6 +6,8 @@ The screen becomes a second witness next to the LED. The Nano 4K goes first, so 
 
 **One video module, with a build switch.** The video module takes a mode: `off`, `flash`, `square`, or `text`. Each mode includes the one before it. The 4K builds up to `square`. The Dock builds up to `text`. Today's images stay `off` unless a step changes them. Each board has its own pin file. The timing is 640×480 at 60 Hz (25.2 MHz pixel clock is fine). The book's 1024×768 comes later.
 
+**Black and white only, so no TMDS encoder.** Project Oberon's display is one bit per pixel. Every mode here, and the 1024×768 desktop later, sends only black or white. So each channel needs only a few fixed 10-bit words: one for a black pixel, one for a white pixel, and the four control words for blanking and sync. Pick between them with a small mux. Do not build a general 8b/10b TMDS encoder. The constant pixel words keep DC balance as long as they are chosen as balanced pairs, the standard trick. Look up and record the exact words used.
+
 **One Blink5 for both boards.** The screen is driven by stores to fixed I/O addresses. On a board, or in a mode, without that device, the store must be decoded and dropped. It must never fall through to HyperRAM or DDR3. So the same Blink5 runs everywhere: on the 4K the counter writes go nowhere, on the Dock they show up. Blink5's loop is the same instructions on both boards, and each board's blink formula is recomputed whenever the loop changes.
 
 **The arm word gates the screen.** The screen stays black until the arm word is stored, exactly like the LED (bring-up ledger, item C).
