@@ -76,6 +76,9 @@ module blinky_top (
   wire cpu_reset = (por != 8'h00) | reset;
   wire hr_rst_n = pll_lock & ~reset;
   wire cpu_clk;
+  wire screen_we;
+  wire screen_bit;
+  wire cpu_armed;
 
   // Runs as soon as the PLL locks, including while the CPU is still in
   // the power-on reset. DIV_MODE 2 is edge-aligned with clk_out.
@@ -106,7 +109,10 @@ module blinky_top (
     .io_spi_cs_n       (spi_cs_n),
     .io_spi_clk        (spi_clk),
     .io_spi_mosi       (spi_mosi),
-    .io_spi_miso       (spi_miso)
+    .io_spi_miso       (spi_miso),
+    .io_screen_we      (screen_we),
+    .io_screen_bit     (screen_bit),
+    .io_armed          (cpu_armed)
   );
 
   // WP# and HOLD# stay deasserted. They are not part of the CPU.
@@ -136,11 +142,18 @@ module blinky_top (
   );
 
 `ifdef VIDEO_ON
-  // Flash: the whole screen follows the LED. io_led is already
-  // ledState && armed, so the screen stays black until the arm word.
+  // io_led is already ledState && armed. Flash paints the whole
+  // screen from it. Square ignores it and paints one stored block;
+  // cpu_armed keeps that block dark until the arm word.
   video u_video (
     .clk27      (clock),
     .led        (io_led),
+`ifdef VIDEO_SQUARE
+    .screen_we  (screen_we),
+    .screen_bit (screen_bit),
+    .armed      (cpu_armed),
+    .clk_cpu    (cpu_clk),
+`endif
     .tmds_clk_p (tmds_clk_p),
     .tmds_clk_n (tmds_clk_n),
     .tmds_d_p   (tmds_d_p),

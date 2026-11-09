@@ -19,18 +19,21 @@ foreach f {hpram_local_define.v hpram_local_param.v hpram_code_1N2A.v HPRAM_TOP.
 
 set_device -name GW1NSR-4C GW1NSR-LV4CQN48PC6/I5
 
-# off, or flash for the modules image. Square and text are later steps.
+# off, flash, or square. Text is a later step.
 set vmode "off"
 if {[info exists ::env(VIDEO_MODE)] && $::env(VIDEO_MODE) ne ""} {
   set vmode $::env(VIDEO_MODE)
 }
-if {$vmode ne "off" && $vmode ne "flash"} {
+if {$vmode ne "off" && $vmode ne "flash" && $vmode ne "square"} {
   puts stderr "error: VIDEO_MODE=$vmode is not this step"
   exit 1
 }
 set vh [open [file join $IP video_mode.vh] w]
 if {$vmode eq "flash"} {
   puts $vh "`define VIDEO_ON"
+} elseif {$vmode eq "square"} {
+  puts $vh "`define VIDEO_ON"
+  puts $vh "`define VIDEO_SQUARE"
 } else {
   puts $vh "// VIDEO_MODE=off"
 }
@@ -50,7 +53,7 @@ add_file -type verilog [file join $OUT ip hpram_pllvr.v]
 add_file -type verilog [file join $OUT ip gowin_clkdiv2.v]
 add_file -type verilog [file join $IP HPRAM_TOP.v]
 add_file -type verilog [file join $IP hpram_code_1N2A.v]
-if {$vmode eq "flash"} {
+if {$vmode eq "flash" || $vmode eq "square"} {
   add_file -type verilog [file join $OUT video.v]
   add_file -type cst     [file join $ROOT tang-nano-4k-hdmi.cst]
 } else {

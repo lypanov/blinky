@@ -2,7 +2,7 @@
 
 One item at a time, from the top. This file is an index. The write-up is in the file each item names.
 
-Next: 15.
+Next: 16.
 
 1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay. Done. The measured result is in the ledger.
 
@@ -24,7 +24,7 @@ Ledger items 2–5 are not to-dos. If a later item cannot fit on the Nano 4K wit
 13. Boot the 4K from the flash disk: the ROM becomes a bootstrap. Same file, "Block RAM, item E". Nano 4K only. Done. The measured result is in the ledger.
 
 14. Nano 4K: HDMI timing, and the whole screen flashes with the LED. [`docs/hdmi.md`](hdmi.md), step 1. Capture card on the 4K. Done. The measured result is in that file.
-15. Nano 4K: one square blinks on a black screen, drawn by Blink5. Same file, step 2. Capture card on the 4K. The 4K's video stops here.
+15. Nano 4K: one square blinks on a black screen, drawn by Blink5. Same file, step 2. Capture card on the 4K. The 4K's video stops here. Done. The measured result is in that file.
 16. Dock: the same full-screen flash. Same file, step 3. Capture card on the Dock.
 17. Dock: the same square. Same file, step 4.
 18. Dock: a blink counter in text on screen. Same file, step 5.

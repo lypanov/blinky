@@ -151,6 +151,13 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val spiClk = Output(Bool())
     val spiMosi = Output(Bool())
     val spiMiso = Input(Bool())
+
+    // -80 (0xFFFFFFB0). Bit 0 is one screen block. The store is always
+    // decoded here, and it never becomes a HyperRAM or DDR3 write.
+    // The screen, when the build has one, takes the pulse.
+    val screenWe = Output(Bool())
+    val screenBit = Output(Bool())
+    val armed = Output(Bool())
   })
   
   // Initialize the logByte signal with a default value
@@ -456,6 +463,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   io.memWrite := false.B
   io.memRead := false.B
   io.memByte := false.B
+  io.screenWe := false.B
+  io.screenBit := false.B
+  io.armed := armed
 
   // Logger boilerplate
   io.messageCode := 0.U
@@ -819,6 +829,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     // -64 (0xFFFFFFC0) is one NOR word. -60 (0xFFFFFFC4) is the sector base.
     val norPtrHit = if (flashBoot) effectiveAddr === "hFFFFFFC0".U else false.B
     val norBaseHit = if (flashBoot) effectiveAddr === "hFFFFFFC4".U else false.B
+    // -80. One word, bit 0. Dropped on every image, including this one
+    // when the video module is left out of the build.
+    val screenHit = !isByte && effectiveAddr === "hFFFFFFB0".U
 
     when (isLoad) {  // LDW and LDB. The byte extract is on the completion cycle.
         val useHyper = WireDefault(true.B)
@@ -905,6 +918,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         memoryIsLoad := false.B
         memoryIsByte := false.B
         memoryAccessPending := waitForStores.B
+      } .elsewhen (screenHit) {
+        io.screenWe := true.B
+        io.screenBit := rdX(0)
       } .elsewhen (if (flashBoot) norPtrHit || norBaseHit else false.B) {
         if (flashBoot) {
           when (norPtrHit) {

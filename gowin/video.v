@@ -1,7 +1,7 @@
-// One video module. The build switch is VIDEO_ON, written by the
-// HyperRAM Tcl from VIDEO_MODE. This step is flash: timing and the
-// TMDS pins, no screen memory. Square and text are later modes of
-// this same module; they are not elaborated here.
+// One video module. The build switch is VIDEO_ON / VIDEO_SQUARE,
+// written by the HyperRAM Tcl from VIDEO_MODE. Flash is timing and
+// the TMDS pins. Square adds the 32×24 screen and includes flash.
+// Text is a later mode of this same module; it is not elaborated.
 //
 // The Nano 4K has two PLLVR (DS861). HyperRAM already uses one, and
 // its spare outputs are 54, 27, and 18 MHz, not a 5× pixel clock.
@@ -27,6 +27,14 @@
 module video (
   input  clk27,
   input  led,
+`ifdef VIDEO_SQUARE
+  input  screen_we,
+  input  screen_bit,
+  input  armed,
+`ifndef VIDEO_SIM
+  input  clk_cpu,
+`endif
+`endif
 `ifdef VIDEO_SIM
   input  pix_sim,
   output [9:0] word0,
@@ -130,6 +138,71 @@ module video (
   reg [9:0] x_r = 10'd0;
   reg [9:0] y_r = 10'd0;
 
+`ifdef VIDEO_SQUARE
+  // 32×24 blocks, 20×20 pixels. Blink5 writes only block (15, 11),
+  // which is 11*32+15. The other 767 bits stay 0, so the rest of
+  // the screen stays black. The read is one pixel behind the scan
+  // counters; bx_d/by_d are the same pixel the bit belongs to.
+  localparam [9:0] BLOCK = 10'd367;
+  reg [4:0] bx = 5'd0;
+  reg [4:0] by = 5'd0;
+  reg [4:0] sx = 5'd0;
+  reg [4:0] sy = 5'd0;
+  reg [4:0] bx_d = 5'd0;
+  reg [4:0] by_d = 5'd0;
+  reg armed_s1 = 1'b0;
+  reg armed_s2 = 1'b0;
+  wire [9:0] rad = {by, bx};
+  wire rbit;
+`ifdef VIDEO_SIM
+  reg mem [0:767];
+  integer mi;
+  initial for (mi = 0; mi < 768; mi = mi + 1) mem[mi] = 1'b0;
+  reg rbit_r = 1'b0;
+  always @(posedge pix) begin
+    if (screen_we)
+      mem[BLOCK] <= screen_bit;
+    rbit_r <= mem[rad];
+  end
+  assign rbit = rbit_r;
+`else
+  wire [31:0] ram_do;
+  SDPB u_screen (
+    .DO(ram_do),
+    .DI({31'b0, screen_bit}),
+    .BLKSELA(3'b000),
+    .BLKSELB(3'b000),
+    .ADA({4'b0, BLOCK}),
+    .ADB({4'b0, rad}),
+    .CLKA(clk_cpu),
+    .CLKB(pix),
+    .CEA(screen_we),
+    .CEB(1'b1),
+    .OCE(1'b1),
+    .RESETA(1'b0),
+    .RESETB(1'b0)
+  );
+  defparam u_screen.READ_MODE = 1'b0;
+  defparam u_screen.BIT_WIDTH_0 = 1;
+  defparam u_screen.BIT_WIDTH_1 = 1;
+  defparam u_screen.BLK_SEL_0 = 3'b000;
+  defparam u_screen.BLK_SEL_1 = 3'b000;
+  defparam u_screen.RESET_MODE = "SYNC";
+  assign rbit = ram_do[0];
+`endif
+  wire [9:0] ctrl0 =
+      ({vs_r, hs_r} == 2'b00) ? CTRL00 :
+      ({vs_r, hs_r} == 2'b01) ? CTRL01 :
+      ({vs_r, hs_r} == 2'b10) ? CTRL10 : CTRL11;
+  // armed gates the block the way it gates the LED. The store itself
+  // is not thrown away: the bit is remembered, and it stays dark
+  // until the arm word.
+  wire square_on = de_r && rbit && armed_s2 && (bx_d == 5'd15) && (by_d == 5'd11);
+  wire [9:0] word0_o = !de_r ? ctrl0 : (square_on ? WHITE : BLACK);
+  wire [9:0] word1_o = !de_r ? CTRL00 : (square_on ? WHITE : BLACK);
+  wire [9:0] word2_o = word1_o;
+`endif
+
   // led is the CPU's ledState && armed, on the CPU clock.
   always @(posedge pix) begin
     led_s1 <= led;
@@ -139,6 +212,34 @@ module video (
     de_r <= de;
     hs_r <= hs;
     vs_r <= vs;
+`ifdef VIDEO_SQUARE
+    armed_s1 <= armed;
+    armed_s2 <= armed_s1;
+    bx_d <= bx;
+    by_d <= by;
+    if ((hx == 10'd0) && (vy == 10'd0)) begin
+      bx <= 5'd0;
+      by <= 5'd0;
+      sx <= 5'd0;
+      sy <= 5'd0;
+    end else if (de) begin
+      if (hx == 10'd783) begin
+        bx <= 5'd0;
+        sx <= 5'd0;
+        if (sy == 5'd19) begin
+          sy <= 5'd0;
+          by <= by + 5'd1;
+        end else begin
+          sy <= sy + 5'd1;
+        end
+      end else if (sx == 5'd19) begin
+        sx <= 5'd0;
+        bx <= bx + 5'd1;
+      end else begin
+        sx <= sx + 5'd1;
+      end
+    end
+`else
     if (!de) begin
       case ({vs, hs})
         2'b00: word0_r <= CTRL00;
@@ -157,6 +258,7 @@ module video (
       word1_r <= BLACK;
       word2_r <= BLACK;
     end
+`endif
     if (hx == 10'd799) begin
       hx <= 10'd0;
       if (vy == 10'd524)
@@ -169,9 +271,15 @@ module video (
   end
 
 `ifdef VIDEO_SIM
+`ifdef VIDEO_SQUARE
+  assign word0 = word0_o;
+  assign word1 = word1_o;
+  assign word2 = word2_o;
+`else
   assign word0 = word0_r;
   assign word1 = word1_r;
   assign word2 = word2_r;
+`endif
   assign de_q = de_r;
   assign hs_q = hs_r;
   assign vs_q = vs_r;
@@ -203,9 +311,15 @@ module video (
   );
 
   wire [9:0] q_ch [0:2];
+`ifdef VIDEO_SQUARE
+  assign q_ch[0] = word0_o;
+  assign q_ch[1] = word1_o;
+  assign q_ch[2] = word2_o;
+`else
   assign q_ch[0] = word0_r;
   assign q_ch[1] = word1_r;
   assign q_ch[2] = word2_r;
+`endif
 
   genvar gi;
   generate

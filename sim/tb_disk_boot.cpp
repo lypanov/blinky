@@ -60,8 +60,19 @@ int main(int argc, char** argv) {
   top->reset = 0;
 
   int failed = 0;
+  int screen_pulses = 0;
+  int prev_screen = 0;
   for (; cycle < max_cycles; cycle++) {
     step();
+    if (top->mem_write && top->mem_addr == 0xFFFFFFB0u) {
+      fprintf(stderr, "FAIL store to -80 fell through at cycle %llu\n",
+              (unsigned long long)cycle);
+      failed = 1;
+      break;
+    }
+    int screen = top->screen_we ? 1 : 0;
+    if (screen && !prev_screen) screen_pulses++;
+    prev_screen = screen;
     int led = top->led ? 1 : 0;
     if (led) saw_led = 1;
     if (cycle > 0 && led != prev) {
@@ -86,9 +97,9 @@ int main(int argc, char** argv) {
     }
   }
 
-  printf("DONE cycles %llu edges %zu saw_led %d halt %llu\n",
+  printf("DONE cycles %llu edges %zu saw_led %d halt %llu screen %d\n",
          (unsigned long long)cycle, edges.size(), saw_led,
-         (unsigned long long)halt_at);
+         (unsigned long long)halt_at, screen_pulses);
 
   if (expect_halt) {
     if (!halt_at || saw_led) {
@@ -114,6 +125,10 @@ int main(int argc, char** argv) {
           break;
         }
       }
+    }
+    if (screen_pulses < 1) {
+      fprintf(stderr, "FAIL no store to the screen\n");
+      failed = 1;
     }
     if (!edges.empty()) {
       uint64_t mask = top->mask;

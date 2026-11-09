@@ -20,6 +20,10 @@ class CpuWrapHyper extends CpuWrapBase {
   val spi_clk = Output(Bool())
   val spi_mosi = Output(Bool())
   val spi_miso = Input(Bool())
+  // -80. The top ties these to the screen only in square mode.
+  val screen_we = Output(Bool())
+  val screen_bit = Output(Bool())
+  val armed = Output(Bool())
 }
 
 class CpuWrapDdr3 extends CpuWrapBase {
@@ -100,6 +104,9 @@ class CPUMinimalWrapper(
     pins.spi_clk := cpu.io.spiClk
     pins.spi_mosi := cpu.io.spiMosi
     cpu.io.spiMiso := pins.spi_miso
+    pins.screen_we := cpu.io.screenWe
+    pins.screen_bit := cpu.io.screenBit
+    pins.armed := cpu.io.armed
   } else {
     cpu.io.spiMiso := false.B
   }

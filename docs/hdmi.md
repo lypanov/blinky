@@ -50,6 +50,22 @@ Capture card UGREEN 15389, `/dev/video0`, not the webcam. A frame before the mea
 
 Proof: the square blinks at the formula rate, and every pixel outside it stays black in every captured frame.
 
+Measured, `modules` N=65536, square mode. The disk was written to the external NOR at 0x200000 and read back matching. SRAM load on bus 003:081 (`-m`, CRC Success). The Dock was not built. No bitstream was written to flash. The 256 bytes at 0x1FFF00 were the same before and after the write.
+
+Blink5 stores `MMT.light` at -80 (`0FFFFFFB0H`) after each toggle. Bit 0 is the pixel. The video block writes only block (15, 11), linear address 367, and leaves the other 767 bits at zero. The store is taken whether or not the arm word is in place. The pixel is shown only while armed, the same gate as the LED. Every image decodes a store to -80, and that store does not become a HyperRAM write. Disk-boot counted the screen pulse and did not see that address on the memory bus.
+
+The screen memory is one SDPB, one bit wide. The write port is on `cpu_clk` and the read port is on the pixel clock. Square uses the flash timing and the same fixed TMDS words. It does not paint from the LED wire. The picture is that one block on black.
+
+Disk-boot periods: N=5 is 3110, N=6 is 3576, N=8 is 4508. That is `466*N+780`. The skip term is still 466. The store added 174 cycles on the toggle. N=65536 is an edge every 30,540,556 cycles, 1.131132 s, a full blink of 0.442035 Hz. The delay word is `60000001H`. The disk is 17928 bytes, checksum `6bae42b7`, arm word `cab24f52`.
+
+Place: logic 3779/4608 (82%; 3457 LUT, 322 ALU), registers 1944/3612, CLS 2161/2304 (94%, 143 free), block RAM 4/10. The flash place was 3730 logic, 2164 CLS, and 3 block RAM. The extra block is the screen SDPB. Setup TNS is 0. The worst setup slack is +3.405 ns. `cpu_clk` Fmax is 14.753 MHz against 13.500.
+
+Verilator: the flash frames are still black, then white. The square frames stay black while unarmed, stay black when the bit is clear even with the LED wire on, then light exactly the 20×20 block at (15, 11), and go black again when the bit clears.
+
+Capture card UGREEN 15389, `/dev/video0`, not the webcam. The frame grabbed before the measurement was green snow: the card had not locked. The next frame was a locked picture. A lit frame has exactly 440 pixels above luma 80, at x=338..359 and y=220..239, about (205,205,205) on a field of (3,3,3). That box is the 20×20 block after the stick scales 640 to 720. In all 962 frames of the clip, no pixel above luma 80 sits more than 8 pixels outside that box. The pixels that reach luma 50 are on the edge of the block.
+
+The stock analyzer measures red minus green, which is zero on both of these fields, so the square rate is the count of those white pixels. The first white stretch is 24 frames, while the card was locking. After that the halves are 35 frames, sometimes 36. Twelve rising edges span 773 frames. At 30 fps that is 0.4269 Hz, period 2.342 s. Same run, webcam `/dev/video2`, box `290,190` 50×50: 0.426841 Hz, period 2.342790 s, 24 edges, duty 0.497, FFT 0.428 Hz, SNR 79.5, confidence 0.9978. The two rates differ by under 0.02%. Against 0.442035 Hz the square is 3.42% slow, the same side as the flash measurement. The LED was not dark. Clips: `/home/lypanov/fpga/blink-measure/hdmi-square-screen-fcf0/clip.mkv` and `/home/lypanov/fpga/blink-measure/hdmi-square-led-fcf0/clip.mkv`.
+
 ## Step 3 — Dock: full-screen flash
 
 The same as step 1, on the Dock's HDMI pins (`docs/primer20k/board-notes.md`, "HDMI / DVI-TX"). The NESTang demo already proved this port and the capture path on 3 Nov. Also build the 4K at `square` and record its size.

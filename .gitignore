@@ -405,6 +405,7 @@ sim/obj_dir_modules_break/
 sim/obj_dir_modules/
 sim/obj_dir_disk/
 sim/obj_dir_video/
+sim/obj_dir_video_sq/
 gowin/ip/hpram/video_mode.vh
 sim/obj_dir_sector/
 sim/obj_dir_modules_split/

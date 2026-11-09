@@ -48,6 +48,7 @@ class CPUSimTop(
     val spiClk = Output(Bool())
     val spiMosi = Output(Bool())
     val spiMiso = Input(Bool())
+    val screenWe = Output(Bool())
   })
   val phy = if (ddr3 && externalPhy) Some(IO(new Ddr3UserBundle)) else None
 
@@ -189,6 +190,7 @@ class CPUSimTop(
   io.memWriteData := cpu.io.memWriteData
   io.memWrite := cpu.io.memWrite
   io.memRead := cpu.io.memRead
+  io.screenWe := cpu.io.screenWe
 }
 
 object CPUSimTop {

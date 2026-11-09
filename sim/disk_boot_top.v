@@ -8,7 +8,10 @@ module disk_boot_top (
   output wire [31:0] pc,
   output wire [39:0] mask,
   output wire [31:0] r5,
-  output wire [31:0] r9
+  output wire [31:0] r9,
+  output wire mem_write,
+  output wire [31:0] mem_addr,
+  output wire screen_we
 );
   wire cs_n;
   wire sclk;
@@ -27,7 +30,10 @@ module disk_boot_top (
     .io_spiCsN(cs_n),
     .io_spiClk(sclk),
     .io_spiMosi(mosi),
-    .io_spiMiso(miso)
+    .io_spiMiso(miso),
+    .io_memWrite(mem_write),
+    .io_memAddr(mem_addr),
+    .io_screenWe(screen_we)
   );
 
   spi_disk_model flash (
