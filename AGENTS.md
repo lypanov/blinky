@@ -1,5 +1,7 @@
 # Agent notes
 
+The project's goal and working rules are in `docs/strategy.md`. Read it once per session.
+
 ## Loading boards
 
 Bitstreams are SRAM-loaded only (`openFPGALoader ... -m`), on both boards. Never write a bitstream to any flash, internal or external.

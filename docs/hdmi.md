@@ -1,5 +1,7 @@
 # HDMI on both boards
 
+Steps 1–5 are `docs/todo.md` items 14–18. When item 18 is done, this file is finished and kept for its results. Later screen work is in `docs/next-steps.md` and `docs/led-ladder.md`.
+
 The screen becomes a second witness next to the LED. The Nano 4K goes first, so the design is sized for the smaller chip from the start. The Dock then adds what the 4K cannot hold. There is one capture card. It is on the 4K for steps 1–2 and on the Dock for steps 3–5. The maintainer moves the cable between them.
 
 ## Rules for every step
