@@ -25,7 +25,17 @@ Also: pinout, wiki 1 Hz / 2 Hz blinky, NESTang v0.4 UART ROM load.
 - Wiki blinky measurements: [`docs/blink-measure/primer20k/`](docs/blink-measure/primer20k/)
 
 Load bitstreams with `tools/sram_load.sh` (`openFPGALoader -b tangprimer20k -m`).
+On Bee pass `--busdev 3:78` so the load cannot hit the Nano 4K on bus 3 dev 81.
 Do not pass `-f`.
+
+BBC Micro Model B (hoglet67/BeebFpga, submodule `retro/beebfpga`, dev `49c63cc`):
+
+```sh
+tools/build_beeb_primer20k.sh
+tools/beeb_sram_load.sh retro/beeb/build/impl/pnr/tang20k.fs
+```
+
+ROM is BSRAM init from the submodule image (`IncludeBootStrap=false`). No SPI flash write. Report: [`docs/primer20k/beeb.md`](docs/primer20k/beeb.md). HDMI capture card: [`docs/capture-card.md`](docs/capture-card.md).
 
 ## Verilator simulation (Phase 1)
 
