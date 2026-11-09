@@ -26,7 +26,9 @@
 #   FPGA_IMAGE=ddr3pd BOARD=primer20k tools/gowin_build.sh     # that port plus the P-chain and D-chain fixups
 #   FPGA_IMAGE=ddr3moddesc BOARD=primer20k tools/gowin_build.sh  # that port plus ModDesc and a procedure call
 #   FPGA_IMAGE=ddr3files BOARD=primer20k tools/gowin_build.sh    # that port plus Files, two .rsc images, and Load of Blink5
-#   FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # placed Blink5 body, fetched from DDR3 (N=65536), screen flashes with the LED
+#   FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # placed Blink5 body, fetched from DDR3 (N=65536), one square
+#   VIDEO_MODE=flash FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # full-screen flash
+#   VIDEO_MODE=off   FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # same image, video left out
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -555,18 +557,18 @@ case "$BOARD" in
     if [[ -z "${VIDEO_MODE:-}" ]]; then
       VIDEO_MODE=off
       if [[ "$FPGA_IMAGE" == "ddr3modules" ]]; then
-        VIDEO_MODE=flash
+        VIDEO_MODE=square
       fi
     fi
     case "$VIDEO_MODE" in
       off) ;;
-      flash)
+      flash|square)
         if [[ "$FPGA_IMAGE" != "ddr3modules" ]]; then
-          echo "error: flash video is the ddr3modules image only (FPGA_IMAGE=$FPGA_IMAGE)" >&2
+          echo "error: $VIDEO_MODE video is the ddr3modules image only (FPGA_IMAGE=$FPGA_IMAGE)" >&2
           exit 1
         fi
         ;;
-      square|text)
+      text)
         echo "error: VIDEO_MODE=$VIDEO_MODE is a later step" >&2
         exit 1
         ;;

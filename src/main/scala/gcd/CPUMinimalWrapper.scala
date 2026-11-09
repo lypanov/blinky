@@ -37,6 +37,10 @@ class CpuWrapDdr3 extends CpuWrapBase {
   val r8 = Output(UInt(32.W))
   val r9 = Output(UInt(32.W))
   val dbgMask = Output(UInt(40.W))
+  // -80. The Dock top ties these to the screen only in square mode.
+  val screen_we = Output(Bool())
+  val screen_bit = Output(Bool())
+  val armed = Output(Bool())
 }
 
 class CPUMinimalWrapper(
@@ -198,6 +202,9 @@ class CPUMinimalWrapper(
       wrap.r8 := cpu.io.r8
       wrap.r9 := cpu.io.r9
       wrap.dbgMask := cpu.io.dbgMask
+      wrap.screen_we := cpu.io.screenWe
+      wrap.screen_bit := cpu.io.screenBit
+      wrap.armed := cpu.io.armed
     }
     if (useRealGowin) {
       val ddr = io.asInstanceOf[CpuWrapDdr3].ddr

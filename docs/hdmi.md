@@ -92,6 +92,18 @@ Capture card UGREEN 15389, `/dev/video0`. Before that load the card showed the N
 
 The same as step 2, on the Dock. Same Blink5. Also build the 4K at `square` and record its size.
 
+Measured, `ddr3modules` N=65536, square mode, SRAM load on bus 003:078 (`-m` only, `write to ram`, Load SRAM 100%). Idcode `0x81b`, GW2A-18. Bus 003:081 is the Nano (idcode `0x100981b`, GW1NSR-4C) and was not loaded. Nothing was written to flash. The first load trained. UART on FTDI channel B, opened without an SIO reset or a USB reset: 75 lines, every one `C.` (not held), mask `FFFFFFFFFF`, `F` `AB`, PC in the delay loop (`2214` through `2238`, and `225C`). No second load.
+
+Blink5 is unchanged. It still stores `MMT.light` at -80 after each toggle, and the video block still writes only block (15, 11). The Dock square uses that store. It does not paint from the LED wire. The pixel is shown only while armed. The edge is still `466*N+780`. At 24.1875 MHz, N=65536 is an edge every 1.26266 s, a full blink of 0.39598 Hz. The delay word is `60000001H`.
+
+Place: logic 5294/20736 (26%; 4809 LUT, 485 ALU), registers 2357/16173, CLS 3716/10368 (36%), block RAM 9/46 (1 SDPB, 8 pROM), OSER10 4, rPLL 2/4. The flash place was 5141 logic, 3588 CLS, and 8 block RAM. The extra block is the screen SDPB. Setup and hold violations are 0. The worst setup slack is +1.258 ns. `pclk` Fmax is 110.157 MHz against 96.749. `cpu_clk` Fmax is 29.864 MHz against 24.187. route_option 2. The placed report names `ddr3_hdmi.cst`. Clock is H11, the blink pin is L14, and the DDR3 balls stay SSTL15.
+
+The 4K square place, rebuilt and left unloaded: logic 3779/4608 (82%; 3457 LUT, 322 ALU), CLS 2161/2304 (94%, 143 free), block RAM 4/10. Same counts as step 2. Setup violations 0. The worst setup slack is +3.405 ns. The disk was not written.
+
+Before the load the capture card was green snow (mean about 2, 56, 3). After it, eight frames were a locked black field, max luma 25, not snow. The measurement clip is locked: 1441 frames at 60 fps, and the only pixels above luma 80 are the square. A lit frame has exactly 440 of them, at x=338..359 and y=220..239, the same 22×20 box the 4K square made after the stick scales 640 to 720. In every frame, no pixel above luma 50 sits outside that box.
+
+The opening on-stretch is 52 frames, after an off-stretch of 90. After that every half is 75 or 76 frames. Eight rises give seven periods, five of 151 frames and two of 152. The mean is 2.5214 s, 0.39660 Hz. Same run, webcam `/dev/video2`, the Dock LED near (323, 52): eight rise periods, six of 38 frames and two of 37, at 15 fps. The mean is 2.5167 s, 0.39735 Hz. The two rates differ by 0.19%. Against 0.39598 Hz the screen is 0.16% off and the LED is 0.35% off. The Nano LED in the same frames, near (210, 193), keeps its own period of about 2.341 s (0.4272 Hz). Clips: `/home/lypanov/fpga/blink-measure/hdmi-dock-square-screen-daed/clip.mkv` and `/home/lypanov/fpga/blink-measure/hdmi-dock-square-led-daed/clip.mkv`.
+
 ## Step 5 — Dock: the counter
 
 `text` mode adds a built-in 8×8 font and a small text area (for example 40×15 characters), also written by the CPU through I/O addresses. Blink5 counts its blinks and writes the count in decimal after each blink. On the 4K those stores are dropped. Recompute the loop formula for both boards, because the decimal conversion runs on both.

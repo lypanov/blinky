@@ -19,8 +19,9 @@
 // onto L14. That is the only LED in the webcam cluster that moves.
 // A failed prologue compare leaves it dark. UART TX is M11.
 // JTAG and MSPI stay off this design. Flash mode paints the whole
-// screen from cpu_led, which is already the armed blink. Square is
-// a later step. SRAM-load only. Do not flash.
+// screen from cpu_led, which is already the armed blink. Square
+// paints one stored block and ignores that wire. SRAM-load only.
+// Do not flash.
 //
 // The command-port proof (define DDR3_PORT_TEST) blinked L14 at
 // 0.720844 Hz. This build is the CPU prologue. The steady blink is
@@ -73,6 +74,9 @@ module blinky_top_ddr3 (
   wire [15:0] unused_deadbeef;
   wire [2:0]  unused_addr;
   wire        cpu_led;
+  wire        screen_we;
+  wire        screen_bit;
+  wire        cpu_armed;
   wire [31:0] cpu_pc;
   wire [31:0] cpu_r0, cpu_r4, cpu_r5, cpu_r7, cpu_r8, cpu_r9;
   wire [39:0] cpu_mask;
@@ -565,7 +569,10 @@ module blinky_top_ddr3 (
     .io_ddr_dout      (ddr_dout),
     .io_ddr_data_ready(ddr_ready),
     .io_ddr_busy      (ddr_busy),
-    .io_ddr_calib     (read_calib_done)
+    .io_ddr_calib     (read_calib_done),
+    .io_screen_we     (screen_we),
+    .io_screen_bit    (screen_bit),
+    .io_armed         (cpu_armed)
   );
 `endif
 
@@ -731,9 +738,18 @@ module blinky_top_ddr3 (
 
 `ifdef VIDEO_ON
   // cpu_led is high while the armed LED is on. The pin is the inverse.
+  // Flash paints the whole screen from that wire. Square ignores it
+  // and paints the stored block; cpu_armed keeps the block dark until
+  // the arm word. The store is the same pulse the 4K square uses.
   video u_video (
     .clk27      (Clock),
     .led        (cpu_led),
+`ifdef VIDEO_SQUARE
+    .screen_we  (screen_we),
+    .screen_bit (screen_bit),
+    .armed      (cpu_armed),
+    .clk_cpu    (cpu_clk),
+`endif
     .tmds_clk_p (tmds_clk_p),
     .tmds_clk_n (),
     .tmds_d_p   (tmds_d_p),

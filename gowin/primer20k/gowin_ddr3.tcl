@@ -21,22 +21,25 @@ add_file -type verilog [file join $HERE ddr3_port_test.v]
 add_file -type verilog [file join $GOWIN ip gowin_sp.v]
 add_file -type sdc     [file join $HERE ddr3.sdc]
 
-# off or flash. Square and text are later steps. The modules image
-# defaults to flash in tools/gowin_build.sh.
+# off, flash, or square. Text is a later step. The modules image
+# defaults to square in tools/gowin_build.sh.
 set vmode "off"
 if {[info exists ::env(VIDEO_MODE)] && $::env(VIDEO_MODE) ne ""} {
   set vmode $::env(VIDEO_MODE)
 }
-if {$vmode ne "off" && $vmode ne "flash"} {
+if {$vmode ne "off" && $vmode ne "flash" && $vmode ne "square"} {
   puts stderr "error: VIDEO_MODE=$vmode is not this step"
   exit 1
 }
 set vh [open [file join $HERE video_mode.vh] w]
-if {$vmode eq "flash"} {
+if {$vmode eq "flash" || $vmode eq "square"} {
   puts $vh "`ifndef VIDEO_MODE_INCLUDED"
   puts $vh "`define VIDEO_MODE_INCLUDED"
   puts $vh "`define VIDEO_ON"
   puts $vh "`define VIDEO_DOCK"
+  if {$vmode eq "square"} {
+    puts $vh "`define VIDEO_SQUARE"
+  }
   puts $vh "`endif"
   add_file -type verilog [file join $GOWIN video.v]
   # A second add_file cst replaces the first. One file has to carry
