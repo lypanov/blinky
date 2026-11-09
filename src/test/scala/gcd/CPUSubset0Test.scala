@@ -349,7 +349,8 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
 
       dut.clock.step() // MOV R0, 3
       dut.clock.step() // MOV R1, 5
-      dut.clock.step() // SUB R0, R0, R1 - Result negative, branch expected
+      dut.clock.step() // SUB: read Rb and hold PC
+      dut.clock.step() // SUB R0, R0, R1 - second read commits, result negative
       dut.clock.step() // BLT skip2, 2 - Should branch
       dut.clock.step() // This should skip the MOV R2, 2 instruction
       
@@ -565,7 +566,7 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       dut.clock.setTimeout(100) // Small timeout is sufficient for this test
       
       // Run until halted or max cycles
-      val cyclesRun = runTillHalt(dut, 20)
+      val cyclesRun = runTillHalt(dut, 40)
       println(s"Function preamble test ran for $cyclesRun cycles")
       
       // Verify R0 value - should be 0xAA after function execution
@@ -624,8 +625,10 @@ class CPUSubset0Test extends AnyFlatSpec with ChiselScalatestTester with Matcher
       }
 
       val avgPeriod = blinkPeriods.sum / blinkPeriods.size
-      // TODO should modify average period calculation to skip the first period as it's biased by setup instructions
-      assert(avgPeriod == 89, s"Average blink period $avgPeriod is expected period of 89")
+      // The first edge includes the prologue. The steady edge is 97 cycles:
+      // four skip iterations of 17 and one toggle of 29. N is 5.
+      // (117 + 97 + 97) / 3 = 103.
+      assert(avgPeriod == 103, s"Average blink period $avgPeriod is expected period of 103")
     }
   }
   

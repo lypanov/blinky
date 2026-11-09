@@ -12,14 +12,14 @@
 
 module tb_ddr3_cpu_phy;
     localparam integer PCLK_WAIT = 200000;
-    // Proof 7 Blink5, edge PC 0x2070. The CPU-cycle law is
-    // 462*N+598 (2908 at N=5). This bench counts pclk and the CPU
-    // clock is pclk/4, so the edge is 4*2908 plus 40 pclk. That 40
-    // is one DDR3 store on the toggle; the fast memory model
-    // finishes it inside the CPU-cycle law. 10512 (1852*5+1252)
-    // was the body at PC 0x101c. The arm prologue runs before the
-    // first edge, so it does not change this period.
-    localparam integer EXPECT_PERIOD = 4 * (462 * 5 + 598) + 40;
+    // Proof 7 Blink5, edge PC 0x2070. The bridge-clock law after
+    // the 1-port register file is 466*N+606 (2936 at N=5). This
+    // bench counts pclk and the CPU clock is pclk/4, so the edge is
+    // 4*2936 plus 40 pclk. That 40 is one DDR3 store on the toggle;
+    // the fast memory model finishes it inside the CPU-cycle law.
+    // The arm prologue runs before the first edge, so it does not
+    // change this period.
+    localparam integer EXPECT_PERIOD = 4 * (466 * 5 + 606) + 40;
     localparam [31:0] EXPECT_R5 = 32'h00000000;
     // ModDesc leaves R9 at 8. Files uses R9 as the w accumulator and
     // leaves 0. Modules still ends in that Load, so R9 is 0 there too.

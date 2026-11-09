@@ -160,7 +160,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // otherwise default to 0x80.
   val pc = RegInit(0x80.U(32.W))
   
-  // Registers. Two same-cycle read ports, below. All 16 stay.
+  // Registers. One read port, below. All 16 stay.
   val regs = RegInit(VecInit(Seq.fill(16)(0.U(32.W))))
   
   // Flags
@@ -308,6 +308,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val patchPC = 0x1F00.U
   val atPatch = pc === patchPC
   val stallFetch = WireDefault(false.B)
+  // A sector scan owns the instruction ROM for a cycle. The read hold
+  // must not overlay that cycle.
+  val scanOwnsRom = WireDefault(false.B)
   val nextFetching = WireDefault(fetching)
   val nextInject = WireDefault(inject)
   val nextDone = WireDefault(doneFetch)
@@ -415,13 +418,29 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val isStore = isMemory && format(1)  // u=1 for store
   val isByte = isMemory && format(0)   // v=1 for byte
 
-  // Same-cycle 2-port read. No instruction reads three registers: a store
-  // reads Ra and Rb, an ALU reads Rb and Rc, a register branch reads Rc.
-  // Port B's address is the b field with no mux in front of it. The address
-  // adder and the ALU take this port, which is the 27 MHz path. Port X is
-  // Ra on a store and Rc otherwise.
-  val rdB = regs(regB)
-  val rdX = regs(Mux(isStore, regA, regC))
+  // One read port. All 16 registers stay. No instruction reads three.
+  // A store reads Rb, then Ra. An F0 operation other than MOV H reads Rb,
+  // then Rc. MOV H, an immediate, a load, and a branch read at most one.
+  // The first of a pair is latched. PC stays, and chainFix does not look
+  // ahead, until the second read commits.
+  val regLatched = RegInit(false.B)
+  val regCaptured = Reg(UInt(32.W))
+  val heldInsn = Reg(UInt(32.W))
+  val isF0 = format(3, 2) === "b00".U
+  val readsB = isMemory || (isF0 && op =/= 0.U) || (isF1Format && op =/= 0.U)
+  val readsX = isStore || isBranchToReg || (isF0 && !((format === "b0010".U) && (op === 0.U)))
+  val twoRead = readsB && readsX
+  val readAddr = WireDefault(regB)
+  when (regLatched) {
+    readAddr := Mux(isStore, regA, regC)
+  } .elsewhen (readsB) {
+    readAddr := regB
+  } .otherwise {
+    readAddr := Mux(isStore, regA, regC)
+  }
+  val rdPort = regs(readAddr)
+  val rdB = Mux(regLatched, regCaptured, rdPort)
+  val rdX = rdPort
   
   // By default, increment PC
   val nextPC = pc + 4.U
@@ -518,6 +537,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val divDiff = divSum(31, 0)
   val divGe = divSum(32)
 
+  // Extra cycle of a two-read. PC and chainFix stay on this instruction
+  // until the second read commits. A stall owns the cycle instead.
+  val regHold = twoRead && !regLatched && !stallFetch && !chainHold &&
+    !memoryAccessPending && divPhase === 0.U && !reset.asBool && !halted
+
   // Proof 5. Page 0x22 is the placed Blink5 body. A fetch of that page
   // reads external memory. Every other PC, including reset and the
   // loader, keeps the pROM. The word is overlaid into the ROM register
@@ -558,11 +582,12 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         bodyReady := true.B
         bodyFor := pc
       }
-    } .elsewhen (haveBody) {
+    } .elsewhen (haveBody && !regHold) {
       // The overlay is in the ROM register for this cycle only. A later
       // branch back to the same PC, the trap vector included, has to
       // fetch again. Leaving bodyReady set made the second BLR to
-      // MT[0] execute ROM[0] and re-enter the stub.
+      // MT[0] execute ROM[0] and re-enter the stub. A two-read hold
+      // still needs this word on the commit cycle.
       bodyReady := false.B
     } .elsewhen (!inBody) {
       bodyPhase := 0.U
@@ -715,6 +740,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     } .otherwise {
       divPhase := 0.U
     }
+  } .elsewhen (regHold) {
+    // Rb is on the read port. The second read commits next cycle.
+    pcNext := pc
   } .elsewhen (isBranch) {
     // Check for halt instruction (branch self with e7ffffff)
     when (instruction === "hE7FFFFFF".U) {
@@ -1182,11 +1210,12 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val forceAc = !memoryAccessPending && (pc === 0x1d34.U) && patchValid(6)
     val forceC0 = !memoryAccessPending && (pc === 0x1d68.U) && patchValid(8)
     val useHits = Wire(Vec(nPatch, Bool()))
+    // A two-read hold has not advanced PC. Do not overlay the next word.
     for (i <- patchOffs.indices) {
-      useHits(i) := lookupHits(i) && !skipFall
+      useHits(i) := lookupHits(i) && !skipFall && !regHold
     }
-    useHits(6) := (lookupHits(6) && !skipFall) || forceAc
-    useHits(8) := (lookupHits(8) && !skipFall) || forceC0
+    useHits(6) := ((lookupHits(6) && !skipFall) || forceAc) && !regHold
+    useHits(8) := ((lookupHits(8) && !skipFall) || forceC0) && !regHold
     val fetchData = (0 until nPatch).foldLeft(0.U(32.W)) { (acc, i) =>
       Mux(useHits(i), patchData(i), acc)
     }
@@ -1251,6 +1280,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     when (scanSteal && !reset.asBool) {
       romAddr := (core.get.sectorRom.U + spi.get.io.romAddr)(addrBits - 1, 0)
       romOverlayEn := false.B
+      scanOwnsRom := true.B
     }
     val scanHold = scanSteal || (scanPrev && !scanning)
     when (scanHold && !memoryAccessPending && divPhase === 0.U && romPhase === 0.U) {
@@ -1272,6 +1302,21 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     // A bootstrap load owns the returning word. The sector side only
     // sees a completion when it asked for one.
     spi.get.io.norDone := eng.io.done && !norPending
+  }
+
+  // Latch the first operand and keep this instruction word. The commit
+  // cycle clears the latch. A stall after the latch replays the word,
+  // unless the sector scan owns the ROM this cycle.
+  when (regHold) {
+    regCaptured := rdPort
+    heldInsn := instruction
+    regLatched := true.B
+  } .elsewhen (!stallFetch && !chainHold && !memoryAccessPending && divPhase === 0.U && !reset.asBool) {
+    regLatched := false.B
+  }
+  when ((regHold || (regLatched && stallFetch)) && !scanOwnsRom) {
+    romOverlayEn := true.B
+    romOverlayData := Mux(regHold, instruction, heldInsn)
   }
 
   // Register write logic

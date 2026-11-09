@@ -546,10 +546,12 @@ case "$BOARD" in
       else
         printf '%s\n' '// prologue and ALU: trained write eye, no fixed step' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
       fi
-      # The arm-word modules netlist trains only with route_option 1.
-      # route_option 2 leaves a one-tap eye and holds the CPU in reset.
+      # The 1-port register-file modules netlist blinks with route_option 2.
+      # route_option 1 leaves the user LED dark and the training line at
+      # ..0080 with F=4B. The previous 2-port netlist was the other way
+      # around: option 1 ran, option 2 held the CPU.
       if [[ "$FPGA_IMAGE" == "ddr3modules" ]]; then
-        DDR3_ROUTE_OPTION=1 gw_sh "$ROOT/gowin/primer20k/gowin_ddr3.tcl"
+        DDR3_ROUTE_OPTION="${DDR3_ROUTE_OPTION:-2}" gw_sh "$ROOT/gowin/primer20k/gowin_ddr3.tcl"
       else
         gw_sh "$ROOT/gowin/primer20k/gowin_ddr3.tcl"
       fi

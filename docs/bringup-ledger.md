@@ -372,3 +372,31 @@ openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
 ```
 
 Webcam `measure_blink`, `/dev/video2`, `roi=nano4k`, duration 22, warmup 2. The analyzer's Blink3 "expected" field is not this rate. Status blinking, edge 0.431 Hz, FFT 0.438 Hz, confidence 1.0, 480 frames at 30 fps, ROI `264,222` 48×39. Against 0.4459 Hz that is the same slow side as the item C clip (0.430 Hz). The LED was not dark. Clip: `/home/lypanov/fpga/blink-measure/20261109-004330-mcp/clip.mkv`.
+
+### Item 3, measured
+
+The register file has one read port. All 16 registers stay. A store, and an F0 op other than MOV H, reads twice: the first cycle latches Rb and holds PC, and the commit cycle reads Ra or Rc. chainFix does not overlay the next instruction until that commit. The instruction ROM is synchronous, so the held word is written back through the ROM overlay. A sector scan can still take the ROM. The body stays ready across the extra cycle.
+
+The period was fixed before either board was trusted. Verilator of the flash-boot modules image, on the bridge clock, gives edges at PC `0x2070`, mask `ffffffffff`, R5 0, R9 0, not halted:
+
+| N | period | edges |
+| --- | --- | --- |
+| 5 | 2936 | 12382736, 12385672, 12388608 |
+| 6 | 3402 | 12383202, 12386604, 12390006 |
+| 8 | 4334 | 12384134, 12388468, 12392802 |
+
+That is `466*N+606`. The previous law was `462*N+598`. The skip iteration gained 4 bridge cycles and the toggle gained 12, which is the half-clock form of the old `105*N+146` guess. For `N=65536` the edge is 30,540,382 cycles. At 27 MHz that is an edge every 1.131125 s, a full blink of 0.442038 Hz. At the Dock's 24.187 MHz the same count is 0.395984 Hz.
+
+The Blink2 mill image, block RAM, N=5, is not this law. Its edges are 117, 97, 97. The steady edge is 97 (four skips of 17 and one toggle of 29). The three-sample average is 103, was 89.
+
+The N=65536 disk is the one already on the NOR: checksum `0x8A0987D4`, arm word `0x2B158A31`, 17928 bytes. Nothing was written to flash.
+
+The Nano place at 16:42 (Europe/Amsterdam), `modules_n65536`. Logic 3648/4608 (80%; 3351 LUT, 297 ALU), was 3871/4608 on the item E place. Registers 1889/3612 (1884 FF), was 1791. CLS 2121/2304 (93%, 183 free), was 2164/2304 (140 free). BSRAM 3/10. `cpu_clk` Fmax 15.931 MHz against 13.500 (level 24). Setup TNS 0.000, 0 endpoints, worst slack +2.597 ns. SRAM load was bus 3 address 081 only. `write to ram`, CRC check Success. Device 078 was not opened for that load.
+
+The auto `roi=nano4k` box missed the LED. The same clip, manual box `290,190` 50×50 on the LED: edge 0.427067 Hz, FFT 0.416 Hz, confidence 0.9979, 20 edges, duty 0.515. Against 0.442038 Hz that is the same slow fraction as item E (0.431/0.4459). The LED was not dark. Clip: `/home/lypanov/fpga/blink-measure/20261109-164355/clip.mkv`.
+
+The Dock place of the same netlist with `route_option 1` fits. Logic 5112/20736 (25%; 4652 LUT, 460 ALU), CLS 3541/10368 (35%), registers 2302, BSRAM 8/46. `pclk` Fmax 100.444 MHz against 96.749, worst slack +0.380 ns. `cpu_clk` Fmax 30.038 MHz against 24.187. Setup and hold TNS 0.000. SRAM load was bus 3 address 078 only. The user LED stayed dark. The training UART, FTDI channel B, 115200 8N1, stayed on `..0080` with F `4B`, G `0000`, E0 `FFFF`. That is the route that holds the CPU, not a DDR3 protocol failure. The Micron bench was not run through the LED edges. It had already calibrated (`done=1` at pclk 1984, wstep `1a/1a`) and was stopped there.
+
+`route_option 2` of that same netlist placed at 17:01 (Europe/Amsterdam). Logic, CLS, registers, and BSRAM are unchanged. `pclk` Fmax 109.125 MHz against 96.749, worst slack +1.172 ns. `cpu_clk` Fmax 29.414 MHz against 24.187 (level 25). Setup TNS 0.000, 0 endpoints. SRAM load was bus 3 address 078 only, `write to ram`. The Nano was not opened for that load.
+
+Webcam `/dev/video2`, duration 32, warmup 4, manual box `296,28` 40×40 on the upper LED. Edge 0.396158 Hz, FFT 0.382 Hz, confidence 0.998, 27 edges, duty 0.505. Against 0.395984 Hz the edge is 0.04% high. In the same clip the Nano LED is 0.427 Hz, so the two boards are not the same spot. The LED was not dark. Clip: `/home/lypanov/fpga/blink-measure/20261109-1702-dock-r2/clip.mkv`. The training UART on this image still printed `..0080` with F `4B`. The user LED is the measurement. `tools/gowin_build.sh` now defaults the modules Dock image to `route_option 2`.

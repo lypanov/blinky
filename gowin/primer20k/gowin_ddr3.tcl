@@ -40,10 +40,13 @@ set_option -synthesis_tool gowinsynthesis
 # G=FF00 (F=EB) and the CPU holds at 0x1D8C. route_option 1 on that
 # placement holds at 0x1D90 with the same G. place_option 0 with
 # route_option 2 trains the pre-arm netlist to G=A55A (F=AB).
-# The arm-word netlist is the other way around. route_option 2 leaves
-# a one-tap eye (best pop 16, CPU held at 0x0080, F=4B). route_option 1
-# trains that netlist to G=A55A (F=AB) and runs the placed loop.
-# DDR3_ROUTE_OPTION selects it; other images stay on route_option 2.
+# The arm-word 2-port netlist is the other way around. route_option 2
+# leaves a one-tap eye (best pop 16, CPU held at 0x0080, F=4B).
+# route_option 1 trains that netlist to G=A55A (F=AB) and runs the
+# placed loop. The 1-port register-file netlist flips again:
+# route_option 1 holds at 0x0080 with F=4B and a dark LED, and
+# route_option 2 runs the placed loop. DDR3_ROUTE_OPTION selects it;
+# other images stay on route_option 2.
 set_option -place_option 0
 if {[info exists ::env(DDR3_ROUTE_OPTION)] && $::env(DDR3_ROUTE_OPTION) ne ""} {
   set_option -route_option $::env(DDR3_ROUTE_OPTION)
