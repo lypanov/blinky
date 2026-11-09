@@ -16,6 +16,8 @@
 #   FPGA_IMAGE=moddesc tools/gowin_build.sh      # HyperRAM plus ModDesc, the module table, and a procedure call
 #   FPGA_IMAGE=files tools/gowin_build.sh        # HyperRAM plus Files, two .rsc images, and Load of Blink5
 #   FPGA_IMAGE=modules tools/gowin_build.sh      # placed Blink5 body, fetched from HyperRAM (N=65536)
+#   VIDEO_MODE=flash FPGA_IMAGE=modules tools/gowin_build.sh  # full-screen flash (the modules default)
+#   VIDEO_MODE=off   FPGA_IMAGE=modules tools/gowin_build.sh  # same image, video left out
 #   FPGA_IMAGE=ddr3 BOARD=primer20k tools/gowin_build.sh  # Primer 20K DDR3 data port + Blink3
 #   FPGA_IMAGE=ddr3fixup BOARD=primer20k tools/gowin_build.sh  # that port plus the step-2 ALU
 #   FPGA_IMAGE=ddr3rsc BOARD=primer20k tools/gowin_build.sh    # that port plus LDB/STB and the .rsc reader
@@ -514,6 +516,31 @@ cp "$ROOT/gowin/KeepBit.v" "$ROOT/gowin/src/KeepBit.v"
 
 case "$BOARD" in
   nano4k|tangnano4k)
+    if [[ -z "${VIDEO_MODE:-}" ]]; then
+      VIDEO_MODE=off
+      if [[ "$FPGA_IMAGE" == "modules" ]]; then
+        VIDEO_MODE=flash
+      fi
+    fi
+    case "$VIDEO_MODE" in
+      off) ;;
+      flash)
+        if [[ "$FPGA_IMAGE" != "modules" ]]; then
+          echo "error: flash video is the modules image only (FPGA_IMAGE=$FPGA_IMAGE)" >&2
+          exit 1
+        fi
+        ;;
+      square|text)
+        echo "error: VIDEO_MODE=$VIDEO_MODE is a later step" >&2
+        exit 1
+        ;;
+      *)
+        echo "error: VIDEO_MODE=$VIDEO_MODE" >&2
+        exit 1
+        ;;
+    esac
+    export VIDEO_MODE
+    echo "==> VIDEO_MODE=$VIDEO_MODE"
     echo "==> Gowin syn+PNR (GW1NSR-LV4CQN48PC6/I5) out=$GOWIN_OUT_NAME"
     mkdir -p "$ROOT/gowin/impl"
     # gw_sh writes impl next to the Tcl unless -d is used; run from gowin/

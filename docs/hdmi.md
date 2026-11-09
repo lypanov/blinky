@@ -28,6 +28,22 @@ Video timing and the TMDS output only, with no screen memory. The screen is whit
 
 The 4K has two PLLs, and HyperRAM uses one. Find out whether video can use the other, or share one, before writing the clocking. Record the HDMI pins from the Tang Nano 4K schematic. About 140 CLS are free on the item E place. If that is not enough, follow "When the 4K does not fit" above.
 
+Measured, `modules` N=65536, SRAM load on bus 003:081 (`-m`, CRC Success). The flash disk was not written. The Dock was not built.
+
+The second PLLVR takes the same 27 MHz port as the HyperRAM PLL. Its dedicated pin is 35, which schematic 3603 wires to HDMI TX2_P, and this device has no DCC. Sharing the HyperRAM PLL cannot make a 5× pixel clock: its spare outputs are 54, 27, and 18 MHz. A first bitstream divided 126 MHz by 5 for a 25.2 MHz pixel clock. The capture card showed green snow, not a picture. The pixel clock is now the 27 MHz port itself, and the serializer clock is 135 MHz (VCO 540, inside the C6/I5 window). 800×525 at 27 MHz is 64.3 Hz.
+
+HDMI pins, schematic 3603, AC-coupled, TLVDS, placed as LVDS25, drive 3.5: clock 28/27, channel 0 30/29, channel 1 32/31, channel 2 35/34.
+
+Fixed words, each with five ones, so repeating one holds the disparity at zero. They are the cnt=0 encodings. Black is byte 0x10, `0111110000`. White is byte 0xEF, `1011110000`. Those are the darkest and brightest bytes with that property; 0x00 and 0xFF have none. Control words: 00 `1101010100`, 01 `0010101011`, 10 `0101010100`, 11 `1010101011`. Channel 0 carries VSYNC/HSYNC. The other two carry control 00 during blanking. The clock channel is five ones then five zeros, LSB first.
+
+The CPU is unchanged. Disk-boot N=5 still edges every 2936 bridge cycles, which is `466*5+606`. The N=65536 law is an edge every 1.131125 s, a full blink of 0.442038 Hz.
+
+Place: logic 3730/4608 (81%; 3413 LUT, 317 ALU), registers 1921/3612, CLS 2164/2304 (94%, 140 free), block RAM 3/10. The 1-port place was 3648 logic and 2121 CLS (183 free), with the same 3 block RAM. Video used 43 CLS. Both PLLVR are used. Setup TNS is 0. `cpu_clk` Fmax is 16.963 MHz against 13.500. The worst setup slack is +2.744 ns.
+
+Verilator, two frames: every active pixel black, then white. The screen follows `ledState && armed`, so it stays black until the arm word is stored.
+
+Capture card UGREEN 15389, `/dev/video0`, not the webcam. A frame before the measurement was a locked picture. Across the clip the field is black (3,3,3) or white (209,209,209). On a white frame, 300 of 345600 pixels (0.087%) are below 180, a border from the stick's scale to 720×480. The stock blink analyzer measures red minus green, which is zero on both of these fields, so the screen rate is the luma of that same clip. Full-frame luma: 0.427215 Hz, period 2.340741 s, 21 edges, duty 0.510, FFT 0.416 Hz, SNR 903, confidence 0.9979, 721 frames at 30 fps. Same run, webcam `/dev/video2`, box `290,190` 50×50: 0.426458 Hz, period 2.344895 s, 21 edges, duty 0.497, FFT 0.416 Hz, confidence 0.9977. The two rates differ by 0.18%. Against 0.442038 Hz the screen is 3.35% slow, the same side as the 1-port LED clip (0.427067 Hz). The LED was not dark. Clips: `/home/lypanov/fpga/blink-measure/hdmi-flash-screen-fcf0/clip.mkv` and `/home/lypanov/fpga/blink-measure/hdmi-flash-led-fcf0/clip.mkv`.
+
 ## Step 2 — Nano 4K: the square
 
 `square` mode adds a tiny screen memory: 32×24 big blocks of 20×20 pixels, one bit each, in one block RAM (the 4K has 7 free since item E). The CPU writes it through one I/O address. Blink5 sets one block when the LED goes on and clears it when it goes off. Blink5's loop gains a store, so recompute its formula before loading the board.

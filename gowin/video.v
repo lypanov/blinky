@@ -1,0 +1,235 @@
+// One video module. The build switch is VIDEO_ON, written by the
+// HyperRAM Tcl from VIDEO_MODE. This step is flash: timing and the
+// TMDS pins, no screen memory. Square and text are later modes of
+// this same module; they are not elaborated here.
+//
+// The Nano 4K has two PLLVR (DS861). HyperRAM already uses one, and
+// its spare outputs are 54, 27, and 18 MHz, not a 5× pixel clock.
+// The other PLLVR's dedicated pin is 35, which the schematic wires
+// to HDMI TX2_P. This device has no DCC, so the video PLL takes the
+// same 27 MHz port as the HyperRAM PLL (UG286: a PLL reference may
+// be a routed clock, not only its own pin).
+//
+// The pixel clock is that 27 MHz port, and the serializer clock is
+// 5× it (135 MHz, VCO 540, inside the C6/I5 320–960 window). A
+// first bitstream used CLKDIV /5 for a 25.2 MHz pixel clock. That
+// divider is not a 50% clock, and the capture card showed snow
+// rather than a picture. 800×525 at 27 MHz is 64.3 Hz.
+//
+// Black and white are fixed 10-bit words, not an encoder. Each has
+// five ones, so repeating it holds the disparity at zero. They are
+// the cnt=0 encodings of bytes 0x10 and 0xEF, the darkest and
+// brightest bytes with that property. 0x00 and 0xFF have none.
+// Channel 0 carries VSYNC/HSYNC during blanking. The other two
+// channels carry control 00. The clock channel is five ones then
+// five zeros, LSB first.
+
+module video (
+  input  clk27,
+  input  led,
+`ifdef VIDEO_SIM
+  input  pix_sim,
+  output [9:0] word0,
+  output [9:0] word1,
+  output [9:0] word2,
+  output de_q,
+  output hs_q,
+  output vs_q,
+  output [9:0] x_q,
+  output [9:0] y_q,
+`endif
+  output tmds_clk_p,
+  output tmds_clk_n,
+  output [2:0] tmds_d_p,
+  output [2:0] tmds_d_n
+);
+
+  localparam [9:0] BLACK = 10'b0111110000;
+  localparam [9:0] WHITE = 10'b1011110000;
+  localparam [9:0] CTRL00 = 10'b1101010100;
+  localparam [9:0] CTRL01 = 10'b0010101011;
+  localparam [9:0] CTRL10 = 10'b0101010100;
+  localparam [9:0] CTRL11 = 10'b1010101011;
+
+`ifdef VIDEO_SIM
+  wire pix = pix_sim;
+  wire pll_lock = 1'b1;
+`else
+  wire serial_clk;
+  wire pll_lock;
+  wire pix = clk27;
+
+  // 27 * 5 = 135. ODIV 4 puts the VCO at 540 MHz.
+  wire clkoutp_unused;
+  wire clkoutd_unused;
+  wire clkoutd3_unused;
+  wire pll_vcc = 1'b1;
+  wire pll_gnd = 1'b0;
+
+  PLLVR u_pll (
+    .CLKOUT   (serial_clk),
+    .LOCK     (pll_lock),
+    .CLKOUTP  (clkoutp_unused),
+    .CLKOUTD  (clkoutd_unused),
+    .CLKOUTD3 (clkoutd3_unused),
+    .RESET    (pll_gnd),
+    .RESET_P  (pll_gnd),
+    .CLKIN    (clk27),
+    .CLKFB    (pll_gnd),
+    .FBDSEL   ({pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .IDSEL    ({pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .ODSEL    ({pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .PSDA     ({pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .DUTYDA   ({pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .FDLY     ({pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .VREN     (pll_vcc)
+  );
+  defparam u_pll.FCLKIN = "27";
+  defparam u_pll.DYN_IDIV_SEL = "false";
+  defparam u_pll.IDIV_SEL = 0;
+  defparam u_pll.DYN_FBDIV_SEL = "false";
+  defparam u_pll.FBDIV_SEL = 4;
+  defparam u_pll.DYN_ODIV_SEL = "false";
+  defparam u_pll.ODIV_SEL = 4;
+  defparam u_pll.PSDA_SEL = "0000";
+  defparam u_pll.DYN_DA_EN = "true";
+  defparam u_pll.DUTYDA_SEL = "1000";
+  defparam u_pll.CLKOUT_FT_DIR = 1'b1;
+  defparam u_pll.CLKOUTP_FT_DIR = 1'b1;
+  defparam u_pll.CLKOUT_DLY_STEP = 0;
+  defparam u_pll.CLKOUTP_DLY_STEP = 0;
+  defparam u_pll.CLKFB_SEL = "internal";
+  defparam u_pll.CLKOUT_BYPASS = "false";
+  defparam u_pll.CLKOUTP_BYPASS = "false";
+  defparam u_pll.CLKOUTD_BYPASS = "false";
+  defparam u_pll.DYN_SDIV_SEL = 2;
+  defparam u_pll.CLKOUTD_SRC = "CLKOUT";
+  defparam u_pll.CLKOUTD3_SRC = "CLKOUT";
+  defparam u_pll.DEVICE = "GW1NSR-4C";
+`endif
+
+  // 640×480, 800×525. Sync pulses are negative: the control bit is 0
+  // during the pulse and 1 otherwise. The frame rate follows the
+  // pixel clock: 64.3 Hz at 27 MHz.
+  reg [9:0] hx = 10'd0;
+  reg [9:0] vy = 10'd0;
+  wire hs = (hx >= 10'd96);
+  wire vs = (vy >= 10'd2);
+  wire active_x = (hx >= 10'd144) && (hx < 10'd784);
+  wire active_y = (vy >= 10'd35) && (vy < 10'd515);
+  wire de = active_x && active_y;
+
+  reg led_s1 = 1'b0;
+  reg led_s2 = 1'b0;
+  reg [9:0] word0_r = BLACK;
+  reg [9:0] word1_r = CTRL00;
+  reg [9:0] word2_r = CTRL00;
+  reg de_r = 1'b0;
+  reg hs_r = 1'b0;
+  reg vs_r = 1'b0;
+  reg [9:0] x_r = 10'd0;
+  reg [9:0] y_r = 10'd0;
+
+  // led is the CPU's ledState && armed, on the CPU clock.
+  always @(posedge pix) begin
+    led_s1 <= led;
+    led_s2 <= led_s1;
+    x_r <= hx;
+    y_r <= vy;
+    de_r <= de;
+    hs_r <= hs;
+    vs_r <= vs;
+    if (!de) begin
+      case ({vs, hs})
+        2'b00: word0_r <= CTRL00;
+        2'b01: word0_r <= CTRL01;
+        2'b10: word0_r <= CTRL10;
+        default: word0_r <= CTRL11;
+      endcase
+      word1_r <= CTRL00;
+      word2_r <= CTRL00;
+    end else if (led_s2) begin
+      word0_r <= WHITE;
+      word1_r <= WHITE;
+      word2_r <= WHITE;
+    end else begin
+      word0_r <= BLACK;
+      word1_r <= BLACK;
+      word2_r <= BLACK;
+    end
+    if (hx == 10'd799) begin
+      hx <= 10'd0;
+      if (vy == 10'd524)
+        vy <= 10'd0;
+      else
+        vy <= vy + 10'd1;
+    end else begin
+      hx <= hx + 10'd1;
+    end
+  end
+
+`ifdef VIDEO_SIM
+  assign word0 = word0_r;
+  assign word1 = word1_r;
+  assign word2 = word2_r;
+  assign de_q = de_r;
+  assign hs_q = hs_r;
+  assign vs_q = vs_r;
+  assign x_q = x_r;
+  assign y_q = y_r;
+  assign tmds_clk_p = 1'b0;
+  assign tmds_clk_n = 1'b0;
+  assign tmds_d_p = 3'b000;
+  assign tmds_d_n = 3'b000;
+`else
+  wire [2:0] ser;
+  wire ser_clk;
+
+  OSER10 u_clk (
+    .Q(ser_clk),
+    .D0(1'b1), .D1(1'b1), .D2(1'b1), .D3(1'b1), .D4(1'b1),
+    .D5(1'b0), .D6(1'b0), .D7(1'b0), .D8(1'b0), .D9(1'b0),
+    .PCLK(pix),
+    .FCLK(serial_clk),
+    .RESET(~pll_lock)
+  );
+  defparam u_clk.GSREN = "false";
+  defparam u_clk.LSREN = "false";
+
+  TLVDS_OBUF u_clk_buf (
+    .I  (ser_clk),
+    .O  (tmds_clk_p),
+    .OB (tmds_clk_n)
+  );
+
+  wire [9:0] q_ch [0:2];
+  assign q_ch[0] = word0_r;
+  assign q_ch[1] = word1_r;
+  assign q_ch[2] = word2_r;
+
+  genvar gi;
+  generate
+    for (gi = 0; gi < 3; gi = gi + 1) begin : g_ch
+      OSER10 u_ser (
+        .Q(ser[gi]),
+        .D0(q_ch[gi][0]), .D1(q_ch[gi][1]), .D2(q_ch[gi][2]),
+        .D3(q_ch[gi][3]), .D4(q_ch[gi][4]), .D5(q_ch[gi][5]),
+        .D6(q_ch[gi][6]), .D7(q_ch[gi][7]), .D8(q_ch[gi][8]),
+        .D9(q_ch[gi][9]),
+        .PCLK(pix),
+        .FCLK(serial_clk),
+        .RESET(~pll_lock)
+      );
+      defparam u_ser.GSREN = "false";
+      defparam u_ser.LSREN = "false";
+
+      TLVDS_OBUF u_buf (
+        .I  (ser[gi]),
+        .O  (tmds_d_p[gi]),
+        .OB (tmds_d_n[gi])
+      );
+    end
+  endgenerate
+`endif
+
+endmodule

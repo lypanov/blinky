@@ -1,3 +1,5 @@
+`include "video_mode.vh"
+
 // Tang Nano 4K wrapper for the HyperRAM data port.
 //
 // The bridge runs on the IP's clk_out (memory clock / 2, 27 MHz).
@@ -26,6 +28,13 @@ module blinky_top (
   input  spi_miso,
   output spi_wp,
   output spi_hold
+`ifdef VIDEO_ON
+  ,
+  output tmds_clk_p,
+  output tmds_clk_n,
+  output [2:0] tmds_d_p,
+  output [2:0] tmds_d_n
+`endif
 );
 
   wire memory_clk;
@@ -125,5 +134,18 @@ module blinky_top (
     .clk_out         (clk_out),
     .data_mask       (hr_data_mask)
   );
+
+`ifdef VIDEO_ON
+  // Flash: the whole screen follows the LED. io_led is already
+  // ledState && armed, so the screen stays black until the arm word.
+  video u_video (
+    .clk27      (clock),
+    .led        (io_led),
+    .tmds_clk_p (tmds_clk_p),
+    .tmds_clk_n (tmds_clk_n),
+    .tmds_d_p   (tmds_d_p),
+    .tmds_d_n   (tmds_d_n)
+  );
+`endif
 
 endmodule

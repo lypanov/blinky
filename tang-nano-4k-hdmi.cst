@@ -1,0 +1,54 @@
+# LED output (bank 0 is 3.3 V on the Nano 4K)
+IO_LOC "io_led" 10;
+IO_PORT "io_led" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+
+# KEY_1
+# IO_LOC "io_speed_up_n" 14;
+# IO_PORT "io_speed_up_n" PULL_MODE=UP;
+
+# Reset: USR KEY pin 15. a68a501 used PULL_DOWN + Chisel active-high
+# (unpressed = 0 = run). blinky_top does not invert this pin.
+IO_LOC "reset" 15;
+IO_PORT "reset" IO_TYPE=LVCMOS18 PULL_MODE=DOWN;
+
+# Clock signal (27 MHz oscillator, LPLL_T_in)
+IO_LOC "clock" 45;
+IO_PORT "clock" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+# UART — Sipeed Tang Nano 4K header IOB13A / IOB13B.
+# Gowin EMPU 4K examples use pin 19 as UART_TX; pin 18 is the adjacent RX.
+IO_LOC "io_uart_tx" 19;
+IO_PORT "io_uart_tx" IO_TYPE=LVCMOS18 PULL_MODE=NONE DRIVE=8;
+IO_LOC "io_uart_rx" 18;
+IO_PORT "io_uart_rx" IO_TYPE=LVCMOS18 PULL_MODE=UP;
+
+# External NOR, MSPI pins. Same locs as gowin/spi_flash.cst.
+# WP# and HOLD# are driven high. The bitstream is not written here.
+IO_LOC "spi_clk" 1;
+IO_PORT "spi_clk" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "spi_cs_n" 2;
+IO_PORT "spi_cs_n" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC "spi_mosi" 48;
+IO_PORT "spi_mosi" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "spi_miso" 47;
+IO_PORT "spi_miso" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "spi_wp" 8;
+IO_PORT "spi_wp" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC "spi_hold" 9;
+IO_PORT "spi_hold" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+
+# HDMI, Tang Nano 4K schematic 3603. Pairs are AC-coupled.
+# CLK  PIN28_IOR17A / PIN27_IOR17B
+# TX0  PIN30_IOR15A / PIN29_IOR15B
+# TX1  PIN32_IOR11A / PIN31_IOR11B
+# TX2  PIN35_IOR2A  / PIN34_IOR2B   (pin 35 is also RPLL_T_in)
+# DRIVE 3.5 matches TLVDS_OBUF on this part. The positive port
+# carries both locs of the pair.
+IO_LOC "tmds_clk_p" 28,27;
+IO_PORT "tmds_clk_p" PULL_MODE=NONE DRIVE=3.5;
+IO_LOC "tmds_d_p[0]" 30,29;
+IO_PORT "tmds_d_p[0]" PULL_MODE=NONE DRIVE=3.5;
+IO_LOC "tmds_d_p[1]" 32,31;
+IO_PORT "tmds_d_p[1]" PULL_MODE=NONE DRIVE=3.5;
+IO_LOC "tmds_d_p[2]" 35,34;
+IO_PORT "tmds_d_p[2]" PULL_MODE=NONE DRIVE=3.5;
