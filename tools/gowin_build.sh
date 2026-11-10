@@ -25,6 +25,16 @@ if [[ "$FPGA_IMAGE" != "modules" && "$FPGA_IMAGE" != "ddr3modules" ]]; then
 fi
 # Milliseconds between toggles. 1000 is a full blink of 0.500 Hz.
 BLINK3_MAXITER="${BLINK3_MAXITER:-1000}"
+# The negative disk removes Blink's collector call. The arm word follows
+# the disk checksum, so this is a separate bitstream, not a second disk
+# on the same ROM.
+NO_COLLECT="${NO_COLLECT:-0}"
+LINK_EXTRA=()
+NAME_EXTRA=""
+if [[ "$NO_COLLECT" == 1 ]]; then
+  LINK_EXTRA+=(--no-collect)
+  NAME_EXTRA="_nocollect"
+fi
 if [[ "$FPGA_IMAGE" == "modules" && -z "${BLINK3_IMEM:-}" ]]; then
   BLINK3_IMEM="$ROOT/sim/visualizer/imem/modules.words"
 fi
@@ -62,9 +72,10 @@ if [[ "$FPGA_IMAGE" == "modules" ]]; then
   python3 "$ROOT/sim/link_inner.py" \
     --max-iter "$BLINK3_MAXITER" \
     --flash-boot \
+    "${LINK_EXTRA[@]}" \
     --out "$BLINK3_IMEM"
   EXPECT_MHI="$(printf '%08x' "$(awk -F= '$1=="delay_word"{print $2}' "$ROOT/sim/visualizer/imem/core.map")")"
-  GOWIN_OUT_NAME="modules_n${BLINK3_MAXITER}"
+  GOWIN_OUT_NAME="modules_n${BLINK3_MAXITER}${NAME_EXTRA}"
   GOWIN_TCL="$ROOT/gowin/gowin_build_hyperram.tcl"
 else
   if [[ "$BOARD" != "primer20k" && "$BOARD" != "tangprimer20k" ]]; then
@@ -76,9 +87,10 @@ else
   python3 "$ROOT/sim/link_inner.py" \
     --max-iter "$BLINK3_MAXITER" \
     --uart-disk \
+    "${LINK_EXTRA[@]}" \
     --out "$BLINK3_IMEM"
   EXPECT_MHI="$(printf '%08x' "$(awk -F= '$1=="delay_word"{print $2}' "$ROOT/sim/visualizer/imem/core.map")")"
-  GOWIN_OUT_NAME="ddr3modules_n${BLINK3_MAXITER}"
+  GOWIN_OUT_NAME="ddr3modules_n${BLINK3_MAXITER}${NAME_EXTRA}"
   GOWIN_TCL="$ROOT/gowin/primer20k/gowin_ddr3.tcl"
 fi
 export GOWIN_OUT_NAME

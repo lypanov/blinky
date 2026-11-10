@@ -229,9 +229,13 @@ The Nano S1 check is the maintainer's, by hand. Hold S1, pin 14. The LED and the
 
 ## Item 28 — `NEW` and garbage collection
 
-Blink allocates a small record with `NEW` every blink and drops it. The memory limit is lowered on purpose, so that without garbage collection Blink runs out after a known number of blinks, traps, and goes dark. Every so many blinks, Blink runs the collector the way `Oberon.GC` does (`Kernel.Mark` over the loaded modules, then `Kernel.Scan`). The collector is ordinary Kernel code, so this mostly tests that the loader sets up the type information correctly.
+Published before the board loads. `MemLim` is `0xCF00`. The heap is the 3840 bytes from the stack origin `0xC000` up to that limit. `Files.Old` of each module takes a 1280-byte buffer and a 512-byte descriptor, 3584 bytes together. Blink5's second page reuses that one buffer. Eight 32-byte blocks remain. The reachable `head` takes one. Seven on-edges allocate a record and drop it. The eighth stores the light, finds no block, forces the light off, and stops. The Dock counter counts stores whose bit is 1, so it reads `0008`. That eighth on-edge is not a full second: the store and the clear are the same iteration. In the 2 ms Verilator run the light is on for 8510 bridge clocks, 0.315 ms at 27 MHz, then it is dark and stays dark.
 
-Proof: Blink keeps blinking well past the point where it would have run out. The negative: with the collector call removed, the LED goes dark at the predicted blink (the Dock's counter shows which).
+Every four on-edges, `Collect` marks from `Modules.root` and then scans, the way `Oberon.GC` does. A module whose pointer list is 0 is skipped. With the collector in place, the eighth on-edge still finds a block, and the blink continues at 0.500 Hz.
+
+Eight bytes at `MemLim` are a sentinel, size 8 and mark −1. A run of unmarked blocks can end on the limit, and `Kernel.Scan` reads one mark and one size past it. The mark is negative, so the scan stops without treating the module data as a block.
+
+Verilator, wait 2 ms. `tools/run_verilator_sim.sh`. The NOR disk's edge is 54000 bridge clocks. With the collector, 24 edges still blink, PC `0x2070`, mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. The button hold from item 27 still has no edge. Without the collector the run halts at rise 8 with the LED off. The UART disk, on the HyperRAM stand-in, does the same: 24 edges with the collector, and dark at rise 8 without it. The N=2 disk is 20360 bytes. The collector image checksum is `b2c840ad` and its arm word is `13d44d48`. The no-collector image checksum is `90c841c9` and its arm word is `31d44c2c`. The two disks differ, and the arm word follows the checksum, so the negative proof is a second bitstream.
 
 ## Item 29 — the blink rate from a file
 

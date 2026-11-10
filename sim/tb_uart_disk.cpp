@@ -21,6 +21,7 @@ int main(int argc, char** argv) {
   uint64_t slack = 0;
   int edges_needed = 3;
   int expect_halt = 0;
+  int exhaust_rises = 0;
   int reset_cycles = 32;
   uint32_t min_pc = 0;
   int watch = 0;
@@ -41,6 +42,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--slack")) slack = strtoull(need("--slack"), nullptr, 10);
     else if (!strcmp(argv[i], "--edges")) edges_needed = atoi(need("--edges"));
     else if (!strcmp(argv[i], "--expect-halt")) expect_halt = 1;
+    else if (!strcmp(argv[i], "--exhaust-rises")) exhaust_rises = atoi(need("--exhaust-rises"));
     else if (!strcmp(argv[i], "--reset")) reset_cycles = atoi(need("--reset"));
     else if (!strcmp(argv[i], "--min-pc")) min_pc = strtoul(need("--min-pc"), nullptr, 0);
     else if (!strcmp(argv[i], "--watch")) watch = 1;
@@ -60,6 +62,7 @@ int main(int argc, char** argv) {
   std::vector<uint64_t> edges;
   int prev = 0;
   int saw_led = 0;
+  int rises = 0;
   uint64_t halt_at = 0;
   uint64_t cycle = 0;
 
@@ -106,6 +109,7 @@ int main(int argc, char** argv) {
     int led = top->led ? 1 : 0;
     if (led) saw_led = 1;
     if (cycle > 0 && led != prev) {
+      if (led && !prev) rises++;
       edges.push_back(cycle);
       printf("EDGE %zu cycle %llu led %d mask %010llx r5 %08x r9 %08x halted %d pc %08x\n",
              edges.size(),
@@ -116,14 +120,14 @@ int main(int argc, char** argv) {
              top->r9,
              top->halted ? 1 : 0,
              top->pc);
-      if ((int)edges.size() >= edges_needed) break;
+      if (exhaust_rises == 0 && (int)edges.size() >= edges_needed) break;
     }
     prev = led;
     if (top->halted && halt_at == 0) {
       halt_at = cycle;
       printf("HALT cycle %llu led %d pc %08x\n",
              (unsigned long long)cycle, led, top->pc);
-      if (expect_halt) break;
+      if (expect_halt || exhaust_rises) break;
     }
   }
 
@@ -131,7 +135,17 @@ int main(int argc, char** argv) {
          (unsigned long long)cycle, edges.size(), saw_led,
          (unsigned long long)halt_at, screen_pulses);
 
-  if (expect_halt) {
+  if (exhaust_rises) {
+    int led_now = top->led ? 1 : 0;
+    if (!halt_at || led_now || rises != exhaust_rises) {
+      fprintf(stderr, "FAIL exhaust rises %d led %d halt %llu wanted %d\n",
+              rises, led_now, (unsigned long long)halt_at, exhaust_rises);
+      failed = 1;
+    } else if ((uint64_t)top->mask != 0xffffffffffULL || top->r5 != 0 || top->r9 != 0) {
+      fprintf(stderr, "FAIL mask/r5/r9 at the halt\n");
+      failed = 1;
+    }
+  } else if (expect_halt) {
     if (!halt_at || saw_led) {
       fprintf(stderr, "FAIL expected a dark halt\n");
       failed = 1;
@@ -190,7 +204,7 @@ int main(int argc, char** argv) {
   }
   // 0x01 latches the same switch bit as the button. The LED stays on
   // across three periods, and 0x00 lets the same period resume.
-  if (press && !failed && !expect_halt) {
+  if (press && !failed && !expect_halt && !exhaust_rises) {
     if (hold_cycles == 0) hold_cycles = period * 3;
     if (edges.size() != 1 || !top->led || hold_cycles == 0 || bit_clocks < 8) {
       fprintf(stderr, "FAIL press wants one rising edge and a hold\n");

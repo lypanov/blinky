@@ -20,18 +20,19 @@ inner core, then the sector pages.
   +0x08  body          Modules entry, absolute
   +0x0C  init_bytes    init stream size, including the terminating 0
   +0x10  sector_bytes  1024, the size of one page
-  +0x14  sector_count  3
+  +0x14  sector_count  3, or 4 when Blink5 continues on sector 116
   +0x18  sec0          29   directory
   +0x1C  sec1          58   AMemoryMappedToggle.rsc
-  +0x20  sec2          87   Blink5.rsc
+  +0x20  sec2          87   Blink5.rsc header
 
   code     core_bytes, the packed words, first word at core_base
   init     init_bytes, (dest, value) pairs, then a 0 dest
-  sectors  sector_count pages of sector_bytes, in sec0, sec1, sec2 order
+  sectors  sector_count pages of sector_bytes, in sector-index order.
+           The fourth page is Blink5's continuation. sec[1] in that
+           file's header names it. The directory stays nine words.
 
 The code and the init stream are the words the stub copies today. The
-pages are the three sectors SpiSector serves, before the sparse-pair
-pack. Blink waits 1000 ms between toggles.
+pages are the sectors SpiSector serves. Blink waits 1000 ms between toggles.
 
 The 4K reads this file from the NOR at 0x200000. The Dock bootstrap
 receives the same bytes over the UART and stores them in DDR3.
@@ -49,6 +50,7 @@ sys.path.insert(0, os.path.join(ROOT, "sim"))
 from link_inner import CORE_BASE, link  # noqa: E402
 from sector_image import (  # noqa: E402
     AMMT_SEC,
+    BLINK_CONT,
     BLINK_SEC,
     DIR_MARK,
     DIR_ROOT,
@@ -119,8 +121,11 @@ def build(info: dict) -> bytes:
             raise SystemExit("init stream is not the ROM slice")
     if not stream or stream[-1] != 0:
         raise SystemExit("init stream does not end with a zero dest")
+    order = list(SECTORS)
+    if BLINK_CONT in pages:
+        order.append(BLINK_CONT)
     raw_pages = b""
-    for sec in SECTORS:
+    for sec in order:
         page = pages[sec]
         if len(page) != SECTOR:
             raise SystemExit(f"sector {sec} is {len(page)} bytes")
@@ -139,7 +144,7 @@ def build(info: dict) -> bytes:
         info["body"],
         len(stream) * 4,
         SECTOR,
-        len(SECTORS),
+        len(order),
         SECTORS[0],
         SECTORS[1],
         SECTORS[2],

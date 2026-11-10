@@ -98,3 +98,41 @@ PY
 "$BIN" --expect-halt +disk="$ROOT/sim/out/disk_bad_build.bin"
 "$BIN" --expect-halt +disk="$ROOT/sim/out/disk_bad_byte.bin"
 echo "[ok] UART disk N=$N period $PERIOD, bad build dark, flipped byte dark"
+# Twelve on-edges is past the eighth, where the heap would be empty.
+"$BIN" --period "$PERIOD" --slack 2048 --edges 24 --min-pc 0x900
+echo "[ok] UART disk still blinking after the heap would have run out"
+
+python3 "$ROOT/sim/link_inner.py" \
+  --uart-disk \
+  --no-collect \
+  --max-iter "$N" \
+  --out "$WORDS"
+cp "$DISK" "$ROOT/sim/out/disk_uart_neg.bin"
+cp "$MAP" "$ROOT/sim/out/core_uart_neg.map"
+python3 "$ROOT/sim/link_inner.py" \
+  --flash-boot \
+  --no-collect \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/flash_boot_neg.words"
+cmp "$DISK" "$ROOT/sim/out/disk_uart_neg.bin"
+echo "[ok] negative UART disk bytes match the 4K flash disk"
+cp "$ROOT/sim/out/core_uart_neg.map" "$MAP"
+cp "$ROOT/sim/out/disk_uart_neg.bin" "$DISK"
+if ! SIM_IMAGE=modules mill chisel-blinky.runMain gcd.CPUSimTop; then
+  echo "error: CPUSimTop elaboration failed" >&2
+  exit 1
+fi
+verilator "${VERILATOR_FLAGS[@]}" \
+  "$ROOT/generated/CPUSimTopHyper.v" \
+  "$ROOT/generated/InstrRom.v" \
+  "$ROOT/generated/HwMul.v" \
+  "$ROOT/sim/HyperRamUserModel.v" \
+  "$ROOT/sim/CpuClock2.v" \
+  "$ROOT/gowin/KeepBit.v" \
+  "$ROOT/sim/LUT2.v" \
+  "$ROOT/gowin/uart_word_rx.v" \
+  "$ROOT/gowin/button_gate.v" \
+  "$ROOT/sim/uart_disk_top.v" \
+  "$ROOT/sim/tb_uart_disk.cpp"
+"$BIN" --exhaust-rises 8 --min-pc 0x900
+echo "[ok] UART disk goes dark at rise 8 without the collector"

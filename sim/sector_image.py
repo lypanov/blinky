@@ -22,6 +22,10 @@ SECTOR = 1024
 DIR_ROOT = 29
 AMMT_SEC = 58
 BLINK_SEC = 87
+# Blink5's second page, when the object file does not fit the header.
+# SpiSector's page index is the sector number divided by 29, and four
+# pages is as far as that index fits.
+BLINK_CONT = 116
 FS_OFFSET = 0x80000
 # Word ROM. Sector k/29 lives at word (k/29 - 1) << 8.
 ROM_WORDS = 1024
@@ -38,16 +42,52 @@ def _name32(text: bytes) -> bytes:
 
 
 def _header(name: bytes, payload: bytes, sector: int) -> bytes:
+    pages = _file_pages(name, payload, sector, None)
+    if len(pages) != 1:
+        raise SystemExit(f"{name!r} needs a continuation sector")
+    return pages[0][1]
+
+
+def _file_pages(name: bytes, payload: bytes, sector: int, cont: int | None) -> list[tuple[int, bytes]]:
+    """Header page, and a second page when the object file passes byte 672.
+
+    File length includes the 352-byte header. aleng * 1024 + bleng is that
+    length. sec[0] is the header. sec[1] is the continuation. A file this
+    short has no index page.
+    """
     if sector % 29:
         raise SystemExit(f"sector {sector} is not a multiple of 29")
+    room = SECTOR - HEADER_SIZE
+    if len(payload) <= room:
+        buf = bytearray(SECTOR)
+        struct.pack_into("<I", buf, 0, HEADER_MARK)
+        buf[4:36] = _name32(name)
+        struct.pack_into("<III", buf, 36, 0, HEADER_SIZE + len(payload), 0)
+        struct.pack_into("<I", buf, 96, sector)
+        buf[HEADER_SIZE : HEADER_SIZE + len(payload)] = payload
+        return [(sector, bytes(buf))]
+    if cont is None:
+        raise SystemExit(f"{name!r} is {len(payload)} bytes and has no continuation sector")
+    if cont % 29:
+        raise SystemExit(f"continuation sector {cont} is not a multiple of 29")
+    rest = payload[room:]
+    if len(rest) > SECTOR:
+        raise SystemExit(f"{name!r} needs more than one continuation sector")
+    total = HEADER_SIZE + len(payload)
+    aleng, bleng = divmod(total, SECTOR)
+    if bleng == 0:
+        aleng -= 1
+        bleng = SECTOR
     buf = bytearray(SECTOR)
     struct.pack_into("<I", buf, 0, HEADER_MARK)
     buf[4:36] = _name32(name)
-    # aleng, bleng, date. The rider's position 0 is byte 352 of this page.
-    struct.pack_into("<III", buf, 36, 0, HEADER_SIZE + len(payload), 0)
+    struct.pack_into("<III", buf, 36, aleng, bleng, 0)
     struct.pack_into("<I", buf, 96, sector)
-    buf[HEADER_SIZE : HEADER_SIZE + len(payload)] = payload
-    return bytes(buf)
+    struct.pack_into("<I", buf, 100, cont)
+    buf[HEADER_SIZE:] = payload[:room]
+    page = bytearray(SECTOR)
+    page[: len(rest)] = rest
+    return [(sector, bytes(buf)), (cont, bytes(page))]
 
 
 def _dir_page(entries: list[tuple[bytes, int]]) -> bytes:
@@ -83,8 +123,8 @@ def rom_words(table: dict[int, bytes] | None = None) -> list[int]:
     words = [0] * ROM_WORDS
     for sec, page in table.items():
         index = sec // 29
-        if index < 1 or index > 3:
-            raise SystemExit(f"sector {sec} is outside the three-page ROM")
+        if index < 1 or index > 4:
+            raise SystemExit(f"sector {sec} is outside the four-page image")
         base = (index - 1) * 256
         for i in range(0, SECTOR, 4):
             words[base + i // 4] = int.from_bytes(page[i : i + 4], "little")
@@ -138,7 +178,7 @@ class Card:
         rel = self.block - FS_OFFSET
         index = rel >> 1
         half = rel & 1
-        if 1 <= index <= 3:
+        if 1 <= index <= 4:
             addr = (index - 1) * 256 + half * 128 + self.idx
             got = self.words[addr]
         else:

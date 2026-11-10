@@ -8,9 +8,9 @@
 //   * addr is a 16-bit-word address. din/dout are that one halfword.
 //     column = addr[9:0], row = addr[22:10], bank = addr[25:23].
 //     The array is 65536 halfwords (addr[15:0]), two bytes per column.
-//     The modules image stores the static block at byte 0x14000 and the
-//     placed body at byte 0x2000. A 4096-halfword array faults those
-//     and the clear loop never finishes.
+//     The modules image stores the static block at byte 0xCF08, eight
+//     bytes past MemLim, and the placed body at byte 0x2000. A
+//     4096-halfword array faults those and the clear loop never finishes.
 //   * A read presents dout with data_ready nine clocks after the pulse,
 //     and drops busy on the tenth clock. A write or a refresh drops
 //     busy on the sixth clock.
