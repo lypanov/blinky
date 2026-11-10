@@ -70,6 +70,42 @@ class ChiselInstrRom(words: Seq[String], addrBits: Int) extends Module {
   io.data := data
 }
 
+// RISC5 MUL. One plain 33×33 signed multiply, registered, so Gowin can
+// map `*` onto the multiplier blocks and use the block's output register.
+// A 33-bit operand is the 32-bit value with a zero or a copy of bit 31
+// above it. The low 64 bits are the 32×32 product. Written out by hand:
+// firtool sign-extends a Chisel SInt multiply to 66×66, and that is not
+// the multiplier the FPGA has. The CPU presents the operands on the issue
+// cycle and reads the product on the next cycle.
+class HwMul extends BlackBox {
+  override def desiredName = "HwMul"
+  val io = IO(new Bundle {
+    val clk = Input(Clock())
+    val x = Input(UInt(33.W))
+    val y = Input(UInt(33.W))
+    val p = Output(UInt(64.W))
+  })
+  private val mulFile = new File("generated/HwMul.v")
+  mulFile.getParentFile.mkdirs()
+  val mulWriter = new PrintWriter(mulFile)
+  mulWriter.write(
+    """module HwMul(
+      |  input clk,
+      |  input [32:0] x,
+      |  input [32:0] y,
+      |  output [63:0] p
+      |);
+      |  reg [65:0] bits;
+      |  wire signed [32:0] xs = x;
+      |  wire signed [32:0] ys = y;
+      |  always @(posedge clk)
+      |    bits <= xs * ys;
+      |  assign p = bits[63:0];
+      |endmodule
+      |""".stripMargin)
+  mulWriter.close()
+}
+
 class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
                  customMemoryImage: Option[Seq[String]] = None,
                  waitForStores: Boolean = false,
@@ -425,10 +461,21 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     msPhase := msSum
   }
 
-  // H is the mul/div remainder. MOV Ra, H (F0, u=1, op MOV) reads it.
-  // DIV is one restoring step per clock, then a sign fix, on this adder.
-  // A combinational divider does not fit the Nano 4K.
+  // H is the high word of a product, or the remainder of a division.
+  // MOV Ra, H (F0, u=1, op MOV) reads it. DIV is one restoring step
+  // per clock, then a sign fix, on this adder. A combinational divider
+  // does not fit the Nano 4K. MUL is the registered multiply above:
+  // the issue cycle presents the operands, and the next cycle writes
+  // the low word to Ra and the high word to H. u=0 sign-extends, which
+  // is the book's MUL. u=1 zero-extends, which is UMUL. C and V stay.
+  // N and Z follow Ra.
   val hReg = RegInit(0.U(32.W))
+  val hwMul = Module(new HwMul)
+  hwMul.io.clk := clock
+  hwMul.io.x := 0.U(33.W)
+  hwMul.io.y := 0.U(33.W)
+  val mulPhase = RegInit(0.U(1.W))
+  val mulDest = Reg(UInt(4.W))
   val divPhase = RegInit(0.U(6.W))
   val divQuot = RegInit(0.U(32.W))
   val divRem = RegInit(0.U(32.W))
@@ -451,7 +498,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // Extra cycle of a two-read. PC stays on this instruction until the
   // second read commits. A stall owns the cycle instead.
   val regHold = twoRead && !regLatched && !stallFetch &&
-    !memoryAccessPending && divPhase === 0.U && !reset.asBool && !halted
+    !memoryAccessPending && divPhase === 0.U && mulPhase === 0.U &&
+    !reset.asBool && !halted
 
   // Proof 5. Page 0x22 is the placed Blink5 body. A fetch of that page
   // reads external memory. Every other PC, including reset and the
@@ -478,13 +526,15 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // Steal the memory port for one sector word before the next fetch.
   val secSteal = if (uartDisk) {
     secPhase === 1.U && bodyPhase === 0.U && !memoryAccessPending &&
-      divPhase === 0.U && !haveBody
+      divPhase === 0.U && mulPhase === 0.U && !haveBody
   } else false.B
   val secHold = if (uartDisk) {
-    secPhase =/= 0.U && !haveBody && !memoryAccessPending && divPhase === 0.U
+    secPhase =/= 0.U && !haveBody && !memoryAccessPending &&
+      divPhase === 0.U && mulPhase === 0.U
   } else false.B
   val wantBody = if (bodyFetch) {
-    inBody && !haveBody && !memoryAccessPending && divPhase === 0.U && !secHold
+    inBody && !haveBody && !memoryAccessPending && divPhase === 0.U &&
+      mulPhase === 0.U && !secHold
   } else false.B
   if (bodyFetch) {
     when (wantBody) {
@@ -681,6 +731,15 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     } .otherwise {
       divPhase := 0.U
     }
+  } .elsewhen (mulPhase =/= 0.U) {
+    // The product register captured the multiply on the issue cycle.
+    hReg := hwMul.io.p(63, 32)
+    regWrite := true.B
+    regWriteAddr := mulDest
+    regWriteData := hwMul.io.p(31, 0)
+    mulPhase := 0.U
+    pcNext := nextPC
+    printf(p"MUL done R${mulDest}=${hwMul.io.p(31, 0)} H=${hwMul.io.p(63, 32)}\n")
   } .elsewhen (regHold) {
     // Rb is on the read port. The second read commits next cycle.
     pcNext := pc
@@ -1092,6 +1151,16 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         regWriteData := result
         pcNext := nextPC
       }
+      is(10.U) { // MUL. Low word in Ra, high word in H, one cycle later.
+        val signed = !format(1)
+        val sx = Mux(signed && bval(31), 1.U(1.W), 0.U(1.W))
+        val sy = Mux(signed && operand(31), 1.U(1.W), 0.U(1.W))
+        hwMul.io.x := Cat(sx, bval)
+        hwMul.io.y := Cat(sy, operand)
+        mulDest := regA
+        mulPhase := 1.U
+        printf(p"MUL: R$regB=${bval} * ${operand} -> R$regA signed=$signed\n")
+      }
       is(11.U) { // DIV. Quotient in Ra, remainder in H. PC holds until phase 38.
         val unsigned = format(1)
         divQuot := bval
@@ -1174,7 +1243,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     regCaptured := rdPort
     heldInsn := instruction
     regLatched := true.B
-  } .elsewhen (!stallFetch && !memoryAccessPending && divPhase === 0.U && !reset.asBool) {
+  } .elsewhen (!stallFetch && !memoryAccessPending && divPhase === 0.U &&
+      mulPhase === 0.U && !reset.asBool) {
     regLatched := false.B
   }
   when (regHold || (regLatched && stallFetch)) {

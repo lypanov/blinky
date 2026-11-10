@@ -47,6 +47,7 @@ set_option -include_path $IP
 add_file -type verilog [file join $OUT src CPUMinimalWrapper.v]
 add_file -type verilog [file join $OUT KeepBit.v]
 add_file -type verilog [file join $ROOT generated InstrRom.v]
+add_file -type verilog [file join $ROOT generated HwMul.v]
 if {[info exists ::env(SECTOR_ROM)] && $::env(SECTOR_ROM) ne ""} {
   add_file -type verilog $::env(SECTOR_ROM)
 }
@@ -81,5 +82,7 @@ set_option -use_done_as_gpio 1
 set_option -use_cpu_as_gpio 1
 set_option -use_i2c_as_gpio 1
 set_option -use_jtag_as_gpio 0
+# Post-place file names the MULT36X36 site. Placement is unchanged.
+set_option -gen_posp 1
 
 run all

@@ -10,6 +10,7 @@ set_device -name GW2A-18C GW2A-LV18PG256C8/I7
 
 add_file -type verilog [file join $GOWIN src CPUMinimalWrapper.v]
 add_file -type verilog [file join $ROOT generated InstrRom.v]
+add_file -type verilog [file join $ROOT generated HwMul.v]
 if {[info exists ::env(SECTOR_ROM)] && $::env(SECTOR_ROM) ne ""} {
   add_file -type verilog $::env(SECTOR_ROM)
 }
@@ -111,5 +112,7 @@ set_option -use_ready_as_gpio 1
 set_option -use_sspi_as_gpio 1
 set_option -use_mspi_as_gpio 0
 set_option -use_jtag_as_gpio 0
+# Post-place file names the MULT36X36 site. Placement is unchanged.
+set_option -gen_posp 1
 
 run all

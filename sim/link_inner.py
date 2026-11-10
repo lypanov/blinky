@@ -88,56 +88,6 @@ def _f1_r15(inst: int) -> tuple[int, int] | None:
     return op, imm
 
 
-def _bad_math(inst: int) -> int | None:
-    if (inst >> 30) > 1:
-        return None
-    op = (inst >> 16) & 0xF
-    if op == 10 or op >= 12:
-        return op
-    return None
-
-
-def _mem(store: bool, ra: int, rb: int, off: int) -> int:
-    base = 0xA0000000 if store else 0x80000000
-    return base | ((ra & 0xF) << 24) | ((rb & 0xF) << 20) | (off & 0xFFFFF)
-
-
-def _expand_mul(inst: int) -> list[int] | None:
-    """Immediate multiply. The core has no multiplier. R11 is saved.
-
-    40 is the directory stride. 29 is AllocSector's sector size. The next
-    instruction overwrites N and Z, and H is not read.
-    """
-    if (inst >> 30) != 1 or ((inst >> 29) & 1) or ((inst >> 16) & 0xF) != 10:
-        return None
-    if (inst >> 28) & 1:
-        raise SystemExit(f"signed MUL {inst:#x}")
-    rd = (inst >> 24) & 0xF
-    rb = (inst >> 20) & 0xF
-    imm = inst & 0xFFFF
-    if rd != rb or rd >= 10 or imm not in (29, 40):
-        raise SystemExit(f"cannot rewrite MUL {inst:#x}")
-    scratch = 11
-    save = _mem(True, scratch, 14, -4)
-    restore = _mem(False, scratch, 14, -4)
-    if imm == 40:
-        return [
-            save,
-            f1(1, scratch, rd, 5),
-            f1(1, rd, rd, 3),
-            f0(8, rd, rd, scratch),
-            restore,
-        ]
-    return [
-        save,
-        f1(1, scratch, rd, 5),
-        f0(9, scratch, scratch, rd),
-        f0(9, scratch, scratch, rd),
-        f0(9, rd, scratch, rd),
-        restore,
-    ]
-
-
 def _sx24(off: int) -> int:
     off &= 0xFFFFFF
     if off & 0x800000:
@@ -335,6 +285,37 @@ def _arm_prologue(with_disk: bool = False) -> list[int]:
     a.word(f1(9, 0, 0, 2))
     a.word(f0(6, 8, 8, 0))
     a.word(0x20000000)  # MOV R0, H. The remainder of 58 DIV 29 is 0.
+    a.word(f0(6, 8, 8, 0))
+
+    def f1v(op: int, rd: int, rb: int, imm: int) -> int:
+        """F1 with v=1. imm is the raw 16-bit field, sign-extended by the CPU."""
+        return (
+            0x50000000
+            | ((rd & 0xF) << 24)
+            | ((rb & 0xF) << 20)
+            | ((op & 0xF) << 16)
+            | (imm & 0xFFFF)
+        )
+
+    # 65538 * 65535 = 2^32 + 65534. F1 MUL, the form the core executes.
+    # The low word is 0xFFFE and H is 1. A dropped high word leaves H at 0.
+    a.word(mhi(1, 1))
+    a.word(f1(8, 1, 1, 2))
+    a.word(f1(10, 0, 1, 0xFFFF))
+    a.word(f1(9, 0, 0, 0xFFFE))
+    a.word(f0(6, 8, 8, 0))
+    a.word(0x20000000)
+    a.word(f1(9, 0, 0, 1))
+    a.word(f0(6, 8, 8, 0))
+    # (-3) * 5 = -15, and H is -1. The unsigned product has the same low
+    # word and H = 4, so the high-word check is the signedness check.
+    a.word(f1v(0, 0, 0, 0xFFFD))
+    a.word(f1(0, 1, 0, 5))
+    a.word(f0(10, 0, 0, 1))
+    a.word(f1v(9, 0, 0, 0xFFF1))
+    a.word(f0(6, 8, 8, 0))
+    a.word(0x20000000)
+    a.word(f1(8, 0, 0, 1))
     a.word(f0(6, 8, 8, 0))
     for word in load_const(0, BLINK_MT):
         a.word(word)
@@ -1072,16 +1053,35 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     while pending - seen:
         seen = _walk(codes, old_base, lengths, pending)
         pending |= targets_of(seen)
-    rewritten = 0
+    muls = []
+    floats = []
     for name in ORDER:
         for index in range(lengths[name]):
             if (name, index) not in seen:
                 continue
-            if _bad_math(codes[name][index]) is not None:
-                _expand_mul(codes[name][index])
-                rewritten += 1
-    if rewritten:
-        print(f"[ok] {rewritten} immediate multiplies rewritten with R11 saved")
+            inst = codes[name][index]
+            if (inst >> 30) > 1:
+                continue
+            op = (inst >> 16) & 0xF
+            if op == 10:
+                muls.append((name, index, inst))
+            elif op >= 12:
+                floats.append((name, index, op, inst))
+    if floats:
+        # Still not executed as floating point. The words stay as they are.
+        print(f"[ok] {len(floats)} floating-point ops remain in the reachable image")
+    print(f"[ok] {len(muls)} multiplies left for the hardware multiplier")
+    for name, index, inst in muls:
+        kind = "F1" if (inst >> 30) == 1 else "F0"
+        u = (inst >> 29) & 1
+        v = (inst >> 28) & 1
+        rd = (inst >> 24) & 0xF
+        rb = (inst >> 20) & 0xF
+        extra = f" imm={inst & 0xFFFF:#x}" if kind == "F1" else f" rc={inst & 0xF}"
+        print(
+            f"    {name}+{index} {kind} {'U' if u else ''}MUL "
+            f"r{rd}, r{rb},{extra} v={v} {inst:#010x}"
+        )
 
     new_at: dict[tuple[str, int], int] = {}
     packed: list[tuple[str, int, int]] = []
@@ -1090,8 +1090,7 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         for index in sorted(i for n, i in seen if n == name):
             new_at[(name, index)] = addr
             packed.append((name, index, addr))
-            seq = _expand_mul(codes[name][index])
-            addr += (len(seq) if seq else 1) * 4
+            addr += 4
     if addr > INIT_BASE:
         raise SystemExit(f"packed code ends at {addr:#x}, init window is {INIT_BASE:#x}")
 
@@ -1126,11 +1125,7 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
                 # Keep rd, rb, and op. Clear v so the immediate is zero-extended.
                 inst = (inst & 0xEFFF0000) | new_imm
         word_pos[(name, index)] = len(words)
-        seq = _expand_mul(codes[name][index])
-        if seq:
-            words.extend(seq)
-        else:
-            words.append(inst)
+        words.append(inst)
     if len(words) * 4 != addr - CORE_BASE:
         raise SystemExit(f"packed {len(words)} words but addresses span {addr - CORE_BASE} bytes")
 
