@@ -9,6 +9,15 @@
 `ifndef VIDEO_SIM
 `include "video_mode.vh"
 `endif
+// FRAME_CHECK is the Verilator frame tap. The screen write and the
+// four digit registers use the CPU clock, the same way the board
+// does. The digits stay registers. Gowin does not set FRAME_CHECK.
+`ifdef FRAME_CHECK
+  `define VIDEO_REG_DIGITS
+`elsif VIDEO_SIM
+`else
+  `define VIDEO_REG_DIGITS
+`endif
 //
 // The Nano 4K has two PLLVR (DS861). HyperRAM already uses one, and
 // its spare outputs are 54, 27, and 18 MHz, not a 5× pixel clock.
@@ -42,6 +51,8 @@ module video (
   input  screen_bit,
   input  armed,
 `ifndef VIDEO_SIM
+  input  clk_cpu,
+`elsif FRAME_CHECK
   input  clk_cpu,
 `endif
 `ifdef VIDEO_TEXT
@@ -221,11 +232,23 @@ module video (
   integer mi;
   initial for (mi = 0; mi < 768; mi = mi + 1) mem[mi] = 1'b0;
   reg rbit_r = 1'b0;
+`ifdef FRAME_CHECK
+  // Write on the CPU clock, read on the pixel clock. Same split as
+  // the SDPB on the board. The only stored bit is block (15, 11).
+  always @(posedge clk_cpu) begin
+    if (screen_we)
+      mem[BLOCK] <= screen_bit;
+  end
+  always @(posedge pix) begin
+    rbit_r <= mem[rad];
+  end
+`else
   always @(posedge pix) begin
     if (screen_we)
       mem[BLOCK] <= screen_bit;
     rbit_r <= mem[rad];
   end
+`endif
   assign rbit = rbit_r;
 `else
   wire [31:0] ram_do;
@@ -294,41 +317,7 @@ module video (
   reg in_text_d = 1'b0;
   reg [2:0] subx_d = 3'd0;
   reg [2:0] suby_d = 3'd0;
-`ifdef VIDEO_SIM
-  reg [7:0] tmem [0:599];
-  integer ti;
-  initial for (ti = 0; ti < 600; ti = ti + 1) tmem[ti] = 8'h00;
-  reg [7:0] char_q = 8'h00;
-  always @(posedge pix) begin
-    if (text_we) begin
-      dig_src <= dig_mod;
-      dig_quot <= 14'd0;
-      dig_acc <= 5'd0;
-      dig_bi <= 4'd13;
-      dig_phase <= 2'd0;
-      dig_run <= 1'b1;
-    end else if (dig_run) begin
-      if (dig_we)
-        tmem[dig_addr] <= dig_ascii;
-      if (dig_last) begin
-        dig_src <= {dig_quot[12:0], dig_sub};
-        dig_quot <= 14'd0;
-        dig_acc <= 5'd0;
-        dig_bi <= 4'd13;
-        if (dig_phase == 2'd3)
-          dig_run <= 1'b0;
-        else
-          dig_phase <= dig_phase + 2'd1;
-      end else begin
-        dig_src <= {dig_src[12:0], 1'b0};
-        dig_quot <= {dig_quot[12:0], dig_sub};
-        dig_acc <= dig_acc_d;
-        dig_bi <= dig_bi - 4'd1;
-      end
-    end
-    char_q <= tmem[taddr];
-  end
-`else
+`ifdef VIDEO_REG_DIGITS
   // A second SDPB, free or pinned beside the square bitmap, held
   // DDR3 training. The four digits are registers. The count is the
   // number of on-stores at -80, so the CPU and Blink5 stay the
@@ -382,6 +371,40 @@ module video (
     else if (taddr == 10'd20) char_q <= d2;
     else if (taddr == 10'd21) char_q <= d3;
     else char_q <= 8'h00;
+  end
+`else
+  reg [7:0] tmem [0:599];
+  integer ti;
+  initial for (ti = 0; ti < 600; ti = ti + 1) tmem[ti] = 8'h00;
+  reg [7:0] char_q = 8'h00;
+  always @(posedge pix) begin
+    if (text_we) begin
+      dig_src <= dig_mod;
+      dig_quot <= 14'd0;
+      dig_acc <= 5'd0;
+      dig_bi <= 4'd13;
+      dig_phase <= 2'd0;
+      dig_run <= 1'b1;
+    end else if (dig_run) begin
+      if (dig_we)
+        tmem[dig_addr] <= dig_ascii;
+      if (dig_last) begin
+        dig_src <= {dig_quot[12:0], dig_sub};
+        dig_quot <= 14'd0;
+        dig_acc <= 5'd0;
+        dig_bi <= 4'd13;
+        if (dig_phase == 2'd3)
+          dig_run <= 1'b0;
+        else
+          dig_phase <= dig_phase + 2'd1;
+      end else begin
+        dig_src <= {dig_src[12:0], 1'b0};
+        dig_quot <= {dig_quot[12:0], dig_sub};
+        dig_acc <= dig_acc_d;
+        dig_bi <= dig_bi - 4'd1;
+      end
+    end
+    char_q <= tmem[taddr];
   end
 `endif
   // FONT8 BEGIN

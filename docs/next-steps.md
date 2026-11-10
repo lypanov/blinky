@@ -26,9 +26,11 @@ Needs a person. Do not hold the item open for these. On the 4K, hold S1 (pin 14,
 
 ## Item 20 — screen check in Verilator
 
-Tap the video module's pixel signal before the HDMI output. Write one frame to an image file at a chosen CPU cycle. Compare it with an image the host draws from what the frame should hold. Any difference fails. This is exactly reproducible, so it becomes a regression test for every screen mode (flash, square, counter) on both boards, and later screen work can be checked without a board.
+Done. `sim/run_frame_check.sh` taps `word0`, `word1`, and `word2`, the pixel words before the HDMI serializer, and writes one 640×480 frame. The host draws the picture that frame should hold (`tools/frame_expect.py`, the same 8×8 font). Any difference fails. The Nano runs 1 CPU clock per 2 pixel clocks (13.5 MHz and 27 MHz). The Dock runs 43 CPU clocks per 48 pixel clocks (24.1875 MHz and 27 MHz). The arm rises at CPU cycle 2. The on-store, and the LED rise for flash, is CPU cycle 64. Blank rises at CPU cycle 128 when that picture is the one under test. Each run holds those levels and writes the next whole frame.
 
-Proof: the test passes on today's images and fails on a deliberately wrong expected image.
+Cycle 32 is the off picture. Flash and square are black, 0 white pixels. The Dock counter shows `0000`, 88 white pixels, the reset value of the four digit registers. Cycle 200 is the on picture. Flash is white, 307200 pixels. Square is the 20×20 block at (15, 11), 400 white pixels. The Dock counter is `0001` plus that block, 485 white pixels. The same on picture with blank held is black, 0 white pixels, on the square and on the counter. The 4K image stops at square, so that on-store there is the block alone, 400 white pixels.
+
+On the Nano the captured frame starts at CPU cycle 210000. On the Dock it starts at 376250. The Nano and Dock files of each flash picture match, and so do the square pictures. A host picture of `0002` plus the block differs in 21 pixels. A black picture against the white flash differs in all 307200 pixels. Neither board was loaded. Nothing was written to flash. Gowin does not define `FRAME_CHECK`. The board path is still the four digit registers and the one screen block RAM.
 
 ## Item 21 — Dock: the screen at 1024×768
 
