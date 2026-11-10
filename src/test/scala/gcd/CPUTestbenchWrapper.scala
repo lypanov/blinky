@@ -45,6 +45,9 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
   cpu.io.memStall := false.B
   // These tests have no NOR. The non-flash FPGA wrapper ties MISO the same way.
   cpu.io.spiMiso := false.B
+  // The test CPU does not take a UART disk. The non-disk wrapper ties the port the same way.
+  cpu.io.diskValid := false.B
+  cpu.io.diskWord := 0.U
   
   // Connect outputs
   io.r0 := cpu.io.r0
