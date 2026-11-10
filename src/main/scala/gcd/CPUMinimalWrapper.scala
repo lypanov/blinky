@@ -41,6 +41,10 @@ class CpuWrapDdr3 extends CpuWrapBase {
   val screen_we = Output(Bool())
   val screen_bit = Output(Bool())
   val armed = Output(Bool())
+  // UART word port. The Dock bootstrap loads disk.bin through these.
+  val disk_valid = Input(Bool())
+  val disk_word = Input(UInt(32.W))
+  val disk_take = Output(Bool())
 }
 
 class CPUMinimalWrapper(
@@ -55,6 +59,7 @@ class CPUMinimalWrapper(
     bodyFetch: Boolean = false,
     core: Option[CoreMap] = None,
     flashBoot: Boolean = false,
+    uartDisk: Boolean = false,
     // DDR3 elaborations keep the Logger. Nano 4K images leave it out.
     // The Dock training UART is ddr3_uart_tx, not this module.
     enableLogger: Boolean = false
@@ -99,8 +104,17 @@ class CPUMinimalWrapper(
       chainFix = chainFix,
       bodyFetch = bodyFetch,
       core = core,
-      flashBoot = flashBoot
+      flashBoot = flashBoot,
+      uartDisk = uartDisk
     ))
+  }
+  cpu.io.diskValid := false.B
+  cpu.io.diskWord := 0.U
+  if (exposeDdr) {
+    val pins = io.asInstanceOf[CpuWrapDdr3]
+    cpu.io.diskValid := pins.disk_valid
+    cpu.io.diskWord := pins.disk_word
+    pins.disk_take := cpu.io.diskTake
   }
   if (exposeHyper) {
     val pins = io.asInstanceOf[CpuWrapHyper]

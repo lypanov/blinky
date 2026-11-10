@@ -33,7 +33,11 @@ module disk_boot_top (
     .io_spiMiso(miso),
     .io_memWrite(mem_write),
     .io_memAddr(mem_addr),
-    .io_screenWe(screen_we)
+    .io_screenWe(screen_we),
+    .io_diskValid(1'b0),
+    .io_diskWord(32'd0),
+    .io_diskTake(),
+    .io_cpuClk()
   );
 
   spi_disk_model flash (

@@ -32,6 +32,9 @@ inner core, then the sector pages.
 The code and the init stream are the words the stub copies today. The
 pages are the three sectors SpiSector serves, before the sparse-pair
 pack. The delay loop is the board image, N=65536.
+
+The 4K reads this file from the NOR at 0x200000. The Dock bootstrap
+receives the same bytes over the UART and stores them in DDR3.
 """
 from __future__ import annotations
 
@@ -106,7 +109,9 @@ def build(info: dict) -> bytes:
         raise SystemExit("code word count does not match the ROM")
     if len(stream) != info["init_words"]:
         raise SystemExit("init stream length does not match the ROM")
-    if not info.get("flash_boot"):
+    # The flash bootstrap and the Dock UART bootstrap both keep the core
+    # out of the ROM. The ROM slice check is the in-ROM image only.
+    if not info.get("flash_boot") and not info.get("uart_disk"):
         rom = info["words"]
         if rom[info["core_rom"] : info["core_rom"] + len(code)] != code:
             raise SystemExit("packed code is not the ROM slice")
@@ -120,7 +125,7 @@ def build(info: dict) -> bytes:
         if len(page) != SECTOR:
             raise SystemExit(f"sector {sec} is {len(page)} bytes")
         raw_pages += page
-    if not info.get("flash_boot") and raw_pages != _pages_from_pairs(info):
+    if not info.get("flash_boot") and not info.get("uart_disk") and raw_pages != _pages_from_pairs(info):
         raise SystemExit("sector pages are not the ROM pairs expanded")
     if int.from_bytes(pages[DIR_ROOT][:4], "little") != DIR_MARK:
         raise SystemExit("directory page has no directory mark")
@@ -187,7 +192,7 @@ def main() -> int:
     parser.add_argument("--out", default=os.path.join(ROOT, "sim", "out", "disk.bin"))
     parser.add_argument("--max-iter", type=int, default=65536)
     args = parser.parse_args()
-    info = link(args.max_iter)
+    info = link(args.max_iter, flash_boot=True)
     image = build(info)
     got = parse(image)
     if got["core_base"] != CORE_BASE or got["body"] != info["body"]:

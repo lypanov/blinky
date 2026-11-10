@@ -23,6 +23,7 @@ class CPUSimTop(
     bodyFetch: Boolean = false,
     core: Option[CoreMap] = None,
     flashBoot: Boolean = false,
+    uartDisk: Boolean = false,
     // When set, the DDR3 command port is an IO. The Micron ddr3.v bench
     // drives it. The command-port stand-in is not instantiated.
     externalPhy: Boolean = false
@@ -49,6 +50,10 @@ class CPUSimTop(
     val spiMosi = Output(Bool())
     val spiMiso = Input(Bool())
     val screenWe = Output(Bool())
+    val diskValid = Input(Bool())
+    val diskWord = Input(UInt(32.W))
+    val diskTake = Output(Bool())
+    val cpuClk = Output(Clock())
   })
   val phy = if (ddr3 && externalPhy) Some(IO(new Ddr3UserBundle)) else None
 
@@ -73,8 +78,13 @@ class CPUSimTop(
     chainFix = chainFix,
     bodyFetch = bodyFetch,
     core = core,
-    flashBoot = flashBoot
+    flashBoot = flashBoot,
+    uartDisk = uartDisk
   )) }
+  io.cpuClk := cpuClock
+  cpu.io.diskValid := io.diskValid
+  cpu.io.diskWord := io.diskWord
+  io.diskTake := cpu.io.diskTake
   io.spiCsN := cpu.io.spiCsN
   io.spiClk := cpu.io.spiClk
   io.spiMosi := cpu.io.spiMosi
@@ -265,7 +275,8 @@ object CPUSimTop {
             throw new RuntimeException("ddr3modules needs sim/visualizer/imem/core.map — run sim/link_inner.py")
           ))
         } else None
-        println(s"CPUSimTop: $image IMEM ${words.length} words extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix bodyFetch=$bodyFetch externalPhy=$externalPhy from $imemPath")
+        val uartDisk = coreMap.exists(_.uartDisk)
+        println(s"CPUSimTop: $image IMEM ${words.length} words extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix bodyFetch=$bodyFetch externalPhy=$externalPhy uartDisk=$uartDisk from $imemPath")
         (
           () => new CPUSimTop(
             Seq.empty,
@@ -276,7 +287,8 @@ object CPUSimTop {
             chainFix = chainFix,
             bodyFetch = bodyFetch,
             core = coreMap,
-            externalPhy = externalPhy
+            externalPhy = externalPhy,
+            uartDisk = uartDisk
           ),
           s"$targetDir/CPUSimTopDdr3.v",
           image
@@ -323,9 +335,10 @@ object CPUSimTop {
             throw new RuntimeException("modules needs sim/visualizer/imem/core.map — run sim/link_inner.py")
           ))
         } else None
-        val flashBoot = image == "modules" && coreMap.exists(_.romWords <= 512)
+        val uartDisk = coreMap.exists(_.uartDisk)
+        val flashBoot = image == "modules" && coreMap.exists(_.romWords <= 512) && !uartDisk
         println(s"CPUSimTop: $image IMEM ${words.length} words from $imemPath")
-        println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix bodyFetch=$bodyFetch flashBoot=$flashBoot")
+        println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix bodyFetch=$bodyFetch flashBoot=$flashBoot uartDisk=$uartDisk")
         (
           () => new CPUSimTop(
             Seq.empty,
@@ -337,7 +350,8 @@ object CPUSimTop {
             chainFix = chainFix,
             bodyFetch = bodyFetch,
             core = coreMap,
-            flashBoot = flashBoot
+            flashBoot = flashBoot,
+            uartDisk = uartDisk
           ),
           s"$targetDir/CPUSimTopHyper.v",
           image

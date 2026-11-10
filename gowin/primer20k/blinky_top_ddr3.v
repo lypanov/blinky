@@ -472,11 +472,12 @@ module blinky_top_ddr3 (
     end
   endfunction
 
-  // 120 bytes. Tail: E0 is pattern 0 at backoff 0,0. G is the
-  // last pattern-0 read. C0/C1 are the locked backoffs. BO is the
-  // inner backoff where the scan stopped. F = {pass, bad, lock,
-  // rclkpos, rclksel}.
-  localparam integer UBYTES = 120;
+  // 128 bytes. The captured read is 64 bits, beats 3..0, with
+  // beat 0 in the low half. Tail: E0 is pattern 0 at backoff 0,0.
+  // G is the last pattern-0 read. C0/C1 are the locked backoffs.
+  // BO is the inner backoff where the scan stopped.
+  // F = {pass, bad, lock, rclkpos, rclksel}.
+  localparam integer UBYTES = 128;
   wire [UBYTES*8-1:0] msg = {
     read_calib_done ? "C" : ".",
     hold_sync[1] ? "H" : ".",
@@ -484,7 +485,7 @@ module blinky_top_ddr3 (
     hex8(cpu_mask[39:32]), hex32(cpu_mask[31:0]), " ",
     hex32(cpu_r5), " ",
     hex32({6'd0, cap_addr}), " ",
-    hex32(cap_beats[31:0]), " ",
+    hex32(cap_beats[63:32]), hex32(cap_beats[31:0]), " ",
     hex32({6'd0, wr_addr}), " ",
     hex32({16'd0, wr_data}), " ",
     hex32(cpu_r9), " ",
@@ -550,6 +551,21 @@ module blinky_top_ddr3 (
       end
     end
   end
+  // Disk bytes are ignored by the gate until Blink arms. A disk.bin
+  // contains 0x01 and 0x00, and those would otherwise stick the latch.
+  wire gate_rx = cpu_armed ? uart_rx : 1'b1;
+  wire disk_valid;
+  wire disk_take;
+  wire [31:0] disk_word;
+  // cpu_clk is 24.1875 MHz. 24187500/115200 = 209.9609.
+  uart_word_rx #(.CLKS_PER_BIT(210)) u_disk_rx (
+    .clk    (cpu_clk),
+    .resetn (~cpu_reset),
+    .rx     (uart_rx),
+    .valid  (disk_valid),
+    .word   (disk_word),
+    .take   (disk_take)
+  );
   CPUMinimalWrapper u_cpu (
     .clock            (pclk),
     .reset            (cpu_reset),
@@ -578,7 +594,10 @@ module blinky_top_ddr3 (
     .io_ddr_calib     (read_calib_done),
     .io_screen_we     (screen_we),
     .io_screen_bit    (screen_bit),
-    .io_armed         (cpu_armed)
+    .io_armed         (cpu_armed),
+    .io_disk_valid    (disk_valid),
+    .io_disk_word     (disk_word),
+    .io_disk_take     (disk_take)
   );
 `endif
 
@@ -694,9 +713,12 @@ module blinky_top_ddr3 (
     end
   end
 `else
-  wire [7:0] step0_ov = 8'd0;
-  wire [7:0] step1_ov = 8'd0;
-  wire step_ov_en = 1'b0;
+  // This place's trained lane-0 step was 1, and instruction words
+  // came back with the high byte changed. Working Modules boots on
+  // this board land at lane 0 step 8..10 and lane 1 step 12.
+  wire [7:0] step0_ov = 8'd10;
+  wire [7:0] step1_ov = 8'd12;
+  wire step_ov_en = 1'b1;
 `endif
   ddr3_controller #(
     .ROW_WIDTH(13), .COL_WIDTH(10), .BANK_WIDTH(3)
@@ -807,7 +829,7 @@ module blinky_top_ddr3 (
     .resetn  (~cpu_reset),
     .cpu_led (cpu_led),
     .btn_n   (btn_n),
-    .uart_rx (uart_rx),
+    .uart_rx (gate_rx),
     .led     (led_pin),
     .pressed (pressed)
   );

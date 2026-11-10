@@ -123,5 +123,5 @@ IO_PORT "btn_n" IO_TYPE=LVCMOS15 PULL_MODE=UP;
 // The gate's flops, left in the DDR3 corner, hold write-eye training
 // (PC 0080, F=4B, dark LED) on route_option 2 and 1. The DQS primitive
 // sits at R56C45. Keep the gate in the opposite corner.
-GROUP gate_grp = {"u_gate*"};
+GROUP gate_grp = {"u_gate*" "u_disk_rx*"};
 GRP_LOC gate_grp R[2:22]C[2:18];

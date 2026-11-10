@@ -25,7 +25,8 @@ case class CoreMap(
     desc: Int,
     stringAt: Int,
     armAddr: Int,
-    armWord: Long
+    armWord: Long,
+    uartDisk: Boolean = false
 ) {
   def coreEnd: Int = coreBase + coreWords * 4
   def initEnd: Int = initBase + initWords * 4
@@ -74,7 +75,8 @@ object CoreMap {
       desc = n("desc"),
       stringAt = n("string"),
       armAddr = n("arm_addr"),
-      armWord = kv.getOrElse("arm_word", throw new RuntimeException("core.map missing arm_word"))
+      armWord = kv.getOrElse("arm_word", throw new RuntimeException("core.map missing arm_word")),
+      uartDisk = kv.getOrElse("uart_disk", 0L) == 1L
     ))
   }
 }

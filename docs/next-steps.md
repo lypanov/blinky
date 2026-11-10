@@ -52,11 +52,25 @@ Webcam `/dev/video2`, the Dock LED, box `300,28` 50×40, 14.962 fps: edge 0.3956
 
 ## Item 22 — Dock boots like the 4K
 
-Today the Dock still runs its inner core straight from on-chip ROM, and its "disk" is inside that ROM. Make it boot the way the 4K does: the same `disk.bin` from `tools/build_disk_image.py`, the same header and checksum checks, the core copied into DDR3 and every instruction fetched from there.
+Done. The Dock boots from the same `disk.bin` as the 4K. `tools/build_disk_image.py` still writes that file, and the Dock host sends those bytes after the SRAM load. The ROM is the 512-word bootstrap. It checks the magic, the version, the build, and the payload checksum, stores every file word in DDR3, and copies the core and the init stream to the addresses the 4K uses. The body is fetched from DDR3. Training stays in the controller. The button gate ignores the UART until the arm word, because a disk contains `0x01` and `0x00`.
 
-Only the way the disk arrives differs. The 4K's is written once to flash with openFPGALoader. The Dock never writes flash: after the SRAM load, the host sends `disk.bin` over the Dock's UART, and the bootstrap writes it into DDR3. DDR3 training stays in ROM, as now.
+The edge is `466*N+780` CPU clocks. At N=65536 that is 30540556 clocks. At the Dock `cpu_clk` of 24.1875 MHz the edge is 1.26266 s and the full blink is 0.39598 Hz. The UART transfer moves only the first edge.
 
-The blink loop already runs from external memory, so its period should not change. Compute it before the board is trusted. A disk with the wrong build number, or one byte flipped, must stay dark.
+HyperRAM, N=5: the good disk blinks at period 3110, PC `0x2070`. A wrong build halts at PC `0x260` with the LED off. One flipped payload byte does the same. The 4K flash path, re-run with `sim/run_disk_boot.sh 5`, is period 3110 at PC `0x2070`.
+
+4K place, `modules_n65536`, square, not loaded: logic 3792/4608 (83%; 3470 LUT, 322 ALU), registers 1973/3612, CLS 2156/2304 (94%), block RAM 4/10 (2 SDPB, 1 SDPX9B, 1 pROM). Setup violated endpoints 0. Worst setup slack +2.955 ns. `cpu_clk` Fmax 14.061 MHz against 13.500. Hold violated endpoints 2, the same cpu-to-pixel synchronizers as item 21. The Nano was not opened.
+
+Dock place, `ddr3modules_n65536`, text, route_option 2, place_option 0: logic 5524/20736 (27%; 5034 LUT, 490 ALU), registers 2921/16173, CLS 3990/10368 (39%), block RAM 2/46 (1 SDPB, 1 pROM), OSER10 4, rPLL 3/4. Setup and hold violated endpoints 0. The worst listed setup slack is +1.380 ns. `pclk` Fmax 111.660 MHz against 96.749. `cpu_clk` Fmax 27.508 MHz against 24.187. The pixel clock Fmax is 91.176 MHz against 64.800. The placed report names `ddr3_hdmi.cst`. The gate and the UART receiver stay in `R[2:22]C[2:18]`.
+
+The trainer on this place locked lane 0 at step 1. The directory words read back, and the body instruction did not. The write delay used after training is lane 1 step 12 and lane 0 step 10, the pair the working Modules boots on this board have trained. The status line shows that pair as `000C 000A`. The trainer's own lock stays in `C0`/`C1`.
+
+SRAM load was bus 003:078 only (`-m`, `write to ram`, Load SRAM 100%). Idcode `0x81b`, GW2A-18. The Nano was not opened. Nothing was written to flash. UART was FTDI channel B, 115200 8N1, opened without a USB reset. The line starts `C.`. After `tools/send_dock_disk.py` sent the 17928-byte disk, the PC sits in the delay loop (`2214` through `2238` and `225C`), mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. The write halfword is `000010F9`.
+
+Webcam `/dev/video2`, the Dock LED, box `300,28` 50×40, 29.988 fps: edge 0.395875 Hz, period 2.52605 s, duty 0.5189, 18 edges, confidence 0.998, FFT SNR 274. Against 0.39598 Hz the LED is 0.03% slow. Clip: `/tmp/blink-dock-uart-39e7/clip.mkv`.
+
+Capture card UGREEN 15389, `/dev/video0`, already at 1024×768. The first frames were green snow, mean about (5.5, 47.2, 6.7). Frame 17 is a locked black field, about (3, 3, 3). A lit square is 400 pixels above luma 80, at x=300..319 and y=220..239. The glyphs at y=48..54, x=304..335 are 78 pixels. One rise-to-rise gap in that 6 s clip is 152 frames, 2.5333 s, 0.39474 Hz. Clip: `/tmp/dock-screen-39e7/screen.mkv`.
+
+A disk with the build byte flipped halts at PC `0260`, mask `0000000000`, R9 `0002100C`. The LED box stays near 0.69 with no swing (the good clip swings from 0.08 to 25.5). One hundred and twenty locked capture frames have no lit square. A disk with payload byte 40 flipped consumes the file and halts at PC `0260`, mask `0000000000`, R9 `00025608`.
 
 ## Item 23 — retire the old step images
 

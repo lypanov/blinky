@@ -212,6 +212,7 @@ elif [[ "$FPGA_IMAGE" == "ddr3" || "$FPGA_IMAGE" == "ddr3fixup" || "$FPGA_IMAGE"
     echo "==> DDR3 Modules IMEM (compiled Init and Load of Blink5, maxIterations=$BLINK3_MAXITER)"
     python3 "$ROOT/sim/link_inner.py" \
       --max-iter "$BLINK3_MAXITER" \
+      --uart-disk \
       --out "$BLINK3_IMEM"
     EXPECT_MHI="$(printf '%08x' "$(awk -F= '$1=="delay_word"{print $2}' "$ROOT/sim/visualizer/imem/core.map")")"
   elif [[ "$FPGA_IMAGE" == "ddr3files" ]]; then
@@ -327,7 +328,7 @@ for line in open(map_path):
     key, value = line.strip().split("=")
     meta[key] = int(value)
 needle = bytes.fromhex(delay)[::-1]
-if meta.get("flash_boot") == 1:
+if meta.get("flash_boot") == 1 or meta.get("uart_disk") == 1:
     blob = open(disk_path, "rb").read()
     where = "disk"
 else:
@@ -377,7 +378,8 @@ elif [[ "$FPGA_IMAGE" == "modules" || "$FPGA_IMAGE" == "ddr3modules" ]]; then
   entry="$(sed -n '1p' "$IMEM_HEX")"
   lines="$(wc -l < "$IMEM_HEX")"
   flash_boot="$(awk -F= '$1=="flash_boot"{print $2}' "$ROOT/sim/visualizer/imem/core.map")"
-  if [[ "$FPGA_IMAGE" == "modules" && "$flash_boot" == "1" ]]; then
+  uart_disk="$(awk -F= '$1=="uart_disk"{print $2}' "$ROOT/sim/visualizer/imem/core.map")"
+  if [[ ("$FPGA_IMAGE" == "modules" && "$flash_boot" == "1") || ("$FPGA_IMAGE" == "ddr3modules" && "$uart_disk" == "1") ]]; then
     if [[ "$entry" == "40000000" ]]; then
       echo "    ROM[0] is MOV R0, 0 ($entry)"
     else

@@ -600,6 +600,10 @@ def _light(ammt: dict) -> int:
 FLASH_MAGIC = 0x314B5344
 FLASH_BUILD = 0xE1
 FLASH_BASE = 0x200000
+# The Dock has no NOR. The same file lands here, above the init stream
+# (the stream ends near 0x2025C) and inside the HyperRAM stand-in,
+# which covers 160 KB. The Dock DDR3 uses this same address.
+DISK_DDR = 0x21000
 CHECK_ADDR = 8
 DIR_AT = 0x60
 BOOT_ROM = 512
@@ -748,6 +752,117 @@ def _bootstrap(static_end: int) -> list[int]:
     return boot
 
 
+def _uart_bootstrap(static_end: int) -> list[int]:
+    """The flash bootstrap, with UART words instead of the NOR.
+
+    Every word of disk.bin is stored at DISK_DDR as it arrives, so the
+    file in DDR3 matches the bytes on the wire. The code and the init
+    stream are also copied to the addresses the 4K uses. The sector
+    pages stay in that image. -60 receives their DDR3 address. A bad
+    magic, build, or checksum branches to the halt and never arms.
+    """
+    a = Asm()
+    a.word(f1(0, 0, 0, 0))
+    a.word(f1(0, 4, 0, 0))
+    for word in load_const(9, DISK_DDR):
+        a.word(word)
+
+    def pull(rd: int) -> None:
+        a.word(ldw(rd, 0, _io(-64)))
+        a.word(stw(rd, 9, 0))
+        a.word(f1(8, 9, 9, 4))
+
+    def expect(value: int) -> None:
+        pull(1)
+        for word in load_const(2, value):
+            a.word(word)
+        a.word(f0(9, 3, 1, 2))
+        a.branch("halt", 9)
+
+    expect(FLASH_MAGIC)
+    expect(1)
+    expect(FLASH_BUILD)
+    pull(7)
+    a.word(f0(9, 6, 7, 0))
+    a.branch("halt", 1)
+    a.word(f1(4, 6, 7, 3))
+    a.word(f0(9, 6, 6, 0))
+    a.branch("halt", 9)
+    a.word(mhi(6, 1))
+    a.word(f1(8, 6, 6, 1))
+    a.word(f0(9, 3, 6, 7))
+    a.branch("halt", 1)
+    a.branch("halt", 0)
+    pull(8)
+
+    a.word(f1(0, 5, 0, DIR_AT))
+    a.word(f1(0, 6, 0, 9))
+    a.label("dir")
+    a.word(f0(9, 3, 6, 0))
+    a.branch("dirdone", 1)
+    pull(1)
+    a.word(f0(8, 4, 4, 1))
+    a.word(stw(1, 5, 0))
+    a.word(f1(8, 5, 5, 4))
+    a.word(f1(9, 7, 7, 4))
+    a.word(f1(9, 6, 6, 1))
+    a.branch("dir", 7)
+    a.label("dirdone")
+
+    def copy(label: str, count_at: int, dest_at: int | None, dest: int | None) -> None:
+        if dest is not None:
+            for word in load_const(2, dest):
+                a.word(word)
+        else:
+            a.word(ldw(2, 0, dest_at))
+        a.word(ldw(6, 0, count_at))
+        a.label(label)
+        a.word(f0(9, 3, 6, 0))
+        a.branch(label + "x", 1)
+        pull(1)
+        a.word(f0(8, 4, 4, 1))
+        a.word(stw(1, 2, 0))
+        a.word(f1(8, 2, 2, 4))
+        a.word(f1(9, 6, 6, 4))
+        a.word(f1(9, 7, 7, 4))
+        a.branch(label, 7)
+        a.label(label + "x")
+
+    copy("code", 0x64, 0x60, None)
+    copy("init", 0x6C, None, INIT_BASE)
+
+    a.label("tail")
+    a.word(f0(9, 3, 7, 0))
+    a.branch("summed", 1)
+    pull(1)
+    a.word(f0(8, 4, 4, 1))
+    a.word(f1(9, 7, 7, 4))
+    a.branch("tail", 7)
+    a.label("summed")
+    a.word(f0(9, 3, 4, 8))
+    a.branch("halt", 9)
+    a.word(stw(4, 0, CHECK_ADDR))
+    for word in load_const(1, DISK_DDR + 20 + 36):
+        a.word(word)
+    a.word(ldw(2, 0, 0x64))
+    a.word(ldw(3, 0, 0x6C))
+    a.word(f0(8, 1, 1, 2))
+    a.word(f0(8, 1, 1, 3))
+    a.word(stw(1, 0, _io(-60)))
+    a.word(ldw(5, 0, 0x68))
+    # The pointer is done. The delay loop's R9 check is zero on the 4K.
+    a.word(f1(0, 9, 0, 0))
+    _plant(a, static_end, flash=True)
+    a.label("halt")
+    a.word(HALT_WORD)
+    boot = a.encode(STUB_PC)
+    if len(boot) > 400:
+        raise SystemExit(f"uart bootstrap is {len(boot)} words; it must stay under PC 0x800")
+    if boot[-1] != HALT_WORD:
+        raise SystemExit("uart bootstrap does not end on the halt word")
+    return boot
+
+
 def _finalize_flash(info: dict) -> dict:
     """The arm word is ARM_WORD xor the disk checksum. Build the disk first."""
     import importlib
@@ -760,14 +875,18 @@ def _finalize_flash(info: dict) -> dict:
     return info
 
 
-def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False) -> dict:
+def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
+         uart_disk: bool = False) -> dict:
+    if flash_boot and uart_disk:
+        raise SystemExit("flash boot and the UART disk are different images")
+    disk_boot = flash_boot or uart_disk
     mods = _load_modules()
     payload = _compile_payload()
     blink_key = payload["AMemoryMappedToggle"]["key"]
     got = [k for name, k in payload["Blink5"]["imports"] if name == "AMemoryMappedToggle"]
     if got != [blink_key]:
         raise SystemExit(f"Blink5 import key {got} != AMemoryMappedToggle {blink_key:#x}")
-    prologue = _arm_prologue(with_disk=flash_boot)
+    prologue = _arm_prologue(with_disk=disk_boot)
     armed_raw = _append_arm(payload["Blink5"]["raw"], prologue)
     payload["Blink5"] = _reload_blink(armed_raw)
     raw, delay_word, delay_index = _patch_delay(
@@ -956,7 +1075,9 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False) -> di
         raise SystemExit("the stub writes MT[0]; Kernel.Init installs the trap there")
 
     static_end = desc_at + DESC_SIZE
-    if flash_boot:
+    if uart_disk:
+        stub = _uart_bootstrap(static_end)
+    elif flash_boot:
         stub = _bootstrap(static_end)
     else:
         a = Asm()
@@ -985,7 +1106,7 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False) -> di
     for index, word in nz:
         sector.extend((index, word))
 
-    if flash_boot:
+    if disk_boot:
         rom = [(w & 0xFFFFFFFF) for w in stub]
         rom.extend([HALT_WORD] * (BOOT_ROM - len(rom)))
         used = len(stub)
@@ -1051,6 +1172,7 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False) -> di
         "blink_words": blink_words,
         "break_arm": int(break_arm),
         "flash_boot": int(flash_boot),
+        "uart_disk": int(uart_disk),
         "data": data_base,
         "string": string_at,
         "counts": {name: sum(1 for n, _i in seen if n == name) for name in ORDER},
@@ -1062,7 +1184,7 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False) -> di
         "init_stream": list(stream),
         "sector_pages": dict(pages),
     }
-    if flash_boot:
+    if disk_boot:
         info = _finalize_flash(info)
     return info
 
@@ -1083,6 +1205,7 @@ def write_map(info: dict, path: str) -> None:
         if "disk_checksum" in info:
             out.write(f"disk_checksum={info['disk_checksum']}\n")
             out.write(f"flash_boot={info['flash_boot']}\n")
+            out.write(f"uart_disk={info.get('uart_disk', 0)}\n")
 
 
 def write_words(words: list[int], path: str) -> None:
@@ -1102,9 +1225,12 @@ def main() -> int:
                         help="Plant the code checksum plus one, so the LED stays dark")
     parser.add_argument("--flash-boot", action="store_true",
                         help="ROM is the disk bootstrap. Write sim/out/disk.bin")
+    parser.add_argument("--uart-disk", action="store_true",
+                        help="ROM is the UART bootstrap. Same disk.bin, stored in DDR3")
     args = parser.parse_args()
     n = args.mov_iter if args.mov_iter is not None else args.max_iter
-    info = link(n, break_arm=args.break_arm, flash_boot=args.flash_boot)
+    info = link(n, break_arm=args.break_arm, flash_boot=args.flash_boot,
+                uart_disk=args.uart_disk)
     write_words(info["words"], args.out)
     write_map(info, MAP_PATH)
     counts = " ".join(f"{name} {info['counts'][name]}" for name in ORDER)
@@ -1125,7 +1251,7 @@ def main() -> int:
         + (" BREAK" if info["break_arm"] else "")
     )
     print(f"[ok] map {MAP_PATH}")
-    if args.flash_boot:
+    if args.flash_boot or args.uart_disk:
         disk_path = os.path.join(ROOT, "sim", "out", "disk.bin")
         os.makedirs(os.path.dirname(disk_path), exist_ok=True)
         with open(disk_path, "wb") as out:

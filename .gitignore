@@ -404,6 +404,8 @@ sim/obj_dir_modules_n8/
 sim/obj_dir_modules_break/
 sim/obj_dir_modules/
 sim/obj_dir_disk/
+sim/obj_dir_uart_disk/
+sim/obj_dir_uart_ddr3/
 sim/obj_dir_video/
 sim/obj_dir_video_sq/
 sim/obj_dir_video_tx/
