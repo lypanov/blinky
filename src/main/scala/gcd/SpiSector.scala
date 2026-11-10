@@ -44,11 +44,11 @@ class SpiSector extends Module {
   val rel = block(15, 0)
   val half = rel(0)
   val index = rel(15, 1)
-  // Page 4 is Blink5's continuation sector. The page index is
-  // index - 1, and 0..3 still fits in the two address bits.
-  val inRange = isFs && index >= 1.U && index <= 4.U
+  // Page 4 is Blink5's continuation. Page 5 is Blink.Rate. The page
+  // index is index - 1, and 0..4 fits in three address bits.
+  val inRange = isFs && index >= 1.U && index <= 5.U
   val which = index - 1.U
-  val wordAddr = Cat(which(1, 0), half, idx(6, 0))
+  val wordAddr = Cat(which(2, 0), half, idx(6, 0))
 
   val byte = io.wdata(7, 0)
   val ocr = MuxLookup(idx(2, 0), 0.U(8.W))(Seq(

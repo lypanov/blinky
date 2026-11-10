@@ -36,10 +36,13 @@ from sector_image import (  # noqa: E402
     BLINK_SEC,
     DIR_ROOT,
     HEADER_SIZE,
+    RATE_NAME,
+    RATE_SEC,
     SECTOR,
     _dir_page,
     _file_pages,
     _header,
+    rate_page,
     rom_words,
 )
 
@@ -49,12 +52,14 @@ STUB_PC = 0x80
 ALLOC = 0x2000
 STACK = 0xC000
 # The heap is the gap from the stack origin up to MemLim.
-# Files.Old of each module takes a 1280-byte buffer and a 512-byte
-# descriptor (3584). Blink5 continues on a second page, and ReadBuf
-# reuses that one buffer, so the page does not take another block.
-# 3840 bytes leaves eight 32-byte records. head takes one. The eighth
-# on-edge finds none.
-HEAP_BYTES = (1280 + 512) * 2 + 32 * 8
+# Files.Old takes a 1280-byte buffer and a 512-byte descriptor.
+# The two modules take that pair, and Blink.Rate takes it once more
+# (5376). Blink5 continues on a second page, and ReadBuf reuses that
+# one buffer, so the page does not take another block. 5632 bytes
+# leaves eight 32-byte records. head takes one. The eighth on-edge
+# finds none.
+FILE_BYTES = 1280 + 512
+HEAP_BYTES = FILE_BYTES * 3 + 32 * 8
 MEMLIM = STACK + HEAP_BYTES
 EXHAUST_RISES = 8
 LIMIT = STACK - 0x8000
@@ -221,13 +226,6 @@ def _is_wait_mov(word: int) -> bool:
     return (word & 0xF0FF0000) == 0x40000000 and (word & 0xFFFF) == WAIT_MS
 
 
-def _wait_mov(code: list[int]) -> int:
-    hits = [i for i, word in enumerate(code) if _is_wait_mov(word)]
-    if len(hits) != 1:
-        raise SystemExit(f"Blink5 has {len(hits)} MOV {WAIT_MS} words, wanted the wait assignment")
-    return hits[0]
-
-
 def _kernel_time(code: list[int], entries: list[int]) -> tuple[int, int]:
     """Word index of Kernel.Time, and the word index of its MOV -64.
 
@@ -242,19 +240,6 @@ def _kernel_time(code: list[int], entries: list[int]) -> tuple[int, int]:
     if not starts:
         raise SystemExit("no Kernel entry covers the timer load")
     return max(starts), at
-
-
-def _patch_delay(raw: bytes, code: list[int], n: int) -> tuple[bytes, int, int]:
-    if n % 2 or not 1 <= n <= 0xFFFF:
-        raise SystemExit(f"millisecond wait {n} must be an even number that fits one MOV")
-    index = _wait_mov(code)
-    word = code[index] if n == WAIT_MS else (code[index] & 0xFFFF0000) | n
-    origin, ncode = _code_origin(raw)
-    if ncode != len(code):
-        raise SystemExit(f"Blink5 code length {ncode} != {len(code)}")
-    buf = bytearray(raw)
-    struct.pack_into("<I", buf, origin + index * 4, word)
-    return bytes(buf), word, index
 
 
 def _bl_target(index: int, word: int) -> int:
@@ -336,7 +321,9 @@ def _drop_collect(raw: bytes, code: list[int], kernel_mno: int, proc_pnos: set[i
 ARM_ADDR = 0x7C0
 ARM_WORD = 0xA11C0DE5
 SUM_ADDR = 28
-EXPECT_ROOT = 0xF0A0
+# Modules' descriptor. MemLim 0xD600 puts the static image 0x700 above
+# the item 28 root, and 0x700 is a multiple of the 16-byte pad.
+EXPECT_ROOT = 0xF7A0
 BLINK_MT = 0x38
 PLANTED_NUM = 4
 EQ = 1
@@ -557,8 +544,70 @@ def _module_end(base: int, parsed: dict) -> int:
     return ((base + size + 0x100) // 0x20) * 0x20
 
 
+def _page_sum(page: bytes) -> int:
+    total = 0
+    for i in range(0, len(page), 4):
+        total = (total + int.from_bytes(page[i : i + 4], "little")) & 0xFFFFFFFF
+    return total
+
+
+def _absolute_entries(name: str, entries: list[int], code: list[int],
+                      new_at: dict[tuple[str, int], int], data_limit: int) -> list[int]:
+    """Procedure entries become packed addresses. Data entries stay offsets.
+
+    A procedure entry is a code offset past the type descriptors and the
+    variables, and its first instruction is SUB SP, SP. An offset inside
+    the data image is a type descriptor: Rider's entry is 0, and the first
+    instruction of Files is also SUB SP, SP. Load adds the module's code
+    field, which is 0 for these planted tables.
+    """
+    out = []
+    for entry in entries:
+        index = entry // 4
+        if (
+            entry >= data_limit
+            and entry % 4 == 0
+            and 0 <= index < len(code)
+            and _sub_sp(code[index])
+            and (name, index) in new_at
+        ):
+            out.append(new_at[(name, index)])
+        else:
+            out.append(entry & 0xFFFFFFFF)
+    return out
+
+
+def _check_files_calls(code: list[int], fix_p: int, entries: list[int]) -> None:
+    """Blink's Files imports are Old, Set, and ReadInt, all planted."""
+    mno = 4
+    pnos = []
+    adr = fix_p * 4
+    seen = set()
+    while adr and adr not in seen:
+        seen.add(adr)
+        inst = code[adr // 4]
+        got = (inst // 0x100000) % 0x10
+        pno = (inst // 0x1000) % 0x100
+        disp = inst % 0x1000
+        if got == mno:
+            pnos.append(pno)
+        if disp == 0:
+            break
+        adr -= disp * 4
+    if len(pnos) < 3:
+        raise SystemExit(f"Blink5 calls Files {len(pnos)} times, wanted Old, Set, and ReadInt")
+    for pno in pnos:
+        if pno >= len(entries):
+            raise SystemExit(f"Files entry {pno} is past the table")
+        dest = entries[pno]
+        if dest < CORE_BASE or dest >= INIT_BASE:
+            raise SystemExit(f"Files entry {pno} is {dest:#x}, not a packed procedure")
+    print(f"[ok] Files calls {len(pnos)} entries {pnos}")
+
+
 def _placed_sum(ammt: dict, blink: dict, kernel_entries: list[int],
-                modules_data: int, modules_entries: list[int]) -> tuple[int, int, int]:
+                modules_data: int, modules_entries: list[int],
+                files_entries: list[int], files_data: int) -> tuple[int, int, int]:
     """Sum of Blink5's code words after Load's fixups. Returns sum, code address, word count.
 
     The planted Kernel descriptor's code field is 0. Mark, Scan, and Time
@@ -595,10 +644,16 @@ def _placed_sum(ammt: dict, blink: dict, kernel_entries: list[int],
         data=modules_data,
         entries=modules_entries,
     )
+    files = ImportedModule(
+        NUM["Files"],
+        code=0,
+        data=files_data,
+        entries=files_entries,
+    )
     fix_p, fix_d, fix_t = blink["fix_org"]
     if fix_t:
         raise SystemExit(f"Blink5 fixorgT {fix_t:#x}")
-    imports = [imp, kernel, modules]
+    imports = [imp, kernel, modules, files]
     fixup_bl(code, fix_p, code_base=blink_code, imports=imports)
     fixup_ldr_str_add(code, fix_d, blink_num, None, imports=imports)
     total = 0
@@ -1063,7 +1118,7 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     mods = _load_modules()
     payload = _compile_payload()
     blink_imports = payload["Blink5"]["imports"]
-    if [name for name, _key in blink_imports] != ["AMemoryMappedToggle", "Kernel", "Modules"]:
+    if [name for name, _key in blink_imports] != ["AMemoryMappedToggle", "Kernel", "Modules", "Files"]:
         raise SystemExit(f"Blink5 imports {blink_imports}")
     blink_key = payload["AMemoryMappedToggle"]["key"]
     got = dict(blink_imports)
@@ -1076,6 +1131,10 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     if got["Modules"] != mods["Modules"]["key"]:
         raise SystemExit(
             f"Blink5 Modules key {got['Modules']:#x} != inner core {mods['Modules']['key']:#x}"
+        )
+    if got["Files"] != mods["Files"]["key"]:
+        raise SystemExit(
+            f"Blink5 Files key {got['Files']:#x} != inner core {mods['Files']['key']:#x}"
         )
     if no_collect:
         (mark_pno, _mark_at), (scan_pno, _scan_at) = _mark_scan(
@@ -1090,13 +1149,11 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     prologue = _arm_prologue(with_disk=disk_boot)
     armed_raw = _append_arm(payload["Blink5"]["raw"], prologue)
     payload["Blink5"] = _reload_blink(armed_raw)
-    raw, delay_word, delay_index = _patch_delay(
-        payload["Blink5"]["raw"], payload["Blink5"]["code"], max_iter
-    )
-    payload["Blink5"]["raw"] = raw
-    payload["Blink5"]["code"][delay_index] = delay_word
+    # The delay lives in Blink.Rate. The code is the same for every rate.
+    if any(_is_wait_mov(word) for word in payload["Blink5"]["code"]):
+        raise SystemExit("Blink5 still has the millisecond MOV; the file should own it")
     with open(os.path.join(PAYLOAD, "Blink5.rsc"), "wb") as out:
-        out.write(raw)
+        out.write(payload["Blink5"]["raw"])
 
     data_base, _, desc_at = _assign(mods)
     if desc_at != EXPECT_ROOT:
@@ -1113,9 +1170,15 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     if len(modules_entries) < 3 or modules_entries[2] != td_bytes:
         raise SystemExit(f"Modules entry 2 is {modules_entries[2:]!r}, wanted root at {td_bytes:#x}")
     modules_ent = kernel_ent + kernel_entries * 4
-    static_end = modules_ent + len(modules_entries) * 4
+    # Files is already linked into the core. Load("Files") has to find a
+    # descriptor, because Blink calls Old, Set, and ReadInt. code is 0
+    # and the procedure entries below are absolute addresses.
+    files_at = modules_ent + len(modules_entries) * 4
+    files_ent = files_at + DESC_SIZE
+    files_len = len(mods["Files"]["entries"])
+    static_end = files_ent + files_len * 4
     if static_end >= CORE_BASE:
-        raise SystemExit(f"Kernel descriptor ends at {static_end:#x}, core is {CORE_BASE:#x}")
+        raise SystemExit(f"Files descriptor ends at {static_end:#x}, core is {CORE_BASE:#x}")
     lengths = {name: len(mods[name]["code"]) for name in ORDER}
     old_base = {}
     cursor = CORE_BASE
@@ -1304,9 +1367,16 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         new_at[k] for k in new_at if k[0] == "Modules"
     )
     desc = _desc(mods, data_base, modules_code, kernel_at, modules_ent)
+    files_mod = mods["Files"]
+    files_limit = len(files_mod["type_descriptors"]) * 4 + files_mod["data_size"]
+    files_words = _absolute_entries(
+        "Files", files_mod["entries"], codes["Files"], new_at, files_limit
+    )
+    _check_files_calls(payload["Blink5"]["code"], payload["Blink5"]["fix_org"][0], files_words)
     code_sum, blink_at, blink_words = _placed_sum(
         payload["AMemoryMappedToggle"], payload["Blink5"], kernel_words,
         data_base["Modules"], modules_entries,
+        files_words, data_base["Files"],
     )
     planted_sum = (code_sum + (1 if break_arm else 0)) & 0xFFFFFFFF
     # String at SB+0x70 is what the body passes to Load.
@@ -1318,17 +1388,33 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
 
     pairs = _pairs(data_base, mods, desc_at, desc, {})
     pairs.append((SUM_ADDR, planted_sum))
-    kdesc = _kernel_desc(mods, data_base, kernel_ent)
+    kdesc = bytearray(_kernel_desc(mods, data_base, kernel_ent))
+    struct.pack_into("<I", kdesc, 32, files_at)
     for i in range(0, len(kdesc), 4):
         word = int.from_bytes(kdesc[i : i + 4], "little")
         if word:
             pairs.append((kernel_at + i, word))
+    fdesc = bytearray(DESC_SIZE)
+    fdesc[0:6] = b"Files\x00"
+    struct.pack_into(
+        "<IIIIII", fdesc, 36,
+        mods["Files"]["key"], NUM["Files"], mods["Files"]["file_size"], 0,
+        data_base["Files"], 0,
+    )
+    struct.pack_into("<I", fdesc, 68, files_ent)
+    for i in range(0, len(fdesc), 4):
+        word = int.from_bytes(fdesc[i : i + 4], "little")
+        if word:
+            pairs.append((files_at + i, word))
     for i, word in enumerate(kernel_words):
         if word:
             pairs.append((kernel_ent + i * 4, word & 0xFFFFFFFF))
     for i, word in enumerate(modules_entries):
         if word:
             pairs.append((modules_ent + i * 4, word & 0xFFFFFFFF))
+    for i, word in enumerate(files_words):
+        if word:
+            pairs.append((files_ent + i * 4, word & 0xFFFFFFFF))
     stream = []
     for dest, value in pairs:
         stream.extend((dest, value & 0xFFFFFFFF))
@@ -1346,18 +1432,29 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         stub = _bootstrap(static_end)
 
     names = (b"AMemoryMappedToggle.rsc", b"Blink5.rsc")
-    if names != tuple(sorted(names)):
-        raise SystemExit("directory names are not in order")
-    pages = {
-        DIR_ROOT: _dir_page([(names[0], AMMT_SEC), (names[1], BLINK_SEC)]),
-    }
+    pages = {}
     for sec, page in _file_pages(names[0], payload["AMemoryMappedToggle"]["raw"], AMMT_SEC, None):
         pages[sec] = page
     for sec, page in _file_pages(names[1], payload["Blink5"]["raw"], BLINK_SEC, BLINK_CONT):
         pages[sec] = page
+    # Sector 116 is Blink5's continuation when the object file spills.
+    # The rate file takes the next free page, so the page index stays dense.
+    rate_sec = RATE_SEC if BLINK_CONT in pages else BLINK_CONT
+    pages[rate_sec] = rate_page(max_iter, rate_sec)
+    other = rate_page(max_iter + 2 if max_iter <= 0x7FFD else max_iter - 2, rate_sec)
+    if _page_sum(pages[rate_sec]) != _page_sum(other):
+        raise SystemExit("Blink.Rate's word sum depends on the delay")
+    entries = [(names[0], AMMT_SEC), (RATE_NAME, rate_sec), (names[1], BLINK_SEC)]
+    if entries != sorted(entries):
+        raise SystemExit(f"directory names are not in order: {entries}")
+    pages[DIR_ROOT] = _dir_page(entries)
     raw_sector = rom_words(pages)
-    if BLINK_CONT not in pages and any(raw_sector[768:]):
+    if BLINK_CONT not in pages and any(raw_sector[768:1024]):
         raise SystemExit("sector image uses a fourth page")
+    rate_at = (
+        20 + 36 + len(words) * 4 + len(stream) * 4
+        + (rate_sec // 29 - 1) * SECTOR + HEADER_SIZE
+    )
 
     rom = [(w & 0xFFFFFFFF) for w in stub]
     rom.extend([HALT_WORD] * (BOOT_ROM - len(rom)))
@@ -1388,9 +1485,11 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         "sector_pairs": map_sector_pairs,
         "rom_words": nrom,
         "used": used,
-        "delay_word": delay_word,
+        "delay_word": max_iter,
         "time": time_addr,
-        "delay_index": delay_index,
+        "delay_index": rate_at,
+        "rate_sec": rate_sec,
+        "rate_at": rate_at,
         "desc": desc_at,
         "arm_addr": ARM_ADDR,
         "arm_word": ARM_WORD,
@@ -1414,6 +1513,9 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     }
     if disk_boot:
         info = _finalize_flash(info)
+        got = struct.unpack_from("<ii", info["disk"], info["rate_at"])
+        if got != (max_iter, -max_iter):
+            raise SystemExit(f"rate bytes at {info['rate_at']} are {got}")
     return info
 
 
@@ -1497,6 +1599,14 @@ def main() -> int:
             f"[ok] disk {disk_path} bytes {len(info['disk'])} "
             f"checksum {info['disk_checksum']:08x} "
             f"arm {info['arm_word']:08x} boot {info['stub_words']}"
+        )
+        delay = info["delay_word"]
+        neg = (-delay) & 0xFFFFFFFF
+        raw = struct.pack("<ii", delay, -delay)
+        print(
+            f"[ok] rate {delay} ms sector {info['rate_sec']} "
+            f"at {info['rate_at']:#x} bytes {raw.hex(' ')} "
+            f"words {delay:08x} {neg:08x}"
         )
     return 0
 

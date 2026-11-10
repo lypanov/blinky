@@ -140,6 +140,23 @@ def _check_sources() -> None:
             raise SystemExit(f"{rel} sha256 {got} is not the recorded source")
 
 
+def _unchanged_symbol(name: str, key: int) -> str:
+    root = os.environ.get("NOREBO_ROOT")
+    if not root:
+        root = os.path.join(ROOT, "tools", "project-norebo")
+    hits = []
+    for base in ("build2", "build3", "Oberon", "Norebo"):
+        path = os.path.join(root, base, f"{name}.smb")
+        if not os.path.isfile(path):
+            continue
+        got = struct.unpack_from("<I", open(path, "rb").read(), 4)[0]
+        if got == key:
+            hits.append(path)
+    if not hits:
+        raise SystemExit(f"no {name}.smb with key {key:08X} under {root}")
+    return hits[0]
+
+
 def compile_inner() -> dict:
     _check_sources()
     os.makedirs(CACHE, exist_ok=True)
@@ -168,6 +185,15 @@ done
         raise SystemExit(text)
     mods = {name: parse_rsc(os.path.join(CACHE, f"{name}.rsc")) for name in ORDER}
     _check_keys(mods)
+    # ORB.Export does not rewrite a symbol file whose key is unchanged.
+    # Modules' exports match the pinned compiler, so Modules.smb stays on
+    # NOREBO_PATH and never appears in this directory. Copy that file.
+    for name in ORDER:
+        smb = os.path.join(CACHE, f"{name}.smb")
+        if os.path.isfile(smb):
+            continue
+        src = _unchanged_symbol(name, mods[name]["key"])
+        open(smb, "wb").write(open(src, "rb").read())
     check = extract_check(mods["Modules"]["code"])
     return {"modules": mods, "check": check, "log": text}
 

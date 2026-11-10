@@ -20,7 +20,7 @@ inner core, then the sector pages.
   +0x08  body          Modules entry, absolute
   +0x0C  init_bytes    init stream size, including the terminating 0
   +0x10  sector_bytes  1024, the size of one page
-  +0x14  sector_count  3, or 4 when Blink5 continues on sector 116
+  +0x14  sector_count  4, or 5 when Blink5 continues on sector 116
   +0x18  sec0          29   directory
   +0x1C  sec1          58   AMemoryMappedToggle.rsc
   +0x20  sec2          87   Blink5.rsc header
@@ -28,11 +28,14 @@ inner core, then the sector pages.
   code     core_bytes, the packed words, first word at core_base
   init     init_bytes, (dest, value) pairs, then a 0 dest
   sectors  sector_count pages of sector_bytes, in sector-index order.
-           The fourth page is Blink5's continuation. sec[1] in that
-           file's header names it. The directory stays nine words.
+           The fourth page is Blink5's continuation when that object
+           file spills. Blink.Rate is the next page. Its first word is
+           the millisecond delay and the next word is the negation, so
+           two delays have one checksum. The directory stays nine words.
 
 The code and the init stream are the words the stub copies today. The
-pages are the sectors SpiSector serves. Blink waits 1000 ms between toggles.
+pages are the sectors SpiSector serves. Blink reads its wait from
+Blink.Rate. The hardware file carries 1000 ms.
 
 The 4K reads this file from the NOR at 0x200000. The Dock bootstrap
 receives the same bytes over the UART and stores them in DDR3.
@@ -55,7 +58,10 @@ from sector_image import (  # noqa: E402
     DIR_MARK,
     DIR_ROOT,
     HEADER_MARK,
+    HEADER_SIZE,
+    RATE_NAME,
     SECTOR,
+    _name32,
 )
 
 MAGIC = 0x314B5344
@@ -121,9 +127,10 @@ def build(info: dict) -> bytes:
             raise SystemExit("init stream is not the ROM slice")
     if not stream or stream[-1] != 0:
         raise SystemExit("init stream does not end with a zero dest")
-    order = list(SECTORS)
-    if BLINK_CONT in pages:
-        order.append(BLINK_CONT)
+    order = sorted(pages)
+    for i, sec in enumerate(order):
+        if sec != (i + 1) * 29:
+            raise SystemExit(f"sector {sec} is not page {i}")
     raw_pages = b""
     for sec in order:
         page = pages[sec]
@@ -137,6 +144,14 @@ def build(info: dict) -> bytes:
     for sec in (AMMT_SEC, BLINK_SEC):
         if int.from_bytes(pages[sec][:4], "little") != HEADER_MARK:
             raise SystemExit(f"sector {sec} has no file mark")
+    rate_secs = [
+        sec for sec in order
+        if pages[sec][4 : 4 + len(RATE_NAME) + 1] == RATE_NAME + b"\0"
+    ]
+    if len(rate_secs) != 1:
+        raise SystemExit(f"Blink.Rate pages {rate_secs}")
+    if int.from_bytes(pages[rate_secs[0]][:4], "little") != HEADER_MARK:
+        raise SystemExit("Blink.Rate has no file mark")
     directory = struct.pack(
         "<9I",
         CORE_BASE,
@@ -161,6 +176,21 @@ def build(info: dict) -> bytes:
             f"disk is {len(image)} bytes at {FLASH_BASE:#x}, past {FLASH_LIMIT:#x}"
         )
     return image
+
+
+def set_rate(image: bytes, delay_ms: int) -> bytes:
+    """Rewrite Blink.Rate. The negation keeps the payload checksum."""
+    if delay_ms % 2 or not 1 <= delay_ms <= 0x7FFF:
+        raise SystemExit(f"rate {delay_ms} must be a positive even millisecond count")
+    needle = struct.pack("<I", HEADER_MARK) + _name32(RATE_NAME)
+    at = image.find(needle)
+    if at < 0 or image.find(needle, at + 1) >= 0:
+        raise SystemExit("Blink.Rate header is not unique")
+    buf = bytearray(image)
+    struct.pack_into("<ii", buf, at + HEADER_SIZE, delay_ms, -delay_ms)
+    if checksum(bytes(buf[HEADER_BYTES:])) != int.from_bytes(image[16:20], "little"):
+        raise SystemExit("rate edit changed the checksum")
+    return bytes(buf)
 
 
 def parse(image: bytes) -> dict:

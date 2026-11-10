@@ -98,9 +98,39 @@ PY
 "$BIN" --expect-halt +disk="$ROOT/sim/out/disk_bad_build.bin"
 "$BIN" --expect-halt +disk="$ROOT/sim/out/disk_bad_byte.bin"
 echo "[ok] UART disk N=$N period $PERIOD, bad build dark, flipped byte dark"
-# Twelve on-edges is past the eighth, where the heap would be empty.
-"$BIN" --period "$PERIOD" --slack 2048 --edges 24 --min-pc 0x900
+# Twelve on-edges is past the eighth, where the heap would have run out.
+# Collect runs on the fourth on-edge and stretches that half. The
+# three-edge run above is the period. This run only has to keep going.
+"$BIN" --edges 24 --min-pc 0x900
 echo "[ok] UART disk still blinking after the heap would have run out"
+
+ALT=$((N + 2))
+ALT_PERIOD=$((ALT * 48375))
+python3 - "$DISK" "$ROOT/sim/out/disk-rate-alt.bin" "$ALT" << 'PY'
+import struct
+import sys
+sys.path.insert(0, "tools")
+from build_disk_image import checksum, set_rate
+src_path, dst_path, delay = sys.argv[1:]
+delay = int(delay)
+src = open(src_path, "rb").read()
+alt = set_rate(src, delay)
+needle = struct.pack("<ii", delay, -delay)
+at = alt.find(needle)
+diffs = [i for i, (a, b) in enumerate(zip(src, alt)) if a != b]
+if (
+    len(src) != len(alt) or at < 0 or not diffs
+    or any(i < at or i >= at + 8 for i in diffs)
+):
+    raise SystemExit(f"rate disks differ in {len(diffs)} bytes, lengths {len(src)} {len(alt)}")
+if checksum(src[20:]) != checksum(alt[20:]):
+    raise SystemExit("rate disks have different checksums")
+open(dst_path, "wb").write(alt)
+print(f"[ok] second rate {delay} ms differs in {len(diffs)} rate bytes, checksum held")
+PY
+"$BIN" --period "$ALT_PERIOD" --slack 2048 --edges 3 --min-pc 0x900 \
+  +disk="$ROOT/sim/out/disk-rate-alt.bin"
+echo "[ok] UART disk N=$ALT period $ALT_PERIOD, same image"
 
 python3 "$ROOT/sim/link_inner.py" \
   --uart-disk \

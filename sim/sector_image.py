@@ -23,12 +23,15 @@ DIR_ROOT = 29
 AMMT_SEC = 58
 BLINK_SEC = 87
 # Blink5's second page, when the object file does not fit the header.
-# SpiSector's page index is the sector number divided by 29, and four
-# pages is as far as that index fits.
+# SpiSector's page index is the sector number divided by 29. Five
+# pages cover the directory, the two modules, Blink5's continuation,
+# and Blink.Rate.
 BLINK_CONT = 116
+RATE_SEC = 145
+RATE_NAME = b"Blink.Rate"
 FS_OFFSET = 0x80000
 # Word ROM. Sector k/29 lives at word (k/29 - 1) << 8.
-ROM_WORDS = 1024
+ROM_WORDS = 1280
 
 AMMT_NAME = b"AMemoryMappedToggle"
 BLINK_NAME = b"Blink5"
@@ -90,6 +93,25 @@ def _file_pages(name: bytes, payload: bytes, sector: int, cont: int | None) -> l
     return [(sector, bytes(buf)), (cont, bytes(page))]
 
 
+def rate_page(delay_ms: int, sector: int) -> bytes:
+    """One sector. The file is the delay and its negation.
+
+    Files.ReadInt returns the first word. The two words sum to 0, so
+    the disk checksum does not depend on the delay.
+    """
+    if delay_ms % 2 or not 1 <= delay_ms <= 0x7FFF:
+        raise SystemExit(f"rate {delay_ms} must be a positive even millisecond count")
+    payload = struct.pack("<ii", delay_ms, -delay_ms)
+    built = _file_pages(RATE_NAME, payload, sector, None)
+    if len(built) != 1:
+        raise SystemExit("Blink.Rate spilled past its header sector")
+    page = built[0][1]
+    got, neg = struct.unpack_from("<ii", page, HEADER_SIZE)
+    if got != delay_ms or (got + neg) & 0xFFFFFFFF != 0:
+        raise SystemExit(f"rate pair {got} {neg} is not checksum-neutral")
+    return page
+
+
 def _dir_page(entries: list[tuple[bytes, int]]) -> bytes:
     buf = bytearray(SECTOR)
     struct.pack_into("<III", buf, 0, DIR_MARK, len(entries), 0)
@@ -123,8 +145,8 @@ def rom_words(table: dict[int, bytes] | None = None) -> list[int]:
     words = [0] * ROM_WORDS
     for sec, page in table.items():
         index = sec // 29
-        if index < 1 or index > 4:
-            raise SystemExit(f"sector {sec} is outside the four-page image")
+        if index < 1 or index > 5:
+            raise SystemExit(f"sector {sec} is outside the five-page image")
         base = (index - 1) * 256
         for i in range(0, SECTOR, 4):
             words[base + i // 4] = int.from_bytes(page[i : i + 4], "little")
@@ -178,7 +200,7 @@ class Card:
         rel = self.block - FS_OFFSET
         index = rel >> 1
         half = rel & 1
-        if 1 <= index <= 4:
+        if 1 <= index <= 5:
             addr = (index - 1) * 256 + half * 128 + self.idx
             got = self.words[addr]
         else:

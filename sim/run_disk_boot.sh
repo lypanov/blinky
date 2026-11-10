@@ -62,9 +62,43 @@ echo "[ok] NOR disk N=$N period $PERIOD"
 # S1 held across three edges. The LED stays on, then the period resumes.
 "$BIN" --press --period "$PERIOD" --slack 2048 --edges 1 --hold-cycles $((PERIOD * 3))
 echo "[ok] NOR disk N=$N paused while the button was held"
-# Twelve on-edges is past the eighth, where the heap would be empty.
-"$BIN" --period "$PERIOD" --slack 2048 --edges 24
+# Twelve on-edges is past the eighth, where the heap would have run out.
+# Collect runs on the fourth on-edge and stretches that half. The
+# three-edge run above is the period. This run only has to keep going.
+"$BIN" --edges 24
 echo "[ok] NOR disk still blinking after the heap would have run out"
+
+# A second delay, same elaborated image. The file's next word is the
+# negation, so the checksum and the arm word stay put.
+ALT=$((N + 2))
+ALT_PERIOD=$((ALT * 27000))
+python3 - "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-rate-alt.bin" "$ALT" << 'PY'
+import struct
+import sys
+sys.path.insert(0, "tools")
+from build_disk_image import checksum, set_rate
+src_path, dst_path, delay = sys.argv[1:]
+delay = int(delay)
+src = open(src_path, "rb").read()
+alt = set_rate(src, delay)
+needle = struct.pack("<ii", delay, -delay)
+at = alt.find(needle)
+diffs = [i for i, (a, b) in enumerate(zip(src, alt)) if a != b]
+if (
+    len(src) != len(alt) or at < 0 or not diffs
+    or any(i < at or i >= at + 8 for i in diffs)
+):
+    raise SystemExit(f"rate disks differ in {len(diffs)} bytes, lengths {len(src)} {len(alt)}")
+if checksum(src[20:]) != checksum(alt[20:]):
+    raise SystemExit("rate disks have different checksums")
+open(dst_path, "wb").write(alt)
+print(f"[ok] second rate {delay} ms differs in {len(diffs)} rate bytes, checksum held")
+PY
+cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-rate-base.bin"
+cp "$ROOT/sim/out/disk-rate-alt.bin" "$ROOT/sim/out/disk.bin"
+"$BIN" --period "$ALT_PERIOD" --slack 2048 --edges 3
+echo "[ok] NOR disk N=$ALT period $ALT_PERIOD, same image"
+cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
 python3 "$ROOT/sim/link_inner.py" \
   --flash-boot \

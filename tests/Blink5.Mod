@@ -1,5 +1,5 @@
 MODULE Blink5;
-  IMPORT MMT := AMemoryMappedToggle, Kernel, Modules, SYSTEM;
+  IMPORT MMT := AMemoryMappedToggle, Kernel, Modules, Files, SYSTEM;
   (*
     sim/link_inner.py places the arm sequence ahead of this loop. It runs once,
     before the wait, and stores one word at 7C0H. The word is
@@ -14,9 +14,14 @@ MODULE Blink5;
     A board without that device decodes the store and drops it. The Dock
     counts the stores whose bit is 1.
 
-    Kernel.Time reads the counter at -64. The wait below is 1000 ms, so a
-    toggle happens every second and a full blink is 0.500 Hz on both boards.
-    The linker patches that 1000 for a short simulation.
+    Kernel.Time reads the counter at -64. The wait is the integer at the
+    start of Blink.Rate, read once through Files.Old. One thousand is a
+    toggle every second and a full blink of 0.500 Hz. The next four bytes
+    are the negation of that integer, so a second delay keeps the same
+    disk checksum and the same arm word.     A missing file, or a delay that
+    is not positive, stores the light off and stops. The clock starts
+    after that read. Opening the file takes longer than the delay, and
+    a clock started earlier would queue a burst of toggles.
 
     -60 is the book's switch word. Bit 0 is switch 0: 1 while the button
     is held, or while the Dock UART press latch is set. There are no
@@ -27,10 +32,11 @@ MODULE Blink5;
     Each on-edge allocates one record and drops it. head stays reachable,
     and its next field points at itself, so the collector follows one real
     pointer offset from the type descriptor the loader placed. MemLim is
-    0CF00H. The heap is the 3840 bytes from the stack origin 0C000H up to
-    that limit. The two open files take 3584 of those bytes. Reading this
-    module's second page reuses the one buffer, so it takes no more.
-    Eight 32-byte blocks remain. head takes one. Seven on-edges succeed.
+    0D600H. The heap is the 5632 bytes from the stack origin 0C000H up to
+    that limit. Files.Old of each module takes a 1280-byte buffer and a
+    512-byte descriptor. Blink.Rate takes that same pair, 1792 bytes.
+    Reading this module's second page reuses its one buffer. Eight
+    32-byte blocks remain. head takes one. Seven on-edges succeed.
     The eighth stores the light, finds no block, forces the light off,
     and stops. The Dock counter then reads 0008.
 
@@ -44,6 +50,8 @@ MODULE Blink5;
 
   VAR last, now, wait, keys, n, due: INTEGER;
     node, head: Node;
+    rate: Files.File;
+    R: Files.Rider;
 
   PROCEDURE Collect;
     VAR m: Modules.Module;
@@ -65,8 +73,12 @@ MODULE Blink5;
   END Dark;
 
 BEGIN
+  rate := Files.Old("Blink.Rate");
+  IF rate = NIL THEN Dark END;
+  Files.Set(R, rate, 0);
+  Files.ReadInt(R, wait);
+  IF wait <= 0 THEN Dark END;
   last := Kernel.Time();
-  wait := 1000;
   n := 0;
   due := 4;
   NEW(head);

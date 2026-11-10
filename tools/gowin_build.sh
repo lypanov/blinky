@@ -140,11 +140,13 @@ meta = {}
 for line in open(map_path):
     key, value = line.strip().split("=")
     meta[key] = int(value, 0)
+word = int(delay, 16)
+neg = (-word) & 0xFFFFFFFF
 blob = open(disk_path, "rb").read()
-needle = bytes.fromhex(delay)[::-1]
+needle = word.to_bytes(4, "little") + neg.to_bytes(4, "little")
 if needle not in blob:
-    raise SystemExit(f"delay word {delay} is not in the disk")
-print(f"    disk contains {delay}")
+    raise SystemExit(f"rate bytes {needle.hex()} are not in the disk")
+print(f"    disk contains {delay} and its negation")
 PY
 
 echo "==> Checking the bootstrap at ROM[0]"
