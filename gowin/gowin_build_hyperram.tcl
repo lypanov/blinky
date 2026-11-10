@@ -51,6 +51,7 @@ if {[info exists ::env(SECTOR_ROM)] && $::env(SECTOR_ROM) ne ""} {
   add_file -type verilog $::env(SECTOR_ROM)
 }
 add_file -type verilog [file join $OUT blinky_top_hyperram.v]
+add_file -type verilog [file join $OUT button_gate.v]
 add_file -type verilog [file join $OUT ip gowin_sp.v]
 add_file -type verilog [file join $OUT ip hpram_pllvr.v]
 add_file -type verilog [file join $OUT ip gowin_clkdiv2.v]

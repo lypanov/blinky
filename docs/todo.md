@@ -2,7 +2,7 @@
 
 One item at a time, from the top. This file is an index. The write-up is in the file each item names.
 
-Next: 19.
+Next: 20.
 
 1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay. Done. The measured result is in the ledger.
 
@@ -29,7 +29,7 @@ Ledger items are not to-dos. If a later item cannot fit on the Nano 4K without a
 17. Dock: the same square. Same file, step 4. Done. The measured result is in that file.
 18. Dock: a blink counter in text on screen. Same file, step 5. Done. The measured result is in that file.
 
-19. Button gate on both boards, proved on hardware. [`docs/next-steps.md`](next-steps.md), item 19. Brings back PR #22.
+19. Button gate on both boards, proved on hardware. [`docs/next-steps.md`](next-steps.md), item 19. Brings back PR #22. Done. The measured result is in that file.
 20. Screen check in Verilator: one frame at a chosen cycle against a host-drawn image. Same file, item 20.
 21. Dock: the screen at 1024×768. Same file, item 21.
 22. Dock boots like the 4K: the same `disk.bin` and bootstrap, the disk sent over the UART into DDR3. Same file, item 22.

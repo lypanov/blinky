@@ -14,6 +14,7 @@ if {[info exists ::env(SECTOR_ROM)] && $::env(SECTOR_ROM) ne ""} {
   add_file -type verilog $::env(SECTOR_ROM)
 }
 add_file -type verilog [file join $HERE blinky_top_ddr3.v]
+add_file -type verilog [file join $GOWIN button_gate.v]
 add_file -type verilog [file join $HERE ddr3_pll.v]
 add_file -type verilog [file join $HERE ddr3 gowin_clkdiv.v]
 add_file -type verilog [file join $HERE ddr3 ddr3_controller.v]

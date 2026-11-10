@@ -49,6 +49,16 @@ static void pulse(Vvideo* top, int bit) {
   posedge(top);
 }
 
+static void to_frame(Vvideo* top) {
+  for (int i = 0; i < 4; i++) posedge(top);
+  for (int i = 0; i < FRAME + 8; i++) {
+    if (top->x_q == 0 && top->y_q == 0) return;
+    posedge(top);
+  }
+  fprintf(stderr, "FAIL no frame start\n");
+  fails++;
+}
+
 static void frame(Vvideo* top, int want_square, const char* name) {
   int white = 0;
   int active = 0;
@@ -96,6 +106,7 @@ int main(int argc, char** argv) {
   auto* top = new Vvideo;
   top->clk27 = 0;
   top->led = 1;
+  top->blank = 0;
   top->pix_sim = 0;
   top->screen_we = 0;
   top->screen_bit = 0;
@@ -115,6 +126,15 @@ int main(int argc, char** argv) {
   top->led = 0;
   pulse(top, 0);
   frame(top, 0, "off");
+
+  // The bit stays set. Blanking hides it, and release shows it again.
+  pulse(top, 1);
+  top->blank = 1;
+  to_frame(top);
+  frame(top, 0, "blanked");
+  top->blank = 0;
+  to_frame(top);
+  frame(top, 1, "released");
 
   if (fails) {
     fprintf(stderr, "FAIL %d\n", fails);

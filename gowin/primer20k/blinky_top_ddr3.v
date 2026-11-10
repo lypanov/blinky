@@ -59,7 +59,11 @@ module blinky_top_ddr3 (
   output        DDR3_ODT,
   inout  [15:0] DDR3_DQ,
   inout  [1:0]  DDR3_DQS,
-  output        uart_tx
+  output        uart_tx,
+  // BL702 UART RX, ball T13. The host sends the press byte here.
+  input         uart_rx,
+  // Key S2, ball T3, bank 4, 1.5 V, active-low. S1 stays reset.
+  input         btn_n
 `ifdef VIDEO_ON
   ,
   output        tmds_clk_p,
@@ -74,6 +78,8 @@ module blinky_top_ddr3 (
   wire [15:0] unused_deadbeef;
   wire [2:0]  unused_addr;
   wire        cpu_led;
+  wire        led_pin;
+  wire        pressed;
   wire        screen_we;
   wire        screen_bit;
   wire        cpu_armed;
@@ -743,7 +749,8 @@ module blinky_top_ddr3 (
   // the arm word. The store is the same pulse the 4K square uses.
   video u_video (
     .clk27      (Clock),
-    .led        (cpu_led),
+    .led        (led_pin),
+    .blank      (pressed),
 `ifdef VIDEO_SQUARE
     .screen_we  (screen_we),
     .screen_bit (screen_bit),
@@ -779,6 +786,11 @@ module blinky_top_ddr3 (
   always @(posedge cpu_clk)
     cpu_tick <= ~cpu_tick;
   assign IO_voltage = pass_sticky ? ~pass_div[26] : 1'b1;
+  assign led_pin = 1'b0;
+  assign pressed = 1'b0;
+  // The shared pin file still names these ports. This image does not gate.
+  (* syn_keep = 1 *) reg port_pin_keep = 1'b0;
+  always @(posedge Clock) port_pin_keep <= btn_n ^ uart_rx;
   assign led[0] = 1'b1;
   assign led[1] = alive_div[26];
   assign led[2] = cpu_tick;
@@ -786,8 +798,20 @@ module blinky_top_ddr3 (
   // L14 is the only moving LED the webcam cluster can see. C13 and A13
   // stay dark, so a PC divider cannot be reported as the proof blink.
   // cpu_led is 0 until every compare difference was zero, and then it
-  // follows the Blink3 state. Failure leaves L14 off.
-  assign IO_voltage = ~cpu_led;
+  // follows the Blink3 state. Failure leaves L14 off. cpu_clk is
+  // 24.1875 MHz. 24187500/115200 = 209.9609, so the bit time is 210.
+  // S2 or a latched press byte forces the pin off. The CPU keeps
+  // toggling, and a release shows that phase.
+  button_gate #(.CLKS_PER_BIT(210)) u_gate (
+    .clk     (cpu_clk),
+    .resetn  (~cpu_reset),
+    .cpu_led (cpu_led),
+    .btn_n   (btn_n),
+    .uart_rx (uart_rx),
+    .led     (led_pin),
+    .pressed (pressed)
+  );
+  assign IO_voltage = ~led_pin;
   assign led[0] = 1'b1;
   assign led[1] = 1'b1;
   assign led[2] = 1'b1;

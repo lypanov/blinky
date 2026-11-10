@@ -61,6 +61,7 @@ int main(int argc, char** argv) {
   auto* top = new Vvideo;
   top->clk27 = 0;
   top->led = 0;
+  top->blank = 0;
   top->pix_sim = 0;
   top->eval();
 
@@ -85,6 +86,39 @@ int main(int argc, char** argv) {
   }
   if (active != 640 * 480) {
     fprintf(stderr, "FAIL white frame active %d\n", active);
+    fails++;
+  }
+
+  // A press blanks the picture while led stays 1. Release shows white
+  // again, the phase the LED input already has.
+  top->blank = 1;
+  active = 0;
+  int white_px = 0;
+  for (int i = 0; i < FRAME; i++) {
+    posedge(top);
+    check_pixel(top, i, 0);
+    if (top->de_q) {
+      active++;
+      if (top->word0 == WHITE) white_px++;
+    }
+  }
+  if (active != 640 * 480 || white_px != 0) {
+    fprintf(stderr, "FAIL blanked frame active %d white %d\n", active, white_px);
+    fails++;
+  }
+  top->blank = 0;
+  active = 0;
+  white_px = 0;
+  for (int i = 0; i < FRAME; i++) {
+    posedge(top);
+    check_pixel(top, i, i >= 2);
+    if (top->de_q) {
+      active++;
+      if (top->word0 == WHITE) white_px++;
+    }
+  }
+  if (active != 640 * 480 || white_px != 640 * 480) {
+    fprintf(stderr, "FAIL release frame active %d white %d\n", active, white_px);
     fails++;
   }
 

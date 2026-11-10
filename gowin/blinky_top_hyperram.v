@@ -16,6 +16,8 @@ module blinky_top (
   output io_led,
   input  io_uart_rx,
   output io_uart_tx,
+  // S1 / KEY1, package pin 14, active-low. S2 stays the reset input.
+  input  io_btn_n,
   output [0:0] O_hpram_ck,
   output [0:0] O_hpram_ck_n,
   (* syn_tristate = 1 *) inout [7:0] IO_hpram_dq,
@@ -79,6 +81,8 @@ module blinky_top (
   wire screen_we;
   wire screen_bit;
   wire cpu_armed;
+  wire cpu_led;
+  wire pressed;
 
   // Runs as soon as the PLL locks, including while the CPU is still in
   // the power-on reset. DIV_MODE 2 is edge-aligned with clk_out.
@@ -93,10 +97,10 @@ module blinky_top (
     .clock             (clk_out),
     .io_cpu_clock      (cpu_clk),
     .reset             (cpu_reset),
-    .io_led            (io_led),
+    .io_led            (cpu_led),
     .io_deadbeef       (unused_deadbeef),
     .io_addr           (unused_addr),
-    .io_uart_rx        (io_uart_rx),
+    .io_uart_rx        (1'b1),
     .io_uart_tx        (io_uart_tx),
     .io_hr_cmd         (hr_cmd),
     .io_hr_cmd_en      (hr_cmd_en),
@@ -118,6 +122,18 @@ module blinky_top (
   // WP# and HOLD# stay deasserted. They are not part of the CPU.
   assign spi_wp = 1'b1;
   assign spi_hold = 1'b1;
+
+  // cpu_clk is 13.5 MHz. 13500000/115200 = 117.1875.
+  // The pin follows cpu_led unless S1 is held or a press byte is latched.
+  button_gate #(.CLKS_PER_BIT(117)) u_gate (
+    .clk     (cpu_clk),
+    .resetn  (~cpu_reset),
+    .cpu_led (cpu_led),
+    .btn_n   (io_btn_n),
+    .uart_rx (io_uart_rx),
+    .led     (io_led),
+    .pressed (pressed)
+  );
 
   (* syn_hier = "hard" *) HyperRAM_Memory_Interface_Top u_hpram (
     .clk             (clock),
@@ -148,6 +164,7 @@ module blinky_top (
   video u_video (
     .clk27      (clock),
     .led        (io_led),
+    .blank      (pressed),
 `ifdef VIDEO_SQUARE
     .screen_we  (screen_we),
     .screen_bit (screen_bit),

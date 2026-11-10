@@ -34,6 +34,9 @@
 module video (
   input  clk27,
   input  led,
+  // Forces every active pixel black. The square bit and the digits
+  // keep updating, so clearing this shows the phase already stored.
+  input  blank,
 `ifdef VIDEO_SQUARE
   input  screen_we,
   input  screen_bit,
@@ -186,6 +189,8 @@ module video (
 
   reg led_s1 = 1'b0;
   reg led_s2 = 1'b0;
+  reg blank_s1 = 1'b0;
+  reg blank_s2 = 1'b0;
   reg [9:0] word0_r = BLACK;
   reg [9:0] word1_r = CTRL00;
   reg [9:0] word2_r = CTRL00;
@@ -484,7 +489,7 @@ module video (
   // is not thrown away: the bit is remembered, and it stays dark
   // until the arm word.
   wire square_on = de_r && rbit && armed_s2 && (bx_d == 5'd15) && (by_d == 5'd11);
-  wire lit = square_on || text_on;
+  wire lit = (square_on || text_on) && !blank_s2;
   wire [9:0] word0_o = !de_r ? ctrl0 : (lit ? WHITE : BLACK);
   wire [9:0] word1_o = !de_r ? CTRL00 : (lit ? WHITE : BLACK);
   wire [9:0] word2_o = word1_o;
@@ -494,6 +499,8 @@ module video (
   always @(posedge pix) begin
     led_s1 <= led;
     led_s2 <= led_s1;
+    blank_s1 <= blank;
+    blank_s2 <= blank_s1;
     x_r <= hx;
     y_r <= vy;
     de_r <= de;
@@ -541,7 +548,7 @@ module video (
       endcase
       word1_r <= CTRL00;
       word2_r <= CTRL00;
-    end else if (led_s2) begin
+    end else if (led_s2 && !blank_s2) begin
       word0_r <= WHITE;
       word1_r <= WHITE;
       word2_r <= WHITE;

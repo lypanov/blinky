@@ -114,3 +114,14 @@ IO_PORT "DDR3_nCS" IO_TYPE=SSTL15 PULL_MODE=NONE DRIVE=8 BANK_VCCIO=1.5;
 // BL702 UART TX. Same ball and standard NESTang uses on this Dock.
 IO_LOC "uart_tx" M11;
 IO_PORT "uart_tx" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+// BL702 UART RX. The host's TX. Press bytes land here. TX stays M11.
+IO_LOC "uart_rx" T13;
+IO_PORT "uart_rx" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+// Key S2. Bank 4, 1.5 V, active-low. S1 (T10) stays the reset key.
+IO_LOC "btn_n" T3;
+IO_PORT "btn_n" IO_TYPE=LVCMOS15 PULL_MODE=UP;
+// The gate's flops, left in the DDR3 corner, hold write-eye training
+// (PC 0080, F=4B, dark LED) on route_option 2 and 1. The DQS primitive
+// sits at R56C45. Keep the gate in the opposite corner.
+GROUP gate_grp = {"u_gate*"};
+GRP_LOC gate_grp R[2:22]C[2:18];

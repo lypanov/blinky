@@ -163,6 +163,16 @@ static void put_count(Vvideo* top, int count) {
   for (int i = 0; i < 56; i++) posedge(top);
 }
 
+static void to_frame(Vvideo* top) {
+  for (int i = 0; i < 4; i++) posedge(top);
+  for (int i = 0; i < FRAME + 8; i++) {
+    if (top->x_q == 0 && top->y_q == 0) return;
+    posedge(top);
+  }
+  fprintf(stderr, "FAIL no frame start\n");
+  fails++;
+}
+
 static void frame(Vvideo* top, int show, int square, const char* name) {
   int white = 0;
   int want_white = 0;
@@ -205,6 +215,7 @@ int main(int argc, char** argv) {
   auto* top = new Vvideo;
   top->clk27 = 0;
   top->led = 1;
+  top->blank = 0;
   top->pix_sim = 0;
   top->screen_we = 0;
   top->screen_bit = 0;
@@ -236,6 +247,15 @@ int main(int argc, char** argv) {
 
   put_count(top, 10000);
   frame(top, 1, 1, "0000+square");
+
+  // Digits and the square stay. Blanking hides them. Release shows
+  // the same 0000 plus the square, the phase already stored.
+  top->blank = 1;
+  to_frame(top);
+  frame(top, 0, 0, "blanked");
+  top->blank = 0;
+  to_frame(top);
+  frame(top, 1, 1, "released");
   if (fails) {
     fprintf(stderr, "FAIL %d\n", fails);
     return 1;
