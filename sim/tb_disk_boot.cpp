@@ -22,6 +22,8 @@ int main(int argc, char** argv) {
   int edges_needed = 3;
   int expect_halt = 0;
   int reset_cycles = 32;
+  int press = 0;
+  uint64_t hold_cycles = 0;
   for (int i = 1; i < argc; i++) {
     auto need = [&](const char* name) -> const char* {
       if (i + 1 >= argc) {
@@ -37,6 +39,8 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--edges")) edges_needed = atoi(need("--edges"));
     else if (!strcmp(argv[i], "--expect-halt")) expect_halt = 1;
     else if (!strcmp(argv[i], "--reset")) reset_cycles = atoi(need("--reset"));
+    else if (!strcmp(argv[i], "--press")) press = 1;
+    else if (!strcmp(argv[i], "--hold-cycles")) hold_cycles = strtoull(need("--hold-cycles"), nullptr, 10);
     else {
       fprintf(stderr, "unknown %s\n", argv[i]);
       return 2;
@@ -46,6 +50,7 @@ int main(int argc, char** argv) {
   auto* top = new Vdisk_boot_top;
   top->clock = 0;
   top->reset = 1;
+  top->btn_n = 1;
   std::vector<uint64_t> edges;
   int prev = 0;
   int saw_led = 0;
@@ -149,7 +154,9 @@ int main(int argc, char** argv) {
         }
       }
     }
-    if (screen_pulses < 1) {
+    // The screen store is the instruction after the LED store. A run
+    // that stops on the first edge has not seen it yet.
+    if (screen_pulses < 1 && !(press && edges.size() == 1)) {
       fprintf(stderr, "FAIL no store to the screen\n");
       failed = 1;
     }
@@ -158,6 +165,122 @@ int main(int argc, char** argv) {
       if (mask != 0xffffffffffULL || top->r5 != 0 || top->r9 != 0) {
         fprintf(stderr, "FAIL mask/r5/r9 at the edge\n");
         failed = 1;
+      }
+    }
+  }
+  // Button held across three edges. The LED stays at the level the
+  // first edge reached (on), then the same period resumes.
+  if (press && !failed && !expect_halt) {
+    if (hold_cycles == 0) hold_cycles = period * 3;
+    if (edges.size() != 1 || !top->led || hold_cycles == 0) {
+      fprintf(stderr, "FAIL press wants one rising edge and a hold\n");
+      failed = 1;
+    } else {
+      int held_led = top->led ? 1 : 0;
+      // The edge break leaves prev at the level before the edge.
+      prev = held_led;
+      int edges_during = 0;
+      int screen_during = 0;
+      for (int guard = 0; screen_pulses < 1 && guard < 4000 && !failed; guard++) {
+        cycle++;
+        step();
+        int screen = top->screen_we ? 1 : 0;
+        if (screen && !prev_screen) screen_pulses++;
+        prev_screen = screen;
+        int led = top->led ? 1 : 0;
+        if (led != prev) {
+          fprintf(stderr, "FAIL edge before the screen store at %llu\n",
+                  (unsigned long long)cycle);
+          failed = 1;
+        }
+        prev = led;
+      }
+      if (screen_pulses < 1) {
+        fprintf(stderr, "FAIL no store to the screen before the press\n");
+        failed = 1;
+      }
+      if (failed) {
+        top->final();
+        delete top;
+        return failed;
+      }
+      top->btn_n = 0;
+      printf("PRESS cycle %llu led %d hold %llu\n",
+             (unsigned long long)cycle, held_led,
+             (unsigned long long)hold_cycles);
+      for (uint64_t n = 0; n < hold_cycles; n++) {
+        cycle++;
+        step();
+        if (top->mem_write && (top->mem_addr == 0xFFFFFFB0u ||
+                               top->mem_addr == 0xFFFFFFB8u ||
+                               top->mem_addr == 0xFFFFFFBCu ||
+                               top->mem_addr == 0xFFFFFFC0u ||
+                               top->mem_addr == 0xFFFFFFC4u)) {
+          fprintf(stderr, "FAIL store to %08x during hold\n", (unsigned)top->mem_addr);
+          failed = 1;
+          break;
+        }
+        int screen = top->screen_we ? 1 : 0;
+        if (screen && !prev_screen) screen_during++;
+        prev_screen = screen;
+        int led = top->led ? 1 : 0;
+        if (led != prev) edges_during++;
+        if (led != held_led) {
+          fprintf(stderr, "FAIL led changed during hold at %llu\n",
+                  (unsigned long long)cycle);
+          failed = 1;
+          break;
+        }
+        prev = led;
+      }
+      printf("HOLD edges %d screen %d led %d\n", edges_during, screen_during, held_led);
+      if (edges_during || screen_during) {
+        fprintf(stderr, "FAIL blink advanced while the button was held\n");
+        failed = 1;
+      }
+      top->btn_n = 1;
+      uint64_t released = cycle;
+      printf("RELEASE cycle %llu\n", (unsigned long long)released);
+      std::vector<uint64_t> resume;
+      uint64_t limit = released + period + slack + period + slack + 4096;
+      while (!failed && resume.size() < 2 && cycle < limit) {
+        cycle++;
+        step();
+        int led = top->led ? 1 : 0;
+        if (led != prev) {
+          resume.push_back(cycle);
+          printf("EDGE resume %zu cycle %llu led %d\n",
+                 resume.size(), (unsigned long long)cycle, led);
+        }
+        prev = led;
+        int screen = top->screen_we ? 1 : 0;
+        if (screen && !prev_screen) screen_pulses++;
+        prev_screen = screen;
+      }
+      if (resume.size() < 2) {
+        fprintf(stderr, "FAIL resume saw %zu edges\n", resume.size());
+        failed = 1;
+      } else {
+        uint64_t gap = resume[1] - resume[0];
+        uint64_t diff = gap > period ? gap - period : period - gap;
+        uint64_t first = resume[0] - released;
+        printf("RESUME first %llu gap %llu\n",
+               (unsigned long long)first, (unsigned long long)gap);
+        if (diff > slack) {
+          fprintf(stderr, "FAIL resume gap %llu wanted %llu slack %llu\n",
+                  (unsigned long long)gap, (unsigned long long)period,
+                  (unsigned long long)slack);
+          failed = 1;
+        }
+        if (first > period + slack) {
+          fprintf(stderr, "FAIL first edge %llu after release, period %llu\n",
+                  (unsigned long long)first, (unsigned long long)period);
+          failed = 1;
+        }
+        if (screen_pulses < 2) {
+          fprintf(stderr, "FAIL screen did not resume\n");
+          failed = 1;
+        }
       }
     }
   }

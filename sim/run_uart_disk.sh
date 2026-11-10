@@ -65,6 +65,7 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/gowin/KeepBit.v" \
   "$ROOT/sim/LUT2.v" \
   "$ROOT/gowin/uart_word_rx.v" \
+  "$ROOT/gowin/button_gate.v" \
   "$ROOT/sim/uart_disk_top.v" \
   "$ROOT/sim/tb_uart_disk.cpp"
 
@@ -77,6 +78,10 @@ PERIOD=$((N * 48375))
 echo "[ok] elaborated N=$N ms period=$PERIOD"
 
 "$BIN" --period "$PERIOD" --slack 2048 --edges 3 --min-pc 0x900
+echo "[ok] UART disk N=$N period $PERIOD, button released"
+# 0x01 is the Dock press byte. The LED stays on, then 0x00 resumes it.
+"$BIN" --press --period "$PERIOD" --slack 2048 --edges 1 --min-pc 0x900 \
+  --hold-cycles $((PERIOD * 3)) --bit-clocks 210
 
 python3 - "$DISK" "$ROOT/sim/out/disk_bad_build.bin" "$ROOT/sim/out/disk_bad_byte.bin" << 'PY'
 import sys

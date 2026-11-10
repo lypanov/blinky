@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Verilator of the LED gate at both board clocks. No CPU, no DDR3.
+# Verilator of the button sampler at both board clocks. No CPU, no DDR3.
+# The level is bit 0 of -60. It does not force the LED pin.
 # --div 117 is the Nano 4K cpu_clk (13.5 MHz / 115200).
 # --div 210 is the Dock cpu_clk (24.1875 MHz / 115200).
 set -euo pipefail

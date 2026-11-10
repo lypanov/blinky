@@ -42,6 +42,7 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/gowin/KeepBit.v" \
   "$ROOT/sim/LUT2.v" \
   "$ROOT/sim/spi_disk_model.v" \
+  "$ROOT/gowin/button_gate.v" \
   "$ROOT/sim/disk_boot_top.v" \
   "$ROOT/sim/tb_disk_boot.cpp"
 
@@ -57,3 +58,6 @@ PERIOD=$((N * 27000))
 echo "[ok] elaborated N=$N ms period=$PERIOD  binary sim/obj_dir_disk/disk_boot"
 "$BIN" --period "$PERIOD" --slack 2048 --edges 3
 echo "[ok] NOR disk N=$N period $PERIOD"
+# S1 held across three edges. The LED stays on, then the period resumes.
+"$BIN" --press --period "$PERIOD" --slack 2048 --edges 1 --hold-cycles $((PERIOD * 3))
+echo "[ok] NOR disk N=$N paused while the button was held"

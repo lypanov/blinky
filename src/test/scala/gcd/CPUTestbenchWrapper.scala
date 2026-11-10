@@ -48,6 +48,7 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
   // The test CPU does not take a UART disk. The non-disk wrapper ties the port the same way.
   cpu.io.diskValid := false.B
   cpu.io.diskWord := 0.U
+  cpu.io.btnPressed := false.B
   
   // Connect outputs
   io.r0 := cpu.io.r0

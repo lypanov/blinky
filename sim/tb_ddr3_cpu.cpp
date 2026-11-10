@@ -79,6 +79,7 @@ int main(int argc, char** argv) {
   VCPUSimTop top;
   top.clock = 0;
   top.reset = 1;
+  top.io_btnPressed = 0;
   auto tick = [&]() {
     top.clock = 0;
     top.eval();

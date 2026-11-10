@@ -554,6 +554,7 @@ module blinky_top_ddr3 (
     .io_screen_we     (screen_we),
     .io_screen_bit    (screen_bit),
     .io_armed         (cpu_armed),
+    .io_btnPressed    (pressed),
     .io_disk_valid    (disk_valid),
     .io_disk_word     (disk_word),
     .io_disk_take     (disk_take)
@@ -731,7 +732,7 @@ module blinky_top_ddr3 (
   video u_video (
     .clk27      (Clock),
     .led        (led_pin),
-    .blank      (pressed),
+    .blank      (1'b0),
 `ifdef VIDEO_SQUARE
     .screen_we  (screen_we),
     .screen_bit (screen_bit),
@@ -778,18 +779,16 @@ module blinky_top_ddr3 (
 `else
   // L14 is the only moving LED the webcam cluster can see. C13 and A13
   // stay dark, so a PC divider cannot be reported as the proof blink.
-  // cpu_led is 0 until every compare difference was zero, and then it
-  // follows the Blink3 state. Failure leaves L14 off. cpu_clk is
-  // 24.1875 MHz. 24187500/115200 = 209.9609, so the bit time is 210.
-  // S2 or a latched press byte forces the pin off. The CPU keeps
-  // toggling, and a release shows that phase.
+  // cpu_led is 0 until the arm word, and then it follows Blink. Failure
+  // leaves L14 off. cpu_clk is 24.1875 MHz. 24187500/115200 = 209.9609,
+  // so the bit time is 210. S2 and a latched press byte are the switch
+  // bit. They do not force the pin. Blink polls it.
+  assign led_pin = cpu_led;
   button_gate #(.CLKS_PER_BIT(210)) u_gate (
     .clk     (cpu_clk),
     .resetn  (~cpu_reset),
-    .cpu_led (cpu_led),
     .btn_n   (btn_n),
     .uart_rx (gate_rx),
-    .led     (led_pin),
     .pressed (pressed)
   );
   assign IO_voltage = ~led_pin;

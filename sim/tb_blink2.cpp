@@ -105,6 +105,7 @@ int main(int argc, char** argv) {
   Options opt = parse_args(argc, argv);
 
   VCPUSimTop* top = new VCPUSimTop;
+  top->io_btnPressed = 0;
   VerilatedFstC* tfp = nullptr;
   if (!opt.quiet) {
     tfp = new VerilatedFstC;

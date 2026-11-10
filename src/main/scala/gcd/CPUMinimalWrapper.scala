@@ -24,6 +24,8 @@ class CpuWrapHyper extends CpuWrapBase {
   val screen_we = Output(Bool())
   val screen_bit = Output(Bool())
   val armed = Output(Bool())
+  // Switch bit at -60. The sampler outside this wrapper drives it.
+  val btnPressed = Input(Bool())
 }
 
 class CpuWrapDdr3 extends CpuWrapBase {
@@ -45,6 +47,8 @@ class CpuWrapDdr3 extends CpuWrapBase {
   val disk_valid = Input(Bool())
   val disk_word = Input(UInt(32.W))
   val disk_take = Output(Bool())
+  // Switch bit at -60. The sampler outside this wrapper drives it.
+  val btnPressed = Input(Bool())
 }
 
 class CPUMinimalWrapper(
@@ -100,6 +104,13 @@ class CPUMinimalWrapper(
   }
   cpu.io.diskValid := false.B
   cpu.io.diskWord := 0.U
+  cpu.io.btnPressed := false.B
+  if (exposeHyper) {
+    cpu.io.btnPressed := io.asInstanceOf[CpuWrapHyper].btnPressed
+  }
+  if (exposeDdr) {
+    cpu.io.btnPressed := io.asInstanceOf[CpuWrapDdr3].btnPressed
+  }
   if (exposeDdr) {
     val pins = io.asInstanceOf[CpuWrapDdr3]
     cpu.io.diskValid := pins.disk_valid

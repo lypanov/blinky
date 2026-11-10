@@ -120,8 +120,9 @@ IO_PORT "uart_rx" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 // Key S2. Bank 4, 1.5 V, active-low. S1 (T10) stays the reset key.
 IO_LOC "btn_n" T3;
 IO_PORT "btn_n" IO_TYPE=LVCMOS15 PULL_MODE=UP;
-// The gate's flops, left in the DDR3 corner, hold write-eye training
-// (PC 0080, F=4B, dark LED) on route_option 2 and 1. The DQS primitive
-// sits at R56C45. Keep the gate in the opposite corner.
-GROUP gate_grp = {"u_gate*" "u_disk_rx*"};
+// The button sampler's flops, left in the DDR3 corner, hold write-eye
+// training (PC 0080, F=4B, dark LED). The DQS primitives sit at
+// R56C45 (lane 1) and R56C12 (lane 0). Keep the sampler, and the
+// CPU's -60 load flop, in the opposite corner.
+GROUP gate_grp = {"u_gate*" "u_disk_rx*" "u_cpu/cpu/btnLoad*"};
 GRP_LOC gate_grp R[2:22]C[2:18];

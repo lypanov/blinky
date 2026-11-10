@@ -158,6 +158,8 @@ module tb_ddr3_cpu_phy;
         .io_diskWord(32'd0),
         .io_diskTake(),
         .io_cpuClk(),
+        .io_armed(),
+        .io_btnPressed(1'b0),
         .phy_rd(phy_rd),
         .phy_wr(phy_wr),
         .phy_refresh(phy_refresh),

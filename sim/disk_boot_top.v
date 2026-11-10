@@ -11,12 +11,17 @@ module disk_boot_top (
   output wire [31:0] r9,
   output wire mem_write,
   output wire [31:0] mem_addr,
-  output wire screen_we
+  output wire screen_we,
+  // Active-low, like S1. Held high unless the bench is pausing.
+  input  wire btn_n
 );
   wire cs_n;
   wire sclk;
   wire mosi;
   wire miso;
+  wire cpu_clk;
+  wire armed;
+  wire pressed;
 
   CPUSimTop cpu (
     .clock(clock),
@@ -37,7 +42,18 @@ module disk_boot_top (
     .io_diskValid(1'b0),
     .io_diskWord(32'd0),
     .io_diskTake(),
-    .io_cpuClk()
+    .io_cpuClk(cpu_clk),
+    .io_armed(armed),
+    .io_btnPressed(pressed)
+  );
+
+  // The NOR image has no disk on this UART. The bench drives the button.
+  button_gate #(.CLKS_PER_BIT(117)) u_gate (
+    .clk(cpu_clk),
+    .resetn(~reset),
+    .btn_n(btn_n),
+    .uart_rx(1'b1),
+    .pressed(pressed)
   );
 
   spi_disk_model flash (

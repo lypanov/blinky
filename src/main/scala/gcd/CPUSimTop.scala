@@ -50,6 +50,9 @@ class CPUSimTop(
     val diskWord = Input(UInt(32.W))
     val diskTake = Output(Bool())
     val cpuClk = Output(Clock())
+    val armed = Output(Bool())
+    // Switch bit at -60. The bench's sampler drives it.
+    val btnPressed = Input(Bool())
   })
   val phy = if (ddr3 && externalPhy) Some(IO(new Ddr3UserBundle)) else None
 
@@ -74,6 +77,8 @@ class CPUSimTop(
     uartDisk = uartDisk
   )) }
   io.cpuClk := cpuClock
+  io.armed := cpu.io.armed
+  cpu.io.btnPressed := io.btnPressed
   cpu.io.diskValid := io.diskValid
   cpu.io.diskWord := io.diskWord
   io.diskTake := cpu.io.diskTake

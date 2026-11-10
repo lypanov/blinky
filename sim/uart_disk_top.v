@@ -14,13 +14,21 @@ module uart_disk_top (
   output wire [31:0] r9,
   output wire mem_write,
   output wire [31:0] mem_addr,
-  output wire screen_we
+  output wire screen_we,
+  // Idle-high. The bench bit-bangs a press byte here after the disk.
+  // Wired with the disk sender: only one of them drives a zero.
+  input  wire host_rx
 );
   wire cpu_clk;
+  wire armed;
+  wire pressed;
   wire disk_valid;
   wire disk_take;
   wire [31:0] disk_word;
   wire tx;
+  wire rx = tx & host_rx;
+  // Disk bytes contain 0x01 and 0x00. Ignore them until Blink arms.
+  wire gate_rx = armed ? rx : 1'b1;
 
   CPUSimTop cpu (
     .clock(clock),
@@ -42,13 +50,25 @@ module uart_disk_top (
     .io_diskValid(disk_valid),
     .io_diskWord(disk_word),
     .io_diskTake(disk_take),
-    .io_cpuClk(cpu_clk)
+    .io_cpuClk(cpu_clk),
+    .io_armed(armed),
+    .io_btnPressed(pressed)
+  );
+
+  // Same decoder the Dock uses, 210 cpu clocks a bit. The disk sender
+  // stays at 16. This receiver is idle until the arm word.
+  button_gate #(.CLKS_PER_BIT(210)) u_gate (
+    .clk(cpu_clk),
+    .resetn(~reset),
+    .btn_n(1'b1),
+    .uart_rx(gate_rx),
+    .pressed(pressed)
   );
 
   uart_word_rx #(.CLKS_PER_BIT(16)) u_disk_rx (
     .clk(cpu_clk),
     .resetn(~reset),
-    .rx(tx),
+    .rx(rx),
     .valid(disk_valid),
     .word(disk_word),
     .take(disk_take)

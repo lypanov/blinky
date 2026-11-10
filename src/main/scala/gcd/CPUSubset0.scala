@@ -139,6 +139,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val diskValid = Input(Bool())
     val diskWord = Input(UInt(32.W))
     val diskTake = Output(Bool())
+
+    // -60, bit 0 of the book's switch word. 1 while the button is held
+    // or the UART press latch is set. The sampler is outside, on this
+    // same cpu clock. A board with neither ties it low.
+    val btnPressed = Input(Bool())
   })
   
   // Initialize the logByte signal with a default value
@@ -401,8 +406,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     spiLoad := false.B
   }
   // A load of -64 completes from the counter below, not from RAM.
+  // A load of -60 completes from the switch bit, on the same cycle.
   val timerLoad = RegInit(false.B)
+  val btnLoad = RegInit(false.B)
   timerLoad := false.B
+  btnLoad := false.B
   // Book's millisecond counter. Step 2, limit 27000: exactly 13500
   // clocks at 13.5 MHz. The Dock limit 48375 is 24187.5 clocks at
   // 24.1875 MHz, alternating 24188 and 24187, exact over every 2 ms.
@@ -566,6 +574,23 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         regWriteAddr := memoryTargetReg
         regWriteData := Mux(memoryIsByte, Cat(0.U(24.W), timerByte), msec)
         printf(p"Timer R${memoryTargetReg} ${Hexadecimal(msec)}\n")
+      }
+      memoryAccessPending := false.B
+    } .elsewhen (btnLoad) {
+      when (memoryIsLoad) {
+        // RISC5Top reads -60 as {20'b0, buttons, switches}. Switch 0
+        // is bit 0. This board's key, and the UART press, are that bit.
+        val btnWord = Cat(0.U(31.W), io.btnPressed)
+        val btnByte = MuxLookup(memoryLane, btnWord(7, 0))(Seq(
+          0.U -> btnWord(7, 0),
+          1.U -> btnWord(15, 8),
+          2.U -> btnWord(23, 16),
+          3.U -> btnWord(31, 24)
+        ))
+        regWrite := true.B
+        regWriteAddr := memoryTargetReg
+        regWriteData := Mux(memoryIsByte, Cat(0.U(24.W), btnByte), btnWord)
+        printf(p"Keys R${memoryTargetReg} ${Hexadecimal(btnWord)}\n")
       }
       memoryAccessPending := false.B
     } .elsewhen (!norHold && !uartHold && !io.memStall) {
@@ -733,7 +758,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       false.B
     }
     // -72 (0xFFFFFFB8) is one NOR or UART word. -68 (0xFFFFFFBC) is the
-    // sector base. -64 is the millisecond counter. -60 stays free.
+    // sector base. -64 is the millisecond counter. -60 is the switches.
     val norPtrHit = if (flashBoot) effectiveAddr === "hFFFFFFB8".U else false.B
     val uartHit = if (uartDisk) effectiveAddr === "hFFFFFFB8".U else false.B
     val norBaseHit = if (diskBoot) effectiveAddr === "hFFFFFFBC".U else false.B
@@ -742,12 +767,23 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val screenHit = !isByte && effectiveAddr === "hFFFFFFB0".U
     // -64 (0xFFFFFFC0). Kernel.Time loads the millisecond counter.
     val timerAddr = effectiveAddr === "hFFFFFFC0".U
+    // -60 (0xFFFFFFC4). The book's switches. Bit 0 is the button.
+    val btnAddr = effectiveAddr === "hFFFFFFC4".U
 
     when (isLoad) {  // LDW and LDB. The byte extract is on the completion cycle.
         val useHyper = WireDefault(true.B)
         when (timerAddr) {
           useHyper := false.B
           timerLoad := true.B
+          memoryAccessPending := true.B
+          memoryIsLoad := true.B
+          memoryIsByte := isByte
+          memoryLane := effectiveAddr(1, 0)
+          memoryTargetReg := regA
+        }
+        when (btnAddr) {
+          useHyper := false.B
+          btnLoad := true.B
           memoryAccessPending := true.B
           memoryIsLoad := true.B
           memoryIsByte := isByte
@@ -813,8 +849,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       } .elsewhen (screenHit) {
         io.screenWe := true.B
         io.screenBit := rdX(0)
-      } .elsewhen (timerAddr) {
-        // The book leaves this write blank. Do not send it to memory.
+      } .elsewhen (timerAddr || btnAddr) {
+        // -64's write is blank in the book. -60's write is the LED
+        // bank. This board's blink pin is the armed light, not that
+        // bank, so neither store goes to memory.
       } .elsewhen (if (diskBoot) norPtrHit || uartHit || norBaseHit else false.B) {
         if (flashBoot) {
           when (norPtrHit) {

@@ -15,17 +15,26 @@ MODULE Blink5;
     Kernel.Time reads the counter at -64. The wait below is 1000 ms, so a
     toggle happens every second and a full blink is 0.500 Hz on both boards.
     The linker patches that 1000 for a short simulation.
+
+    -60 is the book's switch word. Bit 0 is switch 0: 1 while the button
+    is held, or while the Dock UART press latch is set. There are no
+    interrupts. This loop polls the bit. While it is set the light stays
+    where it is, and the deadline advances without a toggle, so a long
+    hold does not queue a burst. Releasing it resumes the same wait.
   *)
-  VAR last, now, wait: INTEGER;
+  VAR last, now, wait, keys: INTEGER;
 BEGIN
   last := Kernel.Time();
   wait := 1000;
   WHILE TRUE DO
-    REPEAT
-      now := Kernel.Time()
-    UNTIL now - last >= wait;
-    MMT.Toggle;
-    SYSTEM.PUT(-80, MMT.light);
-    last := last + wait
+    now := Kernel.Time();
+    SYSTEM.GET(-60, keys);
+    IF ODD(keys) THEN
+      IF now - last >= wait THEN last := last + wait END
+    ELSIF now - last >= wait THEN
+      MMT.Toggle;
+      SYSTEM.PUT(-80, MMT.light);
+      last := last + wait
+    END
   END
 END Blink5.

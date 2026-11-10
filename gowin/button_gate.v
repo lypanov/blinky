@@ -1,14 +1,15 @@
-// Forces the LED pin off while a button is held or a UART press byte
-// is latched. cpu_led keeps toggling. The pin is cpu_led when neither
-// source says pressed, so a release shows the phase the register is
-// already in. Nothing here stalls the CPU.
+// Samples the button and the Dock UART press into one level. The LED
+// pin and the screen are not touched here. Blink reads the level at
+// -60 and decides. Nothing here stalls the CPU.
 //
 // btn_n is active-low. Two flops synchronise it. A board with no
-// button ties it high.
+// button ties it high. The UART latch is the other source. The top
+// holds uart_rx idle until the arm word, because a disk contains
+// 0x01 and 0x00.
 //
 // UART is 8N1 at 115200. CLKS_PER_BIT is clk/115200, rounded.
-// The Nano 4K gate clock is cpu_clk, 13.5 MHz, so CLKS_PER_BIT is 117.
-// The Dock gate clock is cpu_clk, 24.1875 MHz, so CLKS_PER_BIT is 210.
+// The Nano 4K clock is cpu_clk, 13.5 MHz, so CLKS_PER_BIT is 117.
+// The Dock clock is cpu_clk, 24.1875 MHz, so CLKS_PER_BIT is 210.
 // Press: 0x01, ASCII '1' (0x31), or space (0x20).
 // Release: 0x00 or ASCII '0' (0x30). Any other byte leaves the latch.
 // ENABLE_UART 0 drops the receiver. The latch stays clear.
@@ -19,10 +20,8 @@ module button_gate #(
 ) (
   input  wire clk,
   input  wire resetn,
-  input  wire cpu_led,
   input  wire btn_n,
   input  wire uart_rx,
-  output wire led,
   output wire pressed
 );
   reg btn0 = 1'b1;
@@ -117,7 +116,7 @@ module button_gate #(
     end
   endgenerate
 
+  // 1 while the button is held or a press byte is latched. Bit 0 of
+  // the book's switch word. The LED pin is the CPU's own register.
   assign pressed = uart_latch | ~btn1;
-  // Active-high CPU LED. Pressed forces the pin off.
-  assign led = cpu_led & ~pressed;
 endmodule

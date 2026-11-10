@@ -116,7 +116,8 @@ module blinky_top (
     .io_spi_miso       (spi_miso),
     .io_screen_we      (screen_we),
     .io_screen_bit     (screen_bit),
-    .io_armed          (cpu_armed)
+    .io_armed          (cpu_armed),
+    .io_btnPressed     (pressed)
   );
 
   // WP# and HOLD# stay deasserted. They are not part of the CPU.
@@ -124,14 +125,15 @@ module blinky_top (
   assign spi_hold = 1'b1;
 
   // cpu_clk is 13.5 MHz. 13500000/115200 = 117.1875.
-  // The pin follows cpu_led unless S1 is held or a press byte is latched.
+  // The pin is the CPU register. S1 and a press byte are the switch
+  // bit Blink polls. UART bytes before the arm word are ignored.
+  assign io_led = cpu_led;
+  wire gate_rx = cpu_armed ? io_uart_rx : 1'b1;
   button_gate #(.CLKS_PER_BIT(117)) u_gate (
     .clk     (cpu_clk),
     .resetn  (~cpu_reset),
-    .cpu_led (cpu_led),
     .btn_n   (io_btn_n),
-    .uart_rx (io_uart_rx),
-    .led     (io_led),
+    .uart_rx (gate_rx),
     .pressed (pressed)
   );
 
@@ -164,7 +166,7 @@ module blinky_top (
   video u_video (
     .clk27      (clock),
     .led        (io_led),
-    .blank      (pressed),
+    .blank      (1'b0),
 `ifdef VIDEO_SQUARE
     .screen_we  (screen_we),
     .screen_bit (screen_bit),
