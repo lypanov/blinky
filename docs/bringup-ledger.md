@@ -30,7 +30,7 @@ CLS is the scarce resource on the 4K. After item 3 and the HDMI square (`docs/hd
 
 11. Retire the old step images from the CPU. Done. The work is `docs/todo.md` item 23. The 0x10/0x50 LED snoop, the patch table, the single fetch at 0x1F00, the zero-store checks, and the ROM address translation are gone. The measured saving is below.
 
-12. Shifts on the hardware multipliers. Open, after `MUL` (`docs/todo.md` item 27). The GW1NSR-4C has 16 unused 18×18 multipliers. One 32×32→64 unsigned multiply does all three shifts: left by n is the low word of `x × 2ⁿ`, right by n is the high word of `x × 2³²⁻ⁿ`, rotate is the two ORed, and an arithmetic right shift inverts, shifts, and inverts back for negative x. A small table turns n into 2ⁿ. Replaces the 5-stage barrel. Estimate 60–100 CLS net. An alternative to 9 and 10.
+12. Shifts on the hardware multipliers. Open. `MUL` is done (`docs/todo.md` item 27): one registered `MULT36X36` on each board, two of the 18×18 macros. The shifts are not done. The GW1NSR-4C has 16 18×18 multipliers, of which this `MUL` uses two. One 32×32→64 unsigned multiply does all three shifts: left by n is the low word of `x × 2ⁿ`, right by n is the high word of `x × 2³²⁻ⁿ`, rotate is the two ORed, and an arithmetic right shift inverts, shifts, and inverts back for negative x. A small table turns n into 2ⁿ. Replaces the 5-stage barrel. Estimate 60–100 CLS net. An alternative to 9 and 10.
 
 13. A 24-bit PC and address path. Open. Wirth's own RISC5 does this. The PC, the branch adders, and the address compares shrink from 32 to 24 bits. I/O stays at the top of the address space, decoded from the top bits as in the book. The compiler does not change. Estimate 20–40 CLS.
 

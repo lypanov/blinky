@@ -120,7 +120,7 @@ Open a text, edit it and save it to the card. The Blinker viewer keeps flashing 
 ## Along the way
 
 - **Language features as they are needed.** Each new module will need parts of Oberon the CPU can't run yet, such as bytes, multiply, and later floating point. Each one gets its own small step before the module that needs it. For example, compute the blink delay with a real number, so a wrong answer shows up as a wrong rate.
-- **Multiply and the timer.** Hardware `MUL` is `docs/todo.md` item 27. The book's millisecond timer is item 25: Blink then paces itself in real milliseconds, on both boards.
+- **Multiply and the timer.** Hardware `MUL` is done (`docs/todo.md` item 27). The book's millisecond timer is item 25: Blink paces itself in real milliseconds, on both boards.
 - **Floating point.** Needed by `Texts`, so before step 16. On the 4K it is done in Oberon on a trap, not in hardware. The Dock may get the book's hardware unit if it fits easily.
 - **Tests.** Simulation first, then the board, as now. Each step adds a simulator test that predicts the same rate the webcam or capture card has to measure. Screen steps also get a Verilator frame check (`docs/todo.md` item 20).
 
