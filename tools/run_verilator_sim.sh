@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Prove the two current images. Both boot the same disk.bin.
 # The 4K reads it from the NOR model. The Dock reads it from the UART,
-# with HyperRAM standing in for DDR3. N=5. The edge is 466*N+780.
+# with HyperRAM standing in for DDR3. The wait is 2 ms. Hardware is
+# 1000 ms, a full blink of 0.500 Hz. The two sims count different
+# clocks because each image uses its own board's divider.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,6 +21,6 @@ if ! command -v verilator >/dev/null 2>&1; then
 fi
 
 echo "==> NOR disk boot"
-"$ROOT/sim/run_disk_boot.sh" 5
+"$ROOT/sim/run_disk_boot.sh" 2
 echo "==> UART disk boot"
-"$ROOT/sim/run_uart_disk.sh" 5
+"$ROOT/sim/run_uart_disk.sh" 2

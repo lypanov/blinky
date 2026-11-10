@@ -40,7 +40,7 @@ if offset != 0x200000:
 if offset + len(data) > limit:
     raise SystemExit(f"image ends at {offset + len(data):#x}, past {limit:#x}")
 magic, version, build, length, sum_ = struct.unpack_from("<5I", data, 0)
-if magic != 0x314B5344 or version != 1 or build != 0xD1:
+if magic != 0x314B5344 or version != 1 or build != 0xE1:
     raise SystemExit(f"refusing header {magic:#x} {version} {build:#x}")
 payload = data[20:]
 if length != len(payload):

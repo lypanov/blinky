@@ -206,6 +206,10 @@ def _sub_sp(inst: int) -> bool:
 
 def _compile_payload() -> dict[str, dict]:
     os.makedirs(PAYLOAD, exist_ok=True)
+    # Blink5 imports Kernel. Compile the inner-core source here so the
+    # symbol key is that Kernel, not the book's copy in the norebo image.
+    kernel_src = os.path.join(ROOT, "oberon", "src", "Kernel.Mod")
+    open(os.path.join(PAYLOAD, "Kernel.Mod"), "wb").write(open(kernel_src, "rb").read())
     for name in ("AMemoryMappedToggle", "Blink5"):
         src = os.path.join(ROOT, "tests", f"{name}.Mod")
         dst = os.path.join(PAYLOAD, f"{name}.Mod")
@@ -218,6 +222,7 @@ if ! norebo_export; then
   norebo_export
 fi
 cd "{PAYLOAD}"
+"$NOREBO_BIN" ORP.Compile Kernel.Mod/s
 "$NOREBO_BIN" ORP.Compile AMemoryMappedToggle.Mod/s
 "$NOREBO_BIN" ORP.Compile Blink5.Mod/s
 """
@@ -239,43 +244,45 @@ cd "{PAYLOAD}"
     return mods
 
 
-def _mhi_imm1(word: int) -> bool:
-    return (word & 0xF0F00000) == 0x60000000 and (word & 0xFFFF) == 1
+# 1000 ms between toggles. Two toggles are one blink: 2.000 s, 0.500 Hz.
+# The Dock's millisecond is 24187.5 cpu clocks, so an even wait closes
+# on a whole pair and the edge spacing does not alternate.
+WAIT_MS = 1000
 
 
-def _low_half(word: int, rd: int) -> bool:
-    """The second half of a 32-bit constant: IOR or ADD into the same register."""
-    if (word >> 28) not in (4, 5):
-        return False
-    if ((word >> 24) & 0xF) != rd or ((word >> 20) & 0xF) != rd:
-        return False
-    return ((word >> 16) & 0xF) in (6, 8)
+def _is_wait_mov(word: int) -> bool:
+    """MOV Rd, 1000. rb and op are 0; the register is free."""
+    return (word & 0xF0FF0000) == 0x40000000 and (word & 0xFFFF) == WAIT_MS
 
 
-def _delay_mhi(code: list[int]) -> int:
-    """The 65536 assignment is the bare MHI. MemLim and the root are MHI plus a low half."""
-    hits = []
-    for i, word in enumerate(code):
-        if not _mhi_imm1(word):
-            continue
-        rd = (word >> 24) & 0xF
-        nxt = code[i + 1] if i + 1 < len(code) else 0
-        if not _low_half(nxt, rd):
-            hits.append(i)
+def _wait_mov(code: list[int]) -> int:
+    hits = [i for i, word in enumerate(code) if _is_wait_mov(word)]
     if len(hits) != 1:
-        raise SystemExit(f"Blink5 has {len(hits)} bare MHI 1 words, wanted the 65536 assignment")
+        raise SystemExit(f"Blink5 has {len(hits)} MOV {WAIT_MS} words, wanted the wait assignment")
     return hits[0]
 
 
+def _kernel_time(code: list[int], entries: list[int]) -> tuple[int, int]:
+    """Word index of Kernel.Time, and the word index of its MOV -64.
+
+    ORG.Put1 sign-extends a negative immediate, so the address of the
+    timer is MOV Rd, -64 (v=1, imm 0xFFC0) followed by a load through it.
+    """
+    hits = [i for i, word in enumerate(code) if (word & 0xF0FFFFFF) == 0x5000FFC0]
+    if len(hits) != 1:
+        raise SystemExit(f"Kernel has {len(hits)} MOV -64 words, wanted Time's timer address")
+    at = hits[0]
+    starts = [entry // 4 for entry in entries if entry % 4 == 0 and entry // 4 <= at]
+    if not starts:
+        raise SystemExit("no Kernel entry covers the timer load")
+    return max(starts), at
+
+
 def _patch_delay(raw: bytes, code: list[int], n: int) -> tuple[bytes, int, int]:
-    index = _delay_mhi(code)
-    rd = (code[index] >> 24) & 0xF
-    if n == 65536:
-        word = code[index]
-    elif 0 <= n <= 0xFFFF:
-        word = f1(0, rd, 0, n)
-    else:
-        raise SystemExit(f"maxIterations {n} does not fit one instruction")
+    if n % 2 or not 1 <= n <= 0xFFFF:
+        raise SystemExit(f"millisecond wait {n} must be an even number that fits one MOV")
+    index = _wait_mov(code)
+    word = code[index] if n == WAIT_MS else (code[index] & 0xFFFF0000) | n
     origin, ncode = _code_origin(raw)
     if ncode != len(code):
         raise SystemExit(f"Blink5 code length {ncode} != {len(code)}")
@@ -361,10 +368,9 @@ def _arm_prologue(with_disk: bool = False) -> list[int]:
         a.word(word)
     a.word(stw(0, 1, 0))
     words = a.encode(0)
-    if any(_mhi_imm1(word) and not _low_half(words[i + 1], (word >> 24) & 0xF)
-           for i, word in enumerate(words) if _mhi_imm1(word)):
-        # A bare MHI 1 here would be the delay assignment. The prologue has none.
-        raise SystemExit("arm prologue contains the delay MHI")
+    if any(_is_wait_mov(word) for word in words):
+        # That MOV is Blink's millisecond assignment. The prologue has none.
+        raise SystemExit("arm prologue contains the wait MOV")
     return words
 
 
@@ -473,8 +479,13 @@ def _module_end(base: int, parsed: dict) -> int:
     return ((base + size + 0x100) // 0x20) * 0x20
 
 
-def _placed_sum(ammt: dict, blink: dict) -> tuple[int, int, int]:
-    """Sum of Blink5's code words after Load's fixups. Returns sum, code address, word count."""
+def _placed_sum(ammt: dict, blink: dict, time_addr: int, kernel_entries: int) -> tuple[int, int, int]:
+    """Sum of Blink5's code words after Load's fixups. Returns sum, code address, word count.
+
+    Kernel.Time is not copied by Load. The planted descriptor's code field
+    is Time's address and every entry word is 0, so dest = entry + code
+    lands on Time. Blink calls no other Kernel procedure.
+    """
     ammt_base = ALLOC
     ammt_code = _module_code(ammt_base, ammt)
     ammt_data = ammt_base + DESC_SIZE
@@ -494,11 +505,16 @@ def _placed_sum(ammt: dict, blink: dict) -> tuple[int, int, int]:
         data=ammt_data,
         entries=ammt["entries"],
     )
+    kernel = ImportedModule(
+        NUM["Kernel"],
+        code=time_addr,
+        entries=[0] * kernel_entries,
+    )
     fix_p, fix_d, fix_t = blink["fix_org"]
     if fix_t:
         raise SystemExit(f"Blink5 fixorgT {fix_t:#x}")
-    fixup_bl(code, fix_p, code_base=blink_code, imports=[imp])
-    fixup_ldr_str_add(code, fix_d, blink_num, None, imports=[imp])
+    fixup_bl(code, fix_p, code_base=blink_code, imports=[imp, kernel])
+    fixup_ldr_str_add(code, fix_d, blink_num, None, imports=[imp, kernel])
     total = 0
     for word in code:
         total = (total + word) & 0xFFFFFFFF
@@ -572,9 +588,10 @@ def _pairs(data_base: dict[str, int], mods, desc_at: int, desc: bytes, code_at: 
     return pairs
 
 
-def _desc(mods, data_base, code_base_modules: int) -> bytes:
+def _desc(mods, data_base, code_base_modules: int, nxt: int) -> bytes:
     buf = bytearray(DESC_SIZE)
     buf[0:8] = b"Modules\x00"
+    struct.pack_into("<I", buf, 32, nxt)
     struct.pack_into("<IIIIII", buf, 36,
                       mods["Modules"]["key"],
                       NUM["Modules"],
@@ -582,6 +599,26 @@ def _desc(mods, data_base, code_base_modules: int) -> bytes:
                       0,
                       data_base["Modules"],
                       code_base_modules)
+    return bytes(buf)
+
+
+def _kernel_desc(mods, data_base, time_addr: int, ent_addr: int) -> bytes:
+    """ModDesc so Load finds Kernel already present and Blink's BL resolves.
+
+    name, key, num, data, and code are the fields Load reads. code is
+    Kernel.Time's address. ent points at a zeroed table, and Load adds
+    the entry word to code.
+    """
+    buf = bytearray(DESC_SIZE)
+    buf[0:7] = b"Kernel\x00"
+    struct.pack_into("<IIIIII", buf, 36,
+                      mods["Kernel"]["key"],
+                      NUM["Kernel"],
+                      mods["Kernel"]["file_size"],
+                      0,
+                      data_base["Kernel"],
+                      time_addr)
+    struct.pack_into("<I", buf, 68, ent_addr)
     return bytes(buf)
 
 
@@ -929,10 +966,17 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     disk_boot = True
     mods = _load_modules()
     payload = _compile_payload()
+    blink_imports = payload["Blink5"]["imports"]
+    if [name for name, _key in blink_imports] != ["AMemoryMappedToggle", "Kernel"]:
+        raise SystemExit(f"Blink5 imports {blink_imports}")
     blink_key = payload["AMemoryMappedToggle"]["key"]
-    got = [k for name, k in payload["Blink5"]["imports"] if name == "AMemoryMappedToggle"]
-    if got != [blink_key]:
-        raise SystemExit(f"Blink5 import key {got} != AMemoryMappedToggle {blink_key:#x}")
+    got = dict(blink_imports)
+    if got["AMemoryMappedToggle"] != blink_key:
+        raise SystemExit(f"Blink5 import key {got['AMemoryMappedToggle']:#x} != AMemoryMappedToggle {blink_key:#x}")
+    if got["Kernel"] != mods["Kernel"]["key"]:
+        raise SystemExit(
+            f"Blink5 Kernel key {got['Kernel']:#x} != inner core {mods['Kernel']['key']:#x}"
+        )
     prologue = _arm_prologue(with_disk=disk_boot)
     armed_raw = _append_arm(payload["Blink5"]["raw"], prologue)
     payload["Blink5"] = _reload_blink(armed_raw)
@@ -947,10 +991,16 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     data_base, _, desc_at = _assign(mods)
     if desc_at != EXPECT_ROOT:
         raise SystemExit(f"planted root {desc_at:#x} != prologue constant {EXPECT_ROOT:#x}")
-    code_sum, blink_at, blink_words = _placed_sum(
-        payload["AMemoryMappedToggle"], payload["Blink5"]
-    )
-    planted_sum = (code_sum + (1 if break_arm else 0)) & 0xFFFFFFFF
+    # Modules stays at desc_at. Kernel's descriptor follows it, then a
+    # zeroed entry table. Load walks Modules.next and finds Kernel.
+    kernel_at = desc_at + DESC_SIZE
+    kernel_ent = kernel_at + DESC_SIZE
+    kernel_entries = len(mods["Kernel"]["entries"])
+    if kernel_entries < 1:
+        raise SystemExit("Kernel has no entries")
+    static_end = kernel_ent + kernel_entries * 4
+    if static_end >= CORE_BASE:
+        raise SystemExit(f"Kernel descriptor ends at {static_end:#x}, core is {CORE_BASE:#x}")
     lengths = {name: len(mods[name]["code"]) for name in ORDER}
     old_base = {}
     cursor = CORE_BASE
@@ -990,6 +1040,8 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
             continue
         if _sub_sp(codes[mod][word]):
             seeds.add((mod, word))
+    time_index, time_load = _kernel_time(mods["Kernel"]["code"], mods["Kernel"]["entries"])
+    seeds.add(("Kernel", time_index))
 
     def targets_of(seen):
         extra = set()
@@ -1096,11 +1148,18 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
             at = word_pos[(name, index)]
             words[at] = (words[at] & 0xFFFF0000) | (offset & 0xFFFF)
 
+    if ("Kernel", time_index) not in new_at or ("Kernel", time_load) not in new_at:
+        raise SystemExit("Kernel.Time was not packed")
+    time_addr = new_at[("Kernel", time_index)]
     body = new_at[("Modules", mods["Modules"]["entry_point"] // 4)]
     modules_code = new_at[("Modules", 0)] if ("Modules", 0) in new_at else min(
         new_at[k] for k in new_at if k[0] == "Modules"
     )
-    desc = _desc(mods, data_base, modules_code)
+    desc = _desc(mods, data_base, modules_code, kernel_at)
+    code_sum, blink_at, blink_words = _placed_sum(
+        payload["AMemoryMappedToggle"], payload["Blink5"], time_addr, kernel_entries
+    )
+    planted_sum = (code_sum + (1 if break_arm else 0)) & 0xFFFFFFFF
     # String at SB+0x70 is what the body passes to Load.
     string_at = data_base["Modules"] + len(mods["Modules"]["type_descriptors"]) * 4 + mods["Modules"]["data_size"]
     blob = _blob(mods["Modules"])
@@ -1110,6 +1169,11 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
 
     pairs = _pairs(data_base, mods, desc_at, desc, {})
     pairs.append((SUM_ADDR, planted_sum))
+    kdesc = _kernel_desc(mods, data_base, time_addr, kernel_ent)
+    for i in range(0, len(kdesc), 4):
+        word = int.from_bytes(kdesc[i : i + 4], "little")
+        if word:
+            pairs.append((kernel_at + i, word))
     stream = []
     for dest, value in pairs:
         stream.extend((dest, value & 0xFFFFFFFF))
@@ -1121,7 +1185,6 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     if 0x20 in planted:
         raise SystemExit("the stub writes MT[0]; Kernel.Init installs the trap there")
 
-    static_end = desc_at + DESC_SIZE
     if uart_disk:
         stub = _uart_bootstrap(static_end)
     else:
@@ -1169,6 +1232,7 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         "rom_words": nrom,
         "used": used,
         "delay_word": delay_word,
+        "time": time_addr,
         "delay_index": delay_index,
         "desc": desc_at,
         "arm_addr": ARM_ADDR,
@@ -1203,7 +1267,7 @@ def write_map(info: dict, path: str) -> None:
         "init_base", "init_words", "init_rom",
         "body_lo", "body_hi", "body", "light",
         "sector_rom", "sector_words", "sector_pairs", "rom_words", "delay_word", "desc", "string",
-        "arm_addr", "arm_word",
+        "arm_addr", "arm_word", "time",
     )
     with open(path, "w") as out:
         out.write("split=1\n")
@@ -1224,7 +1288,8 @@ def write_words(words: list[int], path: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--max-iter", type=int, default=65536)
+    parser.add_argument("--max-iter", type=int, default=WAIT_MS,
+                        help="milliseconds between toggles (even; hardware is 1000)")
     parser.add_argument("--mov-iter", type=int, default=None)
     parser.add_argument("--pad", type=int, default=ROM_WORDS)
     parser.add_argument("--out", default=os.path.join(ROOT, "sim", "visualizer", "imem", "modules.words"))
@@ -1249,7 +1314,8 @@ def main() -> int:
     print(f"[ok] reachable {counts}")
     print(
         f"[ok] body {info['body']:#x} light {info['light']:#x} "
-        f"desc {info['desc']:#x} string {info['string']:#x} delay {info['delay_word']:08x}"
+        f"desc {info['desc']:#x} string {info['string']:#x} "
+        f"wait {info['delay_word']:08x} time {info['time']:#x}"
     )
     print(
         f"[ok] arm {info['arm_addr']:#x} word {info['arm_word']:08x} "

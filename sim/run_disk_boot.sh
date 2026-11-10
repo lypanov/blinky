@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # SPI-disk boot sim. Not the DDR3 bench and not the ROM-only Blink path.
-# Usage: sim/run_disk_boot.sh [max-iter]
+# The argument is the millisecond wait. Hardware is 1000. The 4K
+# counter ticks every 13500 cpu clocks, and the CPU is half this
+# bridge clock, so an edge is N*27000 bridge cycles.
+# Usage: sim/run_disk_boot.sh [milliseconds]
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-N="${1:-5}"
+N="${1:-2}"
 export CHISEL_CPU_PROJECT_ROOT="$ROOT"
 export PATH="${HOME}/bin:/usr/local/bin:${PATH}"
 
@@ -43,7 +46,14 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/sim/tb_disk_boot.cpp"
 
 BIN="$ROOT/sim/obj_dir_disk/disk_boot"
-PERIOD=$((466 * N + 780))
-echo "[ok] elaborated N=$N period=$PERIOD  binary sim/obj_dir_disk/disk_boot"
-"$BIN" --period "$PERIOD" --edges 3
+if (( N % 2 )); then
+  echo "error: millisecond wait $N must be even" >&2
+  exit 1
+fi
+# 13500 cpu clocks/ms * 2 bridge clocks per cpu clock.
+# Blink polls Time, so one edge can miss the tick by a poll. 2048
+# bridge clocks covers that poll. The gaps still add up inside it.
+PERIOD=$((N * 27000))
+echo "[ok] elaborated N=$N ms period=$PERIOD  binary sim/obj_dir_disk/disk_boot"
+"$BIN" --period "$PERIOD" --slack 2048 --edges 3
 echo "[ok] NOR disk N=$N period $PERIOD"

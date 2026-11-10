@@ -8,8 +8,8 @@ import java.io.File
  * Simulation-only top: CPUSubset0 + mock RAM, no UART / Gowin IP.
  *
  * Does not change CPU behaviour. The disk bootstrap is the program.
- * N=5 is short enough that a LED period is observable. Hardware uses
- * the same linker with N=65536.
+ * A short even millisecond wait keeps a LED period observable.
+ * Hardware uses the same linker with a 1000 ms wait.
  */
 class CPUSimTop(
     programInstructions: Seq[String],

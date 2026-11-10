@@ -3,7 +3,7 @@
 # syn+PNR. Does not program the FPGA. Bitstream is SRAM-loadable .fs.
 #
 # Usage:
-#   tools/gowin_build.sh                         # Nano 4K NOR disk, square, N=65536
+#   tools/gowin_build.sh                         # Nano 4K NOR disk, square, 1000 ms
 #   VIDEO_MODE=flash FPGA_IMAGE=modules tools/gowin_build.sh
 #   VIDEO_MODE=off   FPGA_IMAGE=modules tools/gowin_build.sh
 #   FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # Dock UART disk, counter text
@@ -23,9 +23,8 @@ if [[ "$FPGA_IMAGE" != "modules" && "$FPGA_IMAGE" != "ddr3modules" ]]; then
   echo "error: FPGA_IMAGE=$FPGA_IMAGE is retired (modules or ddr3modules)" >&2
   exit 1
 fi
-# 262144 iterations falls under the 0.2 Hz webcam floor. 65536 is the
-# largest MHI step that stays above it.
-BLINK3_MAXITER="${BLINK3_MAXITER:-65536}"
+# Milliseconds between toggles. 1000 is a full blink of 0.500 Hz.
+BLINK3_MAXITER="${BLINK3_MAXITER:-1000}"
 if [[ "$FPGA_IMAGE" == "modules" && -z "${BLINK3_IMEM:-}" ]]; then
   BLINK3_IMEM="$ROOT/sim/visualizer/imem/modules.words"
 fi

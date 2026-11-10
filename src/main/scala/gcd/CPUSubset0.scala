@@ -373,7 +373,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // -72 is the bootstrap's word port: a store sets the flash address, a
   // load reads one word and adds 4. -68 is the sector base SpiSector adds
   // its word index to. Both sit under the book's window, which starts at
-  // -64, and above the screen word at -80. The SD window stays -48/-44.
+  // -64, and above the screen word at -80. -64 is the millisecond counter.
+  // The SD window stays -48/-44.
   val norPtr = if (flashBoot) RegInit(0.U(24.W)) else 0.U(24.W)
   val sectorBase = if (diskBoot) RegInit(0.U(24.W)) else 0.U(24.W)
   val norPending = if (flashBoot) RegInit(false.B) else false.B
@@ -398,6 +399,22 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val spiLoadCtrl = if (bodyFetch) RegInit(false.B) else false.B
   if (bodyFetch) {
     spiLoad := false.B
+  }
+  // A load of -64 completes from the counter below, not from RAM.
+  val timerLoad = RegInit(false.B)
+  timerLoad := false.B
+  // Book's millisecond counter. Step 2, limit 27000: exactly 13500
+  // clocks at 13.5 MHz. The Dock limit 48375 is 24187.5 clocks at
+  // 24.1875 MHz, alternating 24188 and 24187, exact over every 2 ms.
+  val msPhaseLimit = if (uartDisk) 48375 else 27000
+  val msPhase = RegInit(0.U(16.W))
+  val msec = RegInit(0.U(32.W))
+  val msSum = msPhase + 2.U
+  when (msSum >= msPhaseLimit.U) {
+    msPhase := msSum - msPhaseLimit.U
+    msec := msec + 1.U
+  } .otherwise {
+    msPhase := msSum
   }
 
   // H is the mul/div remainder. MOV Ra, H (F0, u=1, op MOV) reads it.
@@ -537,7 +554,21 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         io.diskTake := true.B
       }
     }
-    when (!norHold && !uartHold && !io.memStall) {
+    when (timerLoad) {
+      when (memoryIsLoad) {
+        val timerByte = MuxLookup(memoryLane, msec(7, 0))(Seq(
+          0.U -> msec(7, 0),
+          1.U -> msec(15, 8),
+          2.U -> msec(23, 16),
+          3.U -> msec(31, 24)
+        ))
+        regWrite := true.B
+        regWriteAddr := memoryTargetReg
+        regWriteData := Mux(memoryIsByte, Cat(0.U(24.W), timerByte), msec)
+        printf(p"Timer R${memoryTargetReg} ${Hexadecimal(msec)}\n")
+      }
+      memoryAccessPending := false.B
+    } .elsewhen (!norHold && !uartHold && !io.memStall) {
       when (memoryIsLoad) {
         // RISC5 inbus1: LDB zero-extends the lane adr[1:0] selects.
         // LDW returns the word. Same completion cycle either way.
@@ -702,16 +733,27 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       false.B
     }
     // -72 (0xFFFFFFB8) is one NOR or UART word. -68 (0xFFFFFFBC) is the
-    // sector base. -64 and -60 are the book's timer and the switches.
+    // sector base. -64 is the millisecond counter. -60 stays free.
     val norPtrHit = if (flashBoot) effectiveAddr === "hFFFFFFB8".U else false.B
     val uartHit = if (uartDisk) effectiveAddr === "hFFFFFFB8".U else false.B
     val norBaseHit = if (diskBoot) effectiveAddr === "hFFFFFFBC".U else false.B
     // -80. One word, bit 0. Dropped on every image, including this one
     // when the video module is left out of the build.
     val screenHit = !isByte && effectiveAddr === "hFFFFFFB0".U
+    // -64 (0xFFFFFFC0). Kernel.Time loads the millisecond counter.
+    val timerAddr = effectiveAddr === "hFFFFFFC0".U
 
     when (isLoad) {  // LDW and LDB. The byte extract is on the completion cycle.
         val useHyper = WireDefault(true.B)
+        when (timerAddr) {
+          useHyper := false.B
+          timerLoad := true.B
+          memoryAccessPending := true.B
+          memoryIsLoad := true.B
+          memoryIsByte := isByte
+          memoryLane := effectiveAddr(1, 0)
+          memoryTargetReg := regA
+        }
         if (bodyFetch) {
           when (spiHit) {
             useHyper := false.B
@@ -771,6 +813,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       } .elsewhen (screenHit) {
         io.screenWe := true.B
         io.screenBit := rdX(0)
+      } .elsewhen (timerAddr) {
+        // The book leaves this write blank. Do not send it to memory.
       } .elsewhen (if (diskBoot) norPtrHit || uartHit || norBaseHit else false.B) {
         if (flashBoot) {
           when (norPtrHit) {

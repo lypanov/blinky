@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Dock UART disk boot, on the HyperRAM stand-in. Not the Micron PHY.
-# The blink period is 466*N+780 bridge cycles between edges. N=5 is 3110.
-# Usage: sim/run_uart_disk.sh [max-iter]
+# The argument is the millisecond wait. The Dock counter averages
+# 24187.5 cpu clocks per ms. Even N is N*24187.5 cpu clocks, times 2
+# bridge clocks: N*48375 bridge cycles between edges.
+# Usage: sim/run_uart_disk.sh [milliseconds]
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
-N="${1:-5}"
+N="${1:-2}"
 export CHISEL_CPU_PROJECT_ROOT="$ROOT"
 export PATH="${HOME}/bin:/usr/local/bin:${PATH}"
 export PYTHONPATH="$ROOT/tools${PYTHONPATH:+:$PYTHONPATH}"
@@ -67,10 +69,14 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/sim/tb_uart_disk.cpp"
 
 BIN="$ROOT/sim/obj_dir_uart_disk/uart_disk"
-PERIOD=$((466 * N + 780))
-echo "[ok] elaborated N=$N period=$PERIOD"
+if (( N % 2 )); then
+  echo "error: millisecond wait $N must be even" >&2
+  exit 1
+fi
+PERIOD=$((N * 48375))
+echo "[ok] elaborated N=$N ms period=$PERIOD"
 
-"$BIN" --period "$PERIOD" --edges 3 --min-pc 0x900
+"$BIN" --period "$PERIOD" --slack 2048 --edges 3 --min-pc 0x900
 
 python3 - "$DISK" "$ROOT/sim/out/disk_bad_build.bin" "$ROOT/sim/out/disk_bad_byte.bin" << 'PY'
 import sys

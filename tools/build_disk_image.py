@@ -31,7 +31,7 @@ inner core, then the sector pages.
 
 The code and the init stream are the words the stub copies today. The
 pages are the three sectors SpiSector serves, before the sparse-pair
-pack. The delay loop is the board image, N=65536.
+pack. Blink waits 1000 ms between toggles.
 
 The 4K reads this file from the NOR at 0x200000. The Dock bootstrap
 receives the same bytes over the UART and stores them in DDR3.
@@ -190,7 +190,7 @@ def parse(image: bytes) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default=os.path.join(ROOT, "sim", "out", "disk.bin"))
-    parser.add_argument("--max-iter", type=int, default=65536)
+    parser.add_argument("--max-iter", type=int, default=1000)
     args = parser.parse_args()
     info = link(args.max_iter, flash_boot=True)
     image = build(info)

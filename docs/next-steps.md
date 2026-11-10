@@ -149,6 +149,10 @@ Webcam `/dev/video2`, the Nano LED, box `206,240` 18×14, 30.002 fps: edge 0.427
 
 A counter at −64 that goes up by one every millisecond, as in the book. `Kernel.Time` reads it. Blink waits on `Kernel.Time` instead of counting loop turns, so the blink rate is set in milliseconds and no longer depends on the CPU's speed. Both boards should then blink at the same published rate. This is a strong whole-system proof: the clock, the counter, the Kernel, and Blink all have to agree. About 20–30 CLS on the 4K.
 
+Published before the loads. Blink's wait is 1000 ms. A toggle is one second, and a full blink is 0.500 Hz, on both boards. The old edge `466*N+780` is retired.
+
+The counter adds one every millisecond. On the Nano 4K, `cpu_clk` is 13.5 MHz. The divider adds 2 every clock and wraps at 27000, which is 13500 clocks and 1.000 ms. On the Dock, `cpu_clk` is 24.1875 MHz. The same adder wraps at 48375, which is 24187.5 clocks, alternating 24188 and 24187, and every 2 ms is exact. `Kernel.Time` is `SYSTEM.GET(−64)`. Blink waits until that reading has advanced by the wait, then adds the wait to its last sample, so a late poll does not accumulate.
+
 ## Item 26 — the button as Oberon input
 
 Make the buttons readable at −60, as the book's switches are (and the Dock's UART press sets the same bit). Blink reads it and decides what to do, for example pausing the blink while it is held. Then remove item 19's hardware gate: the decision now lives in Oberon, not in the FPGA. Project Oberon has no interrupts: input is polled, so Blink polls too. Verilator and the Dock UART press are automated. The 4K button check is the maintainer's, by hand.
