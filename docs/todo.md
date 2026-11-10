@@ -43,4 +43,21 @@ Ledger items are not to-dos. If a later item cannot fit on the Nano 4K without a
 30. File writes through a RAM overlay; the rate changes partway through a run. Same file, item 30.
 31. Oberon's own boot linker and `BootLoad` build and boot the disk. Same file, item 31.
 
+32. Nano 4K: standard 720×480 at 60 Hz, so the capture card records it pixel for pixel. [`docs/screen-and-boot.md`](screen-and-boot.md), item 32.
+33. The 9-bit status register: eight big status blocks, and one bit for the screen mode. Same file, item 33.
+34. Boot stage codes from the bootstrap in the status blocks. Same file, item 34.
+35. The trap code in the status blocks. Same file, item 35.
+36. The bitmap in block RAM: 180×120 on the 4K, 512×384 on the Dock. Same file, item 36.
+37. More heap: measure the address reach, raise `MemLim`. Same file, item 37.
+38. Floating point, trapped to Oberon on both boards. Same file, item 38.
+39. The book's `Display` draws the square. Same file, item 39.
+40. The book's `Fonts`: the 4×6 font on the 4K, `Oberon10` on the Dock. Same file, item 40.
+41. The book's `Texts` writes the count; the Dock's digit hardware retires. Same file, item 41.
+42. Commands by name: `Oberon.Call` starts Blink. Same file, item 42.
+43. The trap line on screen. Same file, item 43.
+44. The book's file system, `FileDir`, on the disk. Same file, item 44.
+45. The `Input` stand-in. Same file, item 45.
+46. The main loop with Blink as a background task. Same file, item 46.
+47. The watchdog. Same file, item 47.
+
 The rest of `docs/modules-mod-plan.md` is the original fifteen and the boot path. Read a section when the proof cites it. Those headings are not a second queue.
