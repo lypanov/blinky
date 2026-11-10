@@ -21,7 +21,7 @@ Both boards run the same compiled `.rsc` modules and the same Blink. Where a boa
 The flashing LED is the physical proof that the whole system works end to end: clock, CPU, memory, loader, Oberon code. It must stay at every step.
 
 - Every step publishes its blink rate, from a formula, before the board is trusted. The webcam (and, for the screen, the HDMI capture card) has to measure that rate.
-- A failed check leaves the LED dark. The LED, and the screen, only come on after Blink stores the arm word computed from its self-checks, so a skipped check can never look like a pass.
+- A failed check leaves the LED dark. The LED, and the square or bitmap on the screen, only come on after Blink stores the arm word computed from its self-checks, so a skipped check can never look like a pass. The status blocks (`docs/screen-and-boot.md`) may show before the arm word: they report how far the boot got, and they are never a pass.
 - Every step adds one capability and keeps the blink. No step replaces the blink with a silent boot.
 - Everything comes back to Blink: new features are proved by Blink using them (a timer paces the blink, a file holds its rate, the screen shows its counter, an Oberon task drives it).
 
@@ -40,6 +40,7 @@ Bitstreams are SRAM-loaded only. The one flash exception is the Nano 4K's disk d
 
 - `docs/todo.md`: the work queue. One item at a time, from `Next:`. It is an index; each item points to its write-up. Finished items stay in place, marked "Done.".
 - `docs/next-steps.md`: write-ups for to-do items 19–31.
+- `docs/screen-and-boot.md`: write-ups for to-do items 32–47: the status register, the bitmap, the book's `Display`, `Fonts` and `Texts`, traps, and the main loop.
 - `docs/bringup-ledger.md`: the Nano 4K space list, one numbered list, and the record of how the 4K got its room.
 - `docs/led-ladder.md`: the long-range map from the blink to the Oberon desktop, including the far-future items.
 - `docs/hdmi.md`, `docs/modules-mod-plan.md`: finished plans, kept for their measured results.
