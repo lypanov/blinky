@@ -2,7 +2,7 @@
 
 One item at a time, from the top. This file is an index. The write-up is in the file each item names.
 
-Next: 25.
+Next: 26.
 
 1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay. Done. The measured result is in the ledger.
 
@@ -35,7 +35,7 @@ Ledger items are not to-dos. If a later item cannot fit on the Nano 4K without a
 22. Dock boots like the 4K: the same `disk.bin` and bootstrap, the disk sent over the UART into DDR3. Same file, item 22. Done. The measured result is in that file.
 23. Retire the old step images from the CPU. Same file, item 23. Also bring-up ledger item 11. Done. The measured result is in that file and in the ledger.
 24. Move the bootstrap flash ports off −64 and −60. Same file, item 24. Done. The measured result is in that file.
-25. The millisecond timer at −64; Blink paces itself with `Kernel.Time`. Same file, item 25.
+25. The millisecond timer at −64; Blink paces itself with `Kernel.Time`. Same file, item 25. Done. The measured result is in that file.
 26. The button as Oberon input: Blink reads it and decides. Same file, item 26.
 27. Hardware `MUL`. Same file, item 27.
 28. `NEW` and garbage collection, with a lowered memory limit. Same file, item 28.
