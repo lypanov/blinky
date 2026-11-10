@@ -3,8 +3,7 @@
 // Flash is timing and the TMDS pins. Square adds the 32×24 screen and
 // includes flash. Text adds the 40×15 character window and includes
 // square. The 4K build stops at square. VIDEO_DOCK is the Primer 20K:
-// an rPLL instead of the Nano's PLLVR.
-// The pixel clock is still the 27 MHz port, and the serializer is 5×.
+// 1024×768 timing and two rPLLs. The 4K stays at 640×480 on its PLLVR.
 
 `ifndef VIDEO_SIM
 `include "video_mode.vh"
@@ -26,11 +25,17 @@
 // same 27 MHz port as the HyperRAM PLL (UG286: a PLL reference may
 // be a routed clock, not only its own pin).
 //
-// The pixel clock is that 27 MHz port, and the serializer clock is
+// The Nano pixel clock is that 27 MHz port, and the serializer is
 // 5× it (135 MHz, VCO 540, inside the C6/I5 320–960 window). A
 // first bitstream used CLKDIV /5 for a 25.2 MHz pixel clock. That
 // divider is not a 50% clock, and the capture card showed snow
 // rather than a picture. 800×525 at 27 MHz is 64.3 Hz.
+//
+// The Dock screen is 1024×768. CLKOUTD's divider is even only, so
+// it cannot make the pixel clock as the serializer divided by 5.
+// Two rPLLs keep both clocks at 50%: 27×12/5 = 64.8 MHz, then that
+// clock times 5 = 324 MHz. 64.8 is 0.31% under the 65 MHz book
+// clock. 1344×806 at 64.8 MHz is 59.82 Hz.
 //
 // Black and white are fixed 10-bit words, not an encoder. Each has
 // five ones, so repeating it holds the disparity at zero. They are
@@ -69,7 +74,11 @@ module video (
   output de_q,
   output hs_q,
   output vs_q,
+`ifdef VIDEO_DOCK
+  output [10:0] x_q,
+`else
   output [9:0] x_q,
+`endif
   output [9:0] y_q,
 `endif
   output tmds_clk_p,
@@ -91,22 +100,37 @@ module video (
 `else
   wire serial_clk;
   wire pll_lock;
+`ifdef VIDEO_DOCK
+  // 50% pixel clock, then a second rPLL locked to it at 5×. The
+  // serializer relationship is the same one the 27 MHz port uses.
+  wire pix_clk;
+  wire pix_lock;
+  wire ser_lock;
+  assign pll_lock = pix_lock & ser_lock;
+  wire pix = pix_clk;
+`else
   wire pix = clk27;
+`endif
 
-  // 27 * 5 = 135. On the Nano, ODIV 4 puts the PLLVR VCO at 540.
-  // On the Dock the rPLL's CLKOUT is fin*(FBDIV+1)/(IDIV+1), the same
-  // formula as the DDR3 PLL, so FBDIV 4 is 135 MHz and ODIV 4 keeps
-  // the VCO at 540.
+  // On the Nano, ODIV 4 puts the PLLVR VCO at 540 for a 135 MHz
+  // serializer. On the Dock the pixel rPLL is 27*(11+1)/(4+1) = 64.8
+  // MHz with ODIV 16 (VCO 1036.8). The serializer rPLL is 64.8*5 =
+  // 324 MHz with ODIV 2 (VCO 648).
   wire clkoutp_unused;
   wire clkoutd_unused;
   wire clkoutd3_unused;
+`ifdef VIDEO_DOCK
+  wire ser_p_unused;
+  wire ser_d_unused;
+  wire ser_d3_unused;
+`endif
   wire pll_vcc = 1'b1;
   wire pll_gnd = 1'b0;
 
 `ifdef VIDEO_DOCK
-  rPLL u_pll (
-    .CLKOUT   (serial_clk),
-    .LOCK     (pll_lock),
+  rPLL u_pix (
+    .CLKOUT   (pix_clk),
+    .LOCK     (pix_lock),
     .CLKOUTP  (clkoutp_unused),
     .CLKOUTD  (clkoutd_unused),
     .CLKOUTD3 (clkoutd3_unused),
@@ -121,28 +145,68 @@ module video (
     .DUTYDA   ({pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
     .FDLY     ({pll_gnd, pll_gnd, pll_gnd, pll_gnd})
   );
-  defparam u_pll.FCLKIN = "27";
-  defparam u_pll.DYN_IDIV_SEL = "false";
-  defparam u_pll.IDIV_SEL = 0;
-  defparam u_pll.DYN_FBDIV_SEL = "false";
-  defparam u_pll.FBDIV_SEL = 4;
-  defparam u_pll.DYN_ODIV_SEL = "false";
-  defparam u_pll.ODIV_SEL = 4;
-  defparam u_pll.PSDA_SEL = "0000";
-  defparam u_pll.DYN_DA_EN = "false";
-  defparam u_pll.DUTYDA_SEL = "1000";
-  defparam u_pll.CLKOUT_FT_DIR = 1'b1;
-  defparam u_pll.CLKOUTP_FT_DIR = 1'b1;
-  defparam u_pll.CLKOUT_DLY_STEP = 0;
-  defparam u_pll.CLKOUTP_DLY_STEP = 0;
-  defparam u_pll.CLKFB_SEL = "internal";
-  defparam u_pll.CLKOUT_BYPASS = "false";
-  defparam u_pll.CLKOUTP_BYPASS = "false";
-  defparam u_pll.CLKOUTD_BYPASS = "false";
-  defparam u_pll.DYN_SDIV_SEL = 2;
-  defparam u_pll.CLKOUTD_SRC = "CLKOUT";
-  defparam u_pll.CLKOUTD3_SRC = "CLKOUT";
-  defparam u_pll.DEVICE = "GW2A-18C";
+  defparam u_pix.FCLKIN = "27";
+  defparam u_pix.DYN_IDIV_SEL = "false";
+  defparam u_pix.IDIV_SEL = 4;
+  defparam u_pix.DYN_FBDIV_SEL = "false";
+  defparam u_pix.FBDIV_SEL = 11;
+  defparam u_pix.DYN_ODIV_SEL = "false";
+  defparam u_pix.ODIV_SEL = 16;
+  defparam u_pix.PSDA_SEL = "0000";
+  defparam u_pix.DYN_DA_EN = "false";
+  defparam u_pix.DUTYDA_SEL = "1000";
+  defparam u_pix.CLKOUT_FT_DIR = 1'b1;
+  defparam u_pix.CLKOUTP_FT_DIR = 1'b1;
+  defparam u_pix.CLKOUT_DLY_STEP = 0;
+  defparam u_pix.CLKOUTP_DLY_STEP = 0;
+  defparam u_pix.CLKFB_SEL = "internal";
+  defparam u_pix.CLKOUT_BYPASS = "false";
+  defparam u_pix.CLKOUTP_BYPASS = "false";
+  defparam u_pix.CLKOUTD_BYPASS = "false";
+  defparam u_pix.DYN_SDIV_SEL = 2;
+  defparam u_pix.CLKOUTD_SRC = "CLKOUT";
+  defparam u_pix.CLKOUTD3_SRC = "CLKOUT";
+  defparam u_pix.DEVICE = "GW2A-18C";
+
+  rPLL u_ser (
+    .CLKOUT   (serial_clk),
+    .LOCK     (ser_lock),
+    .CLKOUTP  (ser_p_unused),
+    .CLKOUTD  (ser_d_unused),
+    .CLKOUTD3 (ser_d3_unused),
+    .RESET    (pll_gnd),
+    .RESET_P  (pll_gnd),
+    .CLKIN    (pix_clk),
+    .CLKFB    (pll_gnd),
+    .FBDSEL   ({pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .IDSEL    ({pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .ODSEL    ({pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .PSDA     ({pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .DUTYDA   ({pll_gnd, pll_gnd, pll_gnd, pll_gnd}),
+    .FDLY     ({pll_gnd, pll_gnd, pll_gnd, pll_gnd})
+  );
+  defparam u_ser.FCLKIN = "64.8";
+  defparam u_ser.DYN_IDIV_SEL = "false";
+  defparam u_ser.IDIV_SEL = 0;
+  defparam u_ser.DYN_FBDIV_SEL = "false";
+  defparam u_ser.FBDIV_SEL = 4;
+  defparam u_ser.DYN_ODIV_SEL = "false";
+  defparam u_ser.ODIV_SEL = 2;
+  defparam u_ser.PSDA_SEL = "0000";
+  defparam u_ser.DYN_DA_EN = "false";
+  defparam u_ser.DUTYDA_SEL = "1000";
+  defparam u_ser.CLKOUT_FT_DIR = 1'b1;
+  defparam u_ser.CLKOUTP_FT_DIR = 1'b1;
+  defparam u_ser.CLKOUT_DLY_STEP = 0;
+  defparam u_ser.CLKOUTP_DLY_STEP = 0;
+  defparam u_ser.CLKFB_SEL = "internal";
+  defparam u_ser.CLKOUT_BYPASS = "false";
+  defparam u_ser.CLKOUTP_BYPASS = "false";
+  defparam u_ser.CLKOUTD_BYPASS = "false";
+  defparam u_ser.DYN_SDIV_SEL = 2;
+  defparam u_ser.CLKOUTD_SRC = "CLKOUT";
+  defparam u_ser.CLKOUTD3_SRC = "CLKOUT";
+  defparam u_ser.DEVICE = "GW2A-18C";
 `else
   PLLVR u_pll (
     .CLKOUT   (serial_clk),
@@ -187,15 +251,28 @@ module video (
 `endif
 `endif
 
-  // 640×480, 800×525. Sync pulses are negative: the control bit is 0
-  // during the pulse and 1 otherwise. The frame rate follows the
-  // pixel clock: 64.3 Hz at 27 MHz.
+  // Sync pulses are negative: the control bit is 0 during the pulse
+  // and 1 otherwise. The Nano is 640×480, 800×525, 64.3 Hz at 27 MHz.
+  // The Dock is VESA 1024×768 counted from the start of the sync
+  // pulse: sync 136, back porch 160, active 1024, front porch 24
+  // (1344), and sync 6, back porch 29, active 768, front porch 3
+  // (806). The same 32×24 grid is placed at the top left of that
+  // picture. The rest of the screen stays black.
+`ifdef VIDEO_DOCK
+  reg [10:0] hx = 11'd0;
+  reg [9:0] vy = 10'd0;
+  wire hs = (hx >= 11'd136);
+  wire vs = (vy >= 10'd6);
+  wire active_x = (hx >= 11'd296) && (hx < 11'd1320);
+  wire active_y = (vy >= 10'd35) && (vy < 10'd803);
+`else
   reg [9:0] hx = 10'd0;
   reg [9:0] vy = 10'd0;
   wire hs = (hx >= 10'd96);
   wire vs = (vy >= 10'd2);
   wire active_x = (hx >= 10'd144) && (hx < 10'd784);
   wire active_y = (vy >= 10'd35) && (vy < 10'd515);
+`endif
   wire de = active_x && active_y;
 
   reg led_s1 = 1'b0;
@@ -208,7 +285,11 @@ module video (
   reg de_r = 1'b0;
   reg hs_r = 1'b0;
   reg vs_r = 1'b0;
+`ifdef VIDEO_DOCK
+  reg [10:0] x_r = 11'd0;
+`else
   reg [9:0] x_r = 10'd0;
+`endif
   reg [9:0] y_r = 10'd0;
 
 `ifdef VIDEO_SQUARE
@@ -280,16 +361,27 @@ module video (
   // Columns 18..21 of row 0 are Blink5's four digits. The rest of
   // the window stays the blank code. A glyph of 0 does not cover
   // the square; the two do not overlap.
+`ifdef VIDEO_DOCK
+  localparam [10:0] TEXT_X = 11'd160;
+  localparam [10:0] TEXT_Y = 11'd48;
+  localparam [10:0] TEXT_W = 11'd320;
+  localparam [10:0] TEXT_H = 11'd120;
+  wire [10:0] ax = hx - 11'd296;
+  wire [10:0] ay = {1'b0, vy} - 11'd35;
+  wire [10:0] tx = ax - TEXT_X;
+  wire [10:0] ty = ay - TEXT_Y;
+`else
   localparam [9:0] TEXT_X = 10'd160;
   localparam [9:0] TEXT_Y = 10'd48;
   localparam [9:0] TEXT_W = 10'd320;
   localparam [9:0] TEXT_H = 10'd120;
   wire [9:0] ax = hx - 10'd144;
   wire [9:0] ay = vy - 10'd35;
-  wire in_text = de && (ax >= TEXT_X) && (ax < TEXT_X + TEXT_W)
-      && (ay >= TEXT_Y) && (ay < TEXT_Y + TEXT_H);
   wire [9:0] tx = ax - TEXT_X;
   wire [9:0] ty = ay - TEXT_Y;
+`endif
+  wire in_text = de && (ax >= TEXT_X) && (ax < TEXT_X + TEXT_W)
+      && (ay >= TEXT_Y) && (ay < TEXT_Y + TEXT_H);
   wire [5:0] tcol = tx[8:3];
   wire [3:0] trow = ty[6:3];
   wire [9:0] taddr = in_text
@@ -539,13 +631,21 @@ module video (
     subx_d <= tx[2:0];
     suby_d <= ty[2:0];
 `endif
-    if ((hx == 10'd0) && (vy == 10'd0)) begin
+    if ((hx == 0) && (vy == 0)) begin
       bx <= 5'd0;
       by <= 5'd0;
       sx <= 5'd0;
       sy <= 5'd0;
+`ifdef VIDEO_DOCK
+    // The 640×480 grid sits at the top left. hx 296..935 and
+    // vy 35..514. Past that the counters hold, so block (15, 11)
+    // is not drawn again.
+    end else if (de && (hx <= 11'd935) && (vy <= 10'd514)) begin
+      if (hx == 11'd935) begin
+`else
     end else if (de) begin
       if (hx == 10'd783) begin
+`endif
         bx <= 5'd0;
         sx <= 5'd0;
         if (sy == 5'd19) begin
@@ -581,6 +681,17 @@ module video (
       word2_r <= BLACK;
     end
 `endif
+`ifdef VIDEO_DOCK
+    if (hx == 11'd1343) begin
+      hx <= 11'd0;
+      if (vy == 10'd805)
+        vy <= 10'd0;
+      else
+        vy <= vy + 10'd1;
+    end else begin
+      hx <= hx + 11'd1;
+    end
+`else
     if (hx == 10'd799) begin
       hx <= 10'd0;
       if (vy == 10'd524)
@@ -590,6 +701,7 @@ module video (
     end else begin
       hx <= hx + 10'd1;
     end
+`endif
   end
 
 `ifdef VIDEO_SIM

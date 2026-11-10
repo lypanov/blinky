@@ -12,11 +12,31 @@
 #include <string>
 #include <vector>
 
+#ifdef VIDEO_DOCK
+// VESA 1024×768, counted from the sync pulse. 24.1875/64.8 = 215/576.
+static const int H = 1344;
+static const int V = 806;
+static const int AW = 1024;
+static const int AH = 768;
+static const int H0 = 296;
+static const int H1 = 1320;
+static const int V0 = 35;
+static const int V1 = 803;
+static const int DOCK_CPU = 215;
+static const int DOCK_PIX = 576;
+#else
 static const int H = 800;
 static const int V = 525;
-static const int FRAME = H * V;
 static const int AW = 640;
 static const int AH = 480;
+static const int H0 = 144;
+static const int H1 = 784;
+static const int V0 = 35;
+static const int V1 = 515;
+static const int DOCK_CPU = 43;
+static const int DOCK_PIX = 48;
+#endif
+static const int FRAME = H * V;
 static const uint16_t BLACK = 0b0111110000;
 static const uint16_t WHITE = 0b1011110000;
 
@@ -63,13 +83,21 @@ int main(int argc, char** argv) {
   int cpu_per = 0;
   int pix_per = 0;
   if (!strcmp(board, "nano")) {
+#ifdef VIDEO_DOCK
+    fprintf(stderr, "this binary is the Dock 1024x768 timing\n");
+    return 2;
+#endif
     // 13.5 MHz CPU, 27 MHz pixel clock.
     cpu_per = 1;
     pix_per = 2;
   } else if (!strcmp(board, "dock")) {
-    // 24.1875 MHz CPU, 27 MHz pixel clock. 43/48.
-    cpu_per = 43;
-    pix_per = 48;
+#ifndef VIDEO_DOCK
+    fprintf(stderr, "this binary is the Nano 640x480 timing\n");
+    return 2;
+#endif
+    // 24.1875 MHz CPU. The Dock pixel clock is 64.8 MHz, 215/576.
+    cpu_per = DOCK_CPU;
+    pix_per = DOCK_PIX;
   } else {
     fprintf(stderr, "board %s\n", board);
     return 2;
@@ -150,13 +178,13 @@ int main(int argc, char** argv) {
     }
     int x = top->x_q;
     int y = top->y_q;
-    int de = (x >= 144 && x < 784 && y >= 35 && y < 515);
+    int de = (x >= H0 && x < H1 && y >= V0 && y < V1);
     if ((int)top->de_q != de) fail("de");
     if (de) {
       if (top->word0 != top->word1 || top->word0 != top->word2) fail("channels");
       if (top->word0 != BLACK && top->word0 != WHITE) fail("pixel word");
-      int ax = x - 144;
-      int ay = y - 35;
+      int ax = x - H0;
+      int ay = y - V0;
       int i = ay * AW + ax;
       if (wrote[i]) fail("pixel twice");
       wrote[i] = 1;

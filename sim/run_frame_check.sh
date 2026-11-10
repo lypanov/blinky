@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # One frame at a chosen CPU cycle, compared with a host-drawn picture.
 # Flash and square on both boards, and the Dock counter. The digits
-# are the four registers. Nano is 1 CPU clock per 2 pixel clocks.
-# Dock is 43 CPU clocks per 48 pixel clocks.
+# are the four registers. The Nano is 640×480, 1 CPU clock per 2
+# pixel clocks. The Dock is 1024×768, 215 CPU clocks per 576 pixel
+# clocks (24.1875 MHz and 64.8 MHz).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -25,8 +26,11 @@ build() {
 
 build flash -CFLAGS "-std=c++17 -O2"
 build sq -DVIDEO_SQUARE -DFRAME_CHECK -CFLAGS "-std=c++17 -O2 -DFRAME_SQUARE"
-build tx -DVIDEO_SQUARE -DVIDEO_TEXT -DFRAME_CHECK \
-  -CFLAGS "-std=c++17 -O2 -DFRAME_SQUARE -DFRAME_TEXT"
+build flash_dock -DVIDEO_DOCK -CFLAGS "-std=c++17 -O2 -DVIDEO_DOCK"
+build sq_dock -DVIDEO_DOCK -DVIDEO_SQUARE -DFRAME_CHECK \
+  -CFLAGS "-std=c++17 -O2 -DFRAME_SQUARE -DVIDEO_DOCK"
+build tx -DVIDEO_DOCK -DVIDEO_SQUARE -DVIDEO_TEXT -DFRAME_CHECK \
+  -CFLAGS "-std=c++17 -O2 -DFRAME_SQUARE -DFRAME_TEXT -DVIDEO_DOCK"
 
 # Capture cycle, then the level changes that are already in force.
 # Arm rises at CPU cycle 2. The on-store and the LED rise at 64.
@@ -39,17 +43,24 @@ grab() {
 
 FLASH="$ROOT/sim/obj_dir_frame_flash/frame_flash"
 SQ="$ROOT/sim/obj_dir_frame_sq/frame_sq"
+FLASH_DOCK="$ROOT/sim/obj_dir_frame_flash_dock/frame_flash_dock"
+SQ_DOCK="$ROOT/sim/obj_dir_frame_sq_dock/frame_sq_dock"
 TX="$ROOT/sim/obj_dir_frame_tx/frame_tx"
 PY=(python3 "$ROOT/tools/frame_expect.py")
+DOCK_SIZE=(--width 1024 --height 768)
 
-for board in nano dock; do
-  grab "$FLASH" "$board" 32 "$OUT/${board}-flash-off.ppm"
-  grab "$FLASH" "$board" 200 "$OUT/${board}-flash-on.ppm" --led-cycle 64
-  grab "$SQ" "$board" 32 "$OUT/${board}-square-off.ppm"
-  grab "$SQ" "$board" 200 "$OUT/${board}-square-on.ppm" --led-cycle 64 --store-cycle 64
-  grab "$SQ" "$board" 200 "$OUT/${board}-square-blank.ppm" \
-    --led-cycle 64 --store-cycle 64 --blank-cycle 128
-done
+grab "$FLASH" nano 32 "$OUT/nano-flash-off.ppm"
+grab "$FLASH" nano 200 "$OUT/nano-flash-on.ppm" --led-cycle 64
+grab "$SQ" nano 32 "$OUT/nano-square-off.ppm"
+grab "$SQ" nano 200 "$OUT/nano-square-on.ppm" --led-cycle 64 --store-cycle 64
+grab "$SQ" nano 200 "$OUT/nano-square-blank.ppm" \
+  --led-cycle 64 --store-cycle 64 --blank-cycle 128
+grab "$FLASH_DOCK" dock 32 "$OUT/dock-flash-off.ppm"
+grab "$FLASH_DOCK" dock 200 "$OUT/dock-flash-on.ppm" --led-cycle 64
+grab "$SQ_DOCK" dock 32 "$OUT/dock-square-off.ppm"
+grab "$SQ_DOCK" dock 200 "$OUT/dock-square-on.ppm" --led-cycle 64 --store-cycle 64
+grab "$SQ_DOCK" dock 200 "$OUT/dock-square-blank.ppm" \
+  --led-cycle 64 --store-cycle 64 --blank-cycle 128
 # The 4K build stops at square, so the same on-store draws no digits.
 grab "$SQ" nano 200 "$OUT/nano-counter.ppm" --led-cycle 64 --store-cycle 64
 grab "$TX" dock 32 "$OUT/dock-counter-off.ppm"
@@ -57,31 +68,30 @@ grab "$TX" dock 200 "$OUT/dock-counter-on.ppm" --led-cycle 64 --store-cycle 64
 grab "$TX" dock 200 "$OUT/dock-counter-blank.ppm" \
   --led-cycle 64 --store-cycle 64 --blank-cycle 128
 
-cmp -s "$OUT/nano-flash-on.ppm" "$OUT/dock-flash-on.ppm"
-cmp -s "$OUT/nano-flash-off.ppm" "$OUT/dock-flash-off.ppm"
-cmp -s "$OUT/nano-square-on.ppm" "$OUT/dock-square-on.ppm"
-cmp -s "$OUT/nano-square-off.ppm" "$OUT/dock-square-off.ppm"
 cmp -s "$OUT/nano-counter.ppm" "$OUT/nano-square-on.ppm"
 
 check() {
   "${PY[@]}" --got "$1" --kind "$2" "${@:3}"
 }
 
-for board in nano dock; do
-  check "$OUT/${board}-flash-off.ppm" flash
-  check "$OUT/${board}-flash-on.ppm" flash --flash-white
-  check "$OUT/${board}-square-off.ppm" square
-  check "$OUT/${board}-square-on.ppm" square --square
-  check "$OUT/${board}-square-blank.ppm" square --square --blank
-done
+check "$OUT/nano-flash-off.ppm" flash
+check "$OUT/nano-flash-on.ppm" flash --flash-white
+check "$OUT/nano-square-off.ppm" square
+check "$OUT/nano-square-on.ppm" square --square
+check "$OUT/nano-square-blank.ppm" square --square --blank
+check "$OUT/dock-flash-off.ppm" flash "${DOCK_SIZE[@]}"
+check "$OUT/dock-flash-on.ppm" flash --flash-white "${DOCK_SIZE[@]}"
+check "$OUT/dock-square-off.ppm" square "${DOCK_SIZE[@]}"
+check "$OUT/dock-square-on.ppm" square --square "${DOCK_SIZE[@]}"
+check "$OUT/dock-square-blank.ppm" square --square --blank "${DOCK_SIZE[@]}"
 check "$OUT/nano-counter.ppm" square --square
-check "$OUT/dock-counter-off.ppm" text --count 0
-check "$OUT/dock-counter-on.ppm" text --count 1 --square
-check "$OUT/dock-counter-blank.ppm" text --count 1 --square --blank
+check "$OUT/dock-counter-off.ppm" text --count 0 "${DOCK_SIZE[@]}"
+check "$OUT/dock-counter-on.ppm" text --count 1 --square "${DOCK_SIZE[@]}"
+check "$OUT/dock-counter-blank.ppm" text --count 1 --square --blank "${DOCK_SIZE[@]}"
 
 # A wrong expected picture must fail. The digits are one count high,
 # and the flash field is black where the capture is white.
-check "$OUT/dock-counter-on.ppm" text --count 2 --square --must-differ
+check "$OUT/dock-counter-on.ppm" text --count 2 --square --must-differ "${DOCK_SIZE[@]}"
 check "$OUT/nano-flash-on.ppm" flash --must-differ
 
 echo "ok frame check"

@@ -410,6 +410,8 @@ sim/obj_dir_video_tx/
 sim/obj_dir_frame_flash/
 sim/obj_dir_frame_sq/
 sim/obj_dir_frame_tx/
+sim/obj_dir_frame_flash_dock/
+sim/obj_dir_frame_sq_dock/
 sim/obj_dir_gate_117/
 sim/obj_dir_gate_210/
 gowin/ip/hpram/video_mode.vh
