@@ -126,10 +126,9 @@ IO_PORT "btn_n" IO_TYPE=LVCMOS15 PULL_MODE=UP;
 // CPU's -60 load flop, in the opposite corner.
 GROUP gate_grp = {"u_gate*" "u_disk_rx*" "u_cpu/cpu/btnLoad*"};
 GRP_LOC gate_grp R[2:22]C[2:18];
-// A free place of the no-collector image put the instruction ROM on
-// BSRAM_R10 beside the screen bitmap. Two SRAM loads of that file
-// stayed at PC 0080 with F 4B. The collector image, which trains,
-// puts the ROM on BSRAM_R28[7] and the multiplier on DSP_R19[1]
-// (R19C11), off that DQS. Pin both images there.
-INS_LOC "u_cpu/cpu/instructionRom/mem_mem_0_0_s" BSRAM_R28[7];
+// The 10:05 design still trains: ROM at BSRAM_R46[4], multiplier at
+// DSP_R19[1] (R19C11). The 12:33 pin put the ROM at BSRAM_R28[7],
+// beside the eye flops. That file trained at midday and now never
+// sees the test byte. Keep the ROM on the site that still trains.
+INS_LOC "u_cpu/cpu/instructionRom/mem_mem_0_0_s" BSRAM_R46[4];
 INS_LOC "u_cpu/cpu/hwMul/n136_s0" DSP_R19[1];
