@@ -600,6 +600,11 @@ def _light(ammt: dict) -> int:
 FLASH_MAGIC = 0x314B5344
 FLASH_BUILD = 0xE1
 FLASH_BASE = 0x200000
+# The book's window is the top 64 bytes, -64 through -4. -80 is the
+# screen block and -76 is the reserved text count. The word port and
+# the sector base take the two words between those and the window.
+IO_WORD = -72
+IO_BASE = -68
 # The Dock has no NOR. The same file lands here, above the init stream
 # (the stream ends near 0x2025C) and inside the HyperRAM stand-in,
 # which covers 160 KB. The Dock DDR3 uses this same address.
@@ -612,6 +617,44 @@ HALT_WORD = 0xE7FFFFFF
 
 def _io(off: int) -> int:
     return off & 0xFFFFF
+
+
+def _port_ops(words: list[int], off: int) -> tuple[int, int]:
+    """Count LDW and STW whose 20-bit offset is this I/O address."""
+    enc = off & 0xFFFFF
+    loads = stores = 0
+    for word in words:
+        if (word & 0xFFFFF) != enc:
+            continue
+        kind = word & 0xF00FFFFF
+        if kind == (0x80000000 | enc):
+            loads += 1
+        elif kind == (0xA0000000 | enc):
+            stores += 1
+    return loads, stores
+
+
+def _check_boot_ports(words: list[int], uart: bool) -> None:
+    """The bootstrap may use the flash ports and nothing else in this map."""
+    reserved = (
+        -80, -76, -64, -60, -56, -52, -48, -44, -40, -36, -32, -28,
+    )
+    for off in reserved:
+        loads, stores = _port_ops(words, off)
+        if loads or stores:
+            raise SystemExit(
+                f"bootstrap still touches {off} ({loads} loads, {stores} stores)"
+            )
+    loads, stores = _port_ops(words, IO_WORD)
+    if loads < 1 or stores != (0 if uart else 1):
+        raise SystemExit(
+            f"bootstrap word port {IO_WORD}: {loads} loads, {stores} stores"
+        )
+    loads, stores = _port_ops(words, IO_BASE)
+    if loads or stores != 1:
+        raise SystemExit(
+            f"bootstrap sector base {IO_BASE}: {loads} loads, {stores} stores"
+        )
 
 
 def _plant(a: Asm, static_end: int, flash: bool) -> None:
@@ -652,7 +695,7 @@ def _plant(a: Asm, static_end: int, flash: bool) -> None:
 def _bootstrap(static_end: int) -> list[int]:
     """Read the disk header, copy the core, then run the old stub tail.
 
-    One NOR word per load from -64. The pointer advances in the CPU.
+    One NOR word per load from -72. The pointer advances in the CPU.
     A failed check branches at the flag the compare just set. Later
     arithmetic is not allowed to sit between that compare and the branch.
     """
@@ -661,10 +704,10 @@ def _bootstrap(static_end: int) -> list[int]:
     a.word(f1(0, 4, 0, 0))
     for word in load_const(1, FLASH_BASE):
         a.word(word)
-    a.word(stw(1, 0, _io(-64)))
+    a.word(stw(1, 0, _io(IO_WORD)))
 
     def expect(value: int) -> None:
-        a.word(ldw(1, 0, _io(-64)))
+        a.word(ldw(1, 0, _io(IO_WORD)))
         for word in load_const(2, value):
             a.word(word)
         a.word(f0(9, 3, 1, 2))
@@ -673,7 +716,7 @@ def _bootstrap(static_end: int) -> list[int]:
     expect(FLASH_MAGIC)
     expect(1)
     expect(FLASH_BUILD)
-    a.word(ldw(7, 0, _io(-64)))
+    a.word(ldw(7, 0, _io(IO_WORD)))
     a.word(f0(9, 6, 7, 0))
     a.branch("halt", 1)
     a.word(f1(4, 6, 7, 3))
@@ -684,14 +727,14 @@ def _bootstrap(static_end: int) -> list[int]:
     a.word(f0(9, 3, 6, 7))
     a.branch("halt", 1)
     a.branch("halt", 0)
-    a.word(ldw(8, 0, _io(-64)))
+    a.word(ldw(8, 0, _io(IO_WORD)))
 
     a.word(f1(0, 5, 0, DIR_AT))
     a.word(f1(0, 6, 0, 9))
     a.label("dir")
     a.word(f0(9, 3, 6, 0))
     a.branch("dirdone", 1)
-    a.word(ldw(1, 0, _io(-64)))
+    a.word(ldw(1, 0, _io(IO_WORD)))
     a.word(f0(8, 4, 4, 1))
     a.word(stw(1, 5, 0))
     a.word(f1(8, 5, 5, 4))
@@ -710,7 +753,7 @@ def _bootstrap(static_end: int) -> list[int]:
         a.label(label)
         a.word(f0(9, 3, 6, 0))
         a.branch(label + "x", 1)
-        a.word(ldw(1, 0, _io(-64)))
+        a.word(ldw(1, 0, _io(IO_WORD)))
         a.word(f0(8, 4, 4, 1))
         a.word(stw(1, 2, 0))
         a.word(f1(8, 2, 2, 4))
@@ -725,7 +768,7 @@ def _bootstrap(static_end: int) -> list[int]:
     a.label("tail")
     a.word(f0(9, 3, 7, 0))
     a.branch("summed", 1)
-    a.word(ldw(1, 0, _io(-64)))
+    a.word(ldw(1, 0, _io(IO_WORD)))
     a.word(f0(8, 4, 4, 1))
     a.word(f1(9, 7, 7, 4))
     a.branch("tail", 7)
@@ -739,7 +782,7 @@ def _bootstrap(static_end: int) -> list[int]:
     a.word(ldw(3, 0, 0x6C))
     a.word(f0(8, 1, 1, 2))
     a.word(f0(8, 1, 1, 3))
-    a.word(stw(1, 0, _io(-60)))
+    a.word(stw(1, 0, _io(IO_BASE)))
     a.word(ldw(5, 0, 0x68))
     _plant(a, static_end, flash=True)
     a.label("halt")
@@ -749,6 +792,7 @@ def _bootstrap(static_end: int) -> list[int]:
         raise SystemExit(f"bootstrap is {len(boot)} words; it must stay under PC 0x800")
     if boot[-1] != HALT_WORD:
         raise SystemExit("bootstrap does not end on the halt word")
+    _check_boot_ports(boot, uart=False)
     return boot
 
 
@@ -758,7 +802,7 @@ def _uart_bootstrap(static_end: int) -> list[int]:
     Every word of disk.bin is stored at DISK_DDR as it arrives, so the
     file in DDR3 matches the bytes on the wire. The code and the init
     stream are also copied to the addresses the 4K uses. The sector
-    pages stay in that image. -60 receives their DDR3 address. A bad
+    pages stay in that image. -68 receives their DDR3 address. A bad
     magic, build, or checksum branches to the halt and never arms.
     """
     a = Asm()
@@ -768,7 +812,7 @@ def _uart_bootstrap(static_end: int) -> list[int]:
         a.word(word)
 
     def pull(rd: int) -> None:
-        a.word(ldw(rd, 0, _io(-64)))
+        a.word(ldw(rd, 0, _io(IO_WORD)))
         a.word(stw(rd, 9, 0))
         a.word(f1(8, 9, 9, 4))
 
@@ -848,7 +892,7 @@ def _uart_bootstrap(static_end: int) -> list[int]:
     a.word(ldw(3, 0, 0x6C))
     a.word(f0(8, 1, 1, 2))
     a.word(f0(8, 1, 1, 3))
-    a.word(stw(1, 0, _io(-60)))
+    a.word(stw(1, 0, _io(IO_BASE)))
     a.word(ldw(5, 0, 0x68))
     # The pointer is done. The delay loop's R9 check is zero on the 4K.
     a.word(f1(0, 9, 0, 0))
@@ -860,6 +904,7 @@ def _uart_bootstrap(static_end: int) -> list[int]:
         raise SystemExit(f"uart bootstrap is {len(boot)} words; it must stay under PC 0x800")
     if boot[-1] != HALT_WORD:
         raise SystemExit("uart bootstrap does not end on the halt word")
+    _check_boot_ports(boot, uart=True)
     return boot
 
 

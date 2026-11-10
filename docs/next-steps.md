@@ -96,7 +96,38 @@ Webcam `/dev/video2`, the Nano LED, `roi=nano4k` resolved to `206,240` 18×14, 3
 
 ## Item 24 — move the bootstrap flash ports off −64 and −60
 
-The 4K bootstrap reads its flash through I/O addresses −64 and −60. In the book those are the millisecond timer (−64) and the switches and LEDs (−60), which items 25 and 26 need. Move the flash ports to addresses the book does not use, and write the full I/O map (the book's addresses, the video ports, the arm word, the flash ports) into this section, so later items don't collide.
+The bootstrap's two flash ports moved out of the book's window. A load from −72 (`0xFFFFFFB8`) returns one disk word and advances the pointer. A store to −72 sets the NOR byte address the next load reads. The Dock has no NOR, so the same load takes one word from the UART. A store to −68 (`0xFFFFFFBC`) sets the sector base `SpiSector` adds its word index to. The SD window stays −48 and −44. The blink edge stays `466*N+780`.
+
+The book's I/O is the top 64 bytes. `RISC5Top.v` (14 October 2014) decodes that window, and `Input.Mod` and `PIO.Mod` name the same words. Sixteen words, −64 through −4:
+
+| Address | Read | Write |
+|---|---|---|
+| −64 | millisecond counter | |
+| −60 | buttons and switches | LEDs |
+| −56 | RS232 received byte | RS232 transmit byte |
+| −52 | RS232 status, transmit-ready and receive-ready | RS232 bit-rate bit |
+| −48 | SPI received word | SPI transmit word, starts the transfer |
+| −44 | SPI ready | SPI control |
+| −40 | mouse, and keyboard-ready in bit 28 | |
+| −36 | keyboard byte | a read acknowledges the keyboard |
+| −32 | general-purpose pins | general-purpose pins |
+| −28 | pin direction | pin direction |
+| −24, −20, −16, −12, −8, −4 | 0 | |
+
+The file's own comment swaps the mouse and the keyboard. The mux and `Input.Mod` (`msAdr = -40`, `kbdAdr = -36`) are the ones above. The book's picture is the bitmap at `0E7F00H`, 1024×768, one bit per pixel. It is not one of these words.
+
+This machine's ports sit under that window:
+
+| Address | What it is |
+|---|---|
+| −80 `0xFFFFFFB0` | Screen block. Bit 0 is block (15, 11). Blink5 stores `MMT.light` here. The store is decoded and dropped. The Dock counts the on-edges of this store into the four digit registers. |
+| −76 `0xFFFFFFB4` | Reserved for a blink-count store. `video.v` names it. The CPU does not decode it, and the Dock ties that write to 0. |
+| −72 `0xFFFFFFB8` | Flash word port. NOR on the 4K, UART on the Dock. |
+| −68 `0xFFFFFFBC` | Sector base for the disk pages. |
+
+The arm word is a RAM store, at `0x7C0`. Blink5 stores `0xA11C0DE5` xor the disk checksum. This disk's checksum is `0x6BAE42B7`, so the word the hardware compares is `0xCAB24F52`. A different word leaves the LED dark. The address is below the heap and outside the I/O window.
+
+The CPU already decodes the book's SPI words, −48 and −44. It does not decode the timer or the switches. Those two stay free for items 25 and 26.
 
 ## Item 25 — the millisecond timer
 

@@ -69,9 +69,13 @@ int main(int argc, char** argv) {
   int prev_screen = 0;
   for (; cycle < max_cycles; cycle++) {
     step();
-    if (top->mem_write && top->mem_addr == 0xFFFFFFB0u) {
-      fprintf(stderr, "FAIL store to -80 fell through at cycle %llu\n",
-              (unsigned long long)cycle);
+    if (top->mem_write && (top->mem_addr == 0xFFFFFFB0u ||
+                           top->mem_addr == 0xFFFFFFB8u ||
+                           top->mem_addr == 0xFFFFFFBCu ||
+                           top->mem_addr == 0xFFFFFFC0u ||
+                           top->mem_addr == 0xFFFFFFC4u)) {
+      fprintf(stderr, "FAIL store to %08x fell through at cycle %llu\n",
+              (unsigned)top->mem_addr, (unsigned long long)cycle);
       failed = 1;
       break;
     }
