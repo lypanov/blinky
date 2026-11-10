@@ -406,6 +406,7 @@ sim/obj_dir_modules/
 sim/obj_dir_disk/
 sim/obj_dir_video/
 sim/obj_dir_video_sq/
+sim/obj_dir_video_tx/
 gowin/ip/hpram/video_mode.vh
 gowin/primer20k/video_mode.vh
 gowin/primer20k/ddr3_hdmi.cst

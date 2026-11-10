@@ -116,3 +116,21 @@ Proof:
 - the rate matches the new formula
 
 Also build the 4K at `square` and record its size. If the counter code pushes the 4K over, follow the "4K is built at every step" rule.
+
+Measured, `ddr3modules` N=65536, text mode, SRAM load on bus 003:078 (`-m` only, `write to ram`, Load SRAM 100%). Idcode `0x81b`, GW2A-18. Bus 003:081 is the Nano and was not loaded. Nothing was written to flash. The 4K bitstream was not loaded. The first load trained.
+
+Blink5 is the square program. It still stores `MMT.light` at -80 after each toggle. The video block counts the stores whose bit is 1, one per on-edge, and draws that count as four decimal digits in the built-in 8×8 font. Columns 18..21 of row 0, origin (160, 48) of the active picture. The square stays block (15, 11). The two do not overlap. A second block RAM for the 600 character cells held DDR3 training, free on `BSRAM_R28` beside the eye flops and pinned beside the square bitmap on `BSRAM_R10`. The four digits are registers. The division is one bit per clock, fourteen clocks a digit, in the Dock video block only. A digit loop in Blink5 needed 4122 instruction words and the Dock ROM holds 4096. The 4K build does not define text mode, so its loop is the square loop.
+
+The edge is still `466*N+780`. At 24.1875 MHz, N=65536 is an edge every 1.26266 s, a full blink of 0.39598 Hz. The delay word is `60000001H`.
+
+Place: logic 5396/20736 (27%; 4903 LUT, 493 ALU), registers 2439/16173, CLS 3743/10368 (37%), block RAM 9/46 (1 SDPB, 8 pROM), OSER10 4, rPLL 2/4. The square place was 5294 logic, 3716 CLS, and 9 block RAM. Text added 102 logic and 27 CLS, and no block RAM. Setup and hold violations are 0. The worst setup slack is +1.618 ns. `pclk` Fmax is 114.708 MHz against 96.749. `cpu_clk` Fmax is 28.058 MHz against 24.187. route_option 2. The placed report names `ddr3_hdmi.cst`. Clock is H11, the blink pin is L14, and the DDR3 balls stay SSTL15.
+
+The 4K square place, rebuilt and left unloaded: logic 3779/4608 (82%; 3457 LUT, 322 ALU), registers 1944/3612, CLS 2161/2304 (94%, 143 free), block RAM 4/10. Same counts as step 2. Setup and hold TNS are 0. The worst setup slack is +3.405 ns. `cpu_clk` Fmax is 14.753 MHz against 13.500. The disk was not written.
+
+Verilator, same font: unarmed white 0, then `0001` (85 white pixels), `0001` plus the square (485), `0002` plus the square (488), `0010` plus the square (485), and 10000 shown as `0000` plus the square (488). The square frames are unchanged.
+
+Capture card UGREEN 15389, `/dev/video0`. The frame grabbed just after the load was green snow. The following frames were a locked black field, about (3,3,3). The measurement clip is 1682 frames at 60 fps, all locked. A lit square is exactly 440 pixels above luma 80, at x=338..359 and y=220..239. The four glyphs sit at y=48..54, x=342..377. No pixel above luma 80 sits outside those two boxes.
+
+The clip starts with the image already running. The first on-stretch reads `0059`. The next reads `0060`, then `0061`, and the on-stretch nine rises later reads `0068`. Each off-stretch holds the number from the on-stretch before it. The cells match `tools/font8x8.py` (bit 7 is the left pixel).
+
+The opening rise-to-rise is 130 frames. The next nine are 151 or 152 frames, six of 151 and three of 152. The mean is 2.5222 s, 0.39648 Hz. Same run, webcam `/dev/video2`, the Dock LED near (323, 52): ten periods, eight of 38 frames and two of 37, at 15 fps. The mean is 2.5200 s, 0.39683 Hz. The two rates differ by 0.09%. Against 0.39598 Hz the screen is 0.13% fast and the LED is 0.21% fast. The Nano LED in the same frames, near (210, 193), keeps its own period of about 2.34 s (0.427 Hz). Clips: `/home/lypanov/fpga/blink-measure/hdmi-dock-counter-8da8/screen.mkv` and `/home/lypanov/fpga/blink-measure/hdmi-dock-counter-8da8/led.mkv`.

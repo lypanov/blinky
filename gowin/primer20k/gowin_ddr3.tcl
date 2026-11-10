@@ -21,24 +21,27 @@ add_file -type verilog [file join $HERE ddr3_port_test.v]
 add_file -type verilog [file join $GOWIN ip gowin_sp.v]
 add_file -type sdc     [file join $HERE ddr3.sdc]
 
-# off, flash, or square. Text is a later step. The modules image
-# defaults to square in tools/gowin_build.sh.
+# off, flash, square, or text. Text includes the square. The modules
+# image defaults to text in tools/gowin_build.sh.
 set vmode "off"
 if {[info exists ::env(VIDEO_MODE)] && $::env(VIDEO_MODE) ne ""} {
   set vmode $::env(VIDEO_MODE)
 }
-if {$vmode ne "off" && $vmode ne "flash" && $vmode ne "square"} {
-  puts stderr "error: VIDEO_MODE=$vmode is not this step"
+if {$vmode ne "off" && $vmode ne "flash" && $vmode ne "square" && $vmode ne "text"} {
+  puts stderr "error: VIDEO_MODE=$vmode"
   exit 1
 }
 set vh [open [file join $HERE video_mode.vh] w]
-if {$vmode eq "flash" || $vmode eq "square"} {
+if {$vmode eq "flash" || $vmode eq "square" || $vmode eq "text"} {
   puts $vh "`ifndef VIDEO_MODE_INCLUDED"
   puts $vh "`define VIDEO_MODE_INCLUDED"
   puts $vh "`define VIDEO_ON"
   puts $vh "`define VIDEO_DOCK"
-  if {$vmode eq "square"} {
+  if {$vmode eq "square" || $vmode eq "text"} {
     puts $vh "`define VIDEO_SQUARE"
+  }
+  if {$vmode eq "text"} {
+    puts $vh "`define VIDEO_TEXT"
   }
   puts $vh "`endif"
   add_file -type verilog [file join $GOWIN video.v]
@@ -89,7 +92,13 @@ set_option -synthesis_tool gowinsynthesis
 # route_option 1 holds at 0x0080 with F=4B and a dark LED, and
 # route_option 2 runs the placed loop. DDR3_ROUTE_OPTION selects it;
 # other images stay on route_option 2.
-set_option -place_option 0
+# place_option 0 is the modules default. DDR3_PLACE_OPTION overrides
+# it for one image; other images stay on 0.
+if {[info exists ::env(DDR3_PLACE_OPTION)] && $::env(DDR3_PLACE_OPTION) ne ""} {
+  set_option -place_option $::env(DDR3_PLACE_OPTION)
+} else {
+  set_option -place_option 0
+}
 if {[info exists ::env(DDR3_ROUTE_OPTION)] && $::env(DDR3_ROUTE_OPTION) ne ""} {
   set_option -route_option $::env(DDR3_ROUTE_OPTION)
 } else {

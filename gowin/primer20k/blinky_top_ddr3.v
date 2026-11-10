@@ -750,6 +750,10 @@ module blinky_top_ddr3 (
     .armed      (cpu_armed),
     .clk_cpu    (cpu_clk),
 `endif
+`ifdef VIDEO_TEXT
+    .text_we    (1'b0),
+    .text_word  (24'd0),
+`endif
     .tmds_clk_p (tmds_clk_p),
     .tmds_clk_n (),
     .tmds_d_p   (tmds_d_p),

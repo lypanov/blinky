@@ -16,7 +16,7 @@
 #   FPGA_IMAGE=moddesc tools/gowin_build.sh      # HyperRAM plus ModDesc, the module table, and a procedure call
 #   FPGA_IMAGE=files tools/gowin_build.sh        # HyperRAM plus Files, two .rsc images, and Load of Blink5
 #   FPGA_IMAGE=modules tools/gowin_build.sh      # placed Blink5 body, fetched from HyperRAM (N=65536)
-#   VIDEO_MODE=square FPGA_IMAGE=modules tools/gowin_build.sh # one square (the modules default)
+#   VIDEO_MODE=square FPGA_IMAGE=modules tools/gowin_build.sh # one square (the 4K modules default)
 #   VIDEO_MODE=flash  FPGA_IMAGE=modules tools/gowin_build.sh # full-screen flash
 #   VIDEO_MODE=off    FPGA_IMAGE=modules tools/gowin_build.sh # same image, video left out
 #   FPGA_IMAGE=ddr3 BOARD=primer20k tools/gowin_build.sh  # Primer 20K DDR3 data port + Blink3
@@ -26,7 +26,8 @@
 #   FPGA_IMAGE=ddr3pd BOARD=primer20k tools/gowin_build.sh     # that port plus the P-chain and D-chain fixups
 #   FPGA_IMAGE=ddr3moddesc BOARD=primer20k tools/gowin_build.sh  # that port plus ModDesc and a procedure call
 #   FPGA_IMAGE=ddr3files BOARD=primer20k tools/gowin_build.sh    # that port plus Files, two .rsc images, and Load of Blink5
-#   FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # placed Blink5 body, fetched from DDR3 (N=65536), one square
+#   FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # placed Blink5 body, fetched from DDR3 (N=65536), counter text
+#   VIDEO_MODE=square FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh # one square, no text
 #   VIDEO_MODE=flash FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # full-screen flash
 #   VIDEO_MODE=off   FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh  # same image, video left out
 set -euo pipefail
@@ -534,7 +535,7 @@ case "$BOARD" in
         fi
         ;;
       text)
-        echo "error: VIDEO_MODE=$VIDEO_MODE is a later step" >&2
+        echo "error: VIDEO_MODE=text is the Dock image" >&2
         exit 1
         ;;
       *)
@@ -557,20 +558,16 @@ case "$BOARD" in
     if [[ -z "${VIDEO_MODE:-}" ]]; then
       VIDEO_MODE=off
       if [[ "$FPGA_IMAGE" == "ddr3modules" ]]; then
-        VIDEO_MODE=square
+        VIDEO_MODE=text
       fi
     fi
     case "$VIDEO_MODE" in
       off) ;;
-      flash|square)
+      flash|square|text)
         if [[ "$FPGA_IMAGE" != "ddr3modules" ]]; then
           echo "error: $VIDEO_MODE video is the ddr3modules image only (FPGA_IMAGE=$FPGA_IMAGE)" >&2
           exit 1
         fi
-        ;;
-      text)
-        echo "error: VIDEO_MODE=$VIDEO_MODE is a later step" >&2
-        exit 1
         ;;
       *)
         echo "error: VIDEO_MODE=$VIDEO_MODE" >&2
