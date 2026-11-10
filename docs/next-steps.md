@@ -96,7 +96,7 @@ Webcam `/dev/video2`, the Nano LED, `roi=nano4k` resolved to `206,240` 18×14, 3
 
 ## Item 24 — move the bootstrap flash ports off −64 and −60
 
-The bootstrap's two flash ports moved out of the book's window. A load from −72 (`0xFFFFFFB8`) returns one disk word and advances the pointer. A store to −72 sets the NOR byte address the next load reads. The Dock has no NOR, so the same load takes one word from the UART. A store to −68 (`0xFFFFFFBC`) sets the sector base `SpiSector` adds its word index to. The SD window stays −48 and −44. The blink edge stays `466*N+780`.
+Done. The bootstrap's two flash ports moved out of the book's window. A load from −72 (`0xFFFFFFB8`) returns one disk word and advances the pointer. A store to −72 sets the NOR byte address the next load reads. The Dock has no NOR, so the same load takes one word from the UART. A store to −68 (`0xFFFFFFBC`) sets the sector base `SpiSector` adds its word index to. The SD window stays −48 and −44. The blink edge stays `466*N+780`.
 
 The book's I/O is the top 64 bytes. `RISC5Top.v` (14 October 2014) decodes that window, and `Input.Mod` and `PIO.Mod` name the same words. Sixteen words, −64 through −4:
 
@@ -128,6 +128,22 @@ This machine's ports sit under that window:
 The arm word is a RAM store, at `0x7C0`. Blink5 stores `0xA11C0DE5` xor the disk checksum. This disk's checksum is `0x6BAE42B7`, so the word the hardware compares is `0xCAB24F52`. A different word leaves the LED dark. The address is below the heap and outside the I/O window.
 
 The CPU already decodes the book's SPI words, −48 and −44. It does not decode the timer or the switches. Those two stay free for items 25 and 26.
+
+Verilator, N=5. The NOR disk blinks at period 3110, PC `0x2070`, mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. The UART disk, on the HyperRAM stand-in, does the same. A wrong build halts at PC `0x260` with the LED off, at cycle 3996. One flipped payload byte does the same, at cycle 5737128. `tools/run_verilator_sim.sh` runs those two. The N=5 disk checksum is `4bae469b` and its arm word is `eab24b7e`, because that run patches the delay word. The N=65536 disk bytes match the previous tip: 17928 bytes, checksum `6bae42b7`, arm word `cab24f52`. Nothing was written to the NOR.
+
+4K place, `modules_n65536`, square. Against the item 23 place this uses 61 more logic (61 LUT, the ALU stays 322), the same 1973 registers, and 16 more CLS. Block RAM stays 4/10 (2 SDPB, 1 SDPX9B, 1 pROM). Logic 3813/4608 (83%; 3491 LUT, 322 ALU), registers 1973/3612, CLS 2165/2304 (94%, 139 free). Setup violated endpoints 0. Worst setup slack +3.220 ns, the HyperRAM chip-select path. `cpu_clk` Fmax 14.973 MHz against 13.500. Hold violated endpoints 1: `u_gate/uart_latch_s0` to `u_video/blank_s1_s1`, slack −0.385 ns, the cpu clock into the pixel clock. `armed_s1` to `armed_s1_s0` is +0.441 ns. Place is not reproducible; the slack and the Fmax moved, and both stay on the same side of the constraint.
+
+Dock place, `ddr3modules_n65536`, text, route_option 2, place_option 0. Against the item 23 place this uses 76 more logic (76 LUT, the ALU stays 490), the same 2916 registers, and 15 more CLS. Block RAM stays 2/46 (1 SDPB, 1 pROM). Logic 5531/20736 (27%; 5041 LUT, 490 ALU), registers 2916/16173, CLS 3977/10368 (39%), OSER10 4, rPLL 3/4. Setup and hold violated endpoints 0. The worst listed setup slack is +1.447 ns. `pclk` Fmax 112.493 MHz against 96.749. `cpu_clk` Fmax 29.523 MHz against 24.187. The pixel clock Fmax is 94.233 MHz against 64.800. The serializer is 324 MHz. The placed report names `ddr3_hdmi.cst`. The gate group stays in `R[2:22]C[2:18]`.
+
+The first SRAM load, bus 003:078 only (`-m`, `write to ram`, Load SRAM 100%), was followed by a listen that still showed the previous image in the delay loop and then dropped to training: PC `0080`, `F` `4B`. The second load of the same bitstream started there. Idcode `0x81b`, GW2A-18. UART was FTDI channel B, 115200 8N1, opened without a USB reset. After `tools/send_dock_disk.py` sent the 17928-byte disk, the line trained. It starts `C.`. The write delay is lane 1 step 12 and lane 0 step 10, shown as `000C 000A`. `G` is `A55A`, `E0` is `A55A`, `F` is `AB`. The PC moved through `0094`, `0164`, and `01C4` into the delay loop. A later listen, still without a USB reset, stays there (`2214`, `2218`, `221C`, `2220`, `2224`, `2228`, `222C`, `2230`, `2234`, `2238`, `225C`), mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. The write halfword is `000010F9`. The write delay was not moved.
+
+Webcam `/dev/video2`, the Dock LED, box `300,28` 50×40, 30.001 fps: edge 0.396708 Hz, period 2.52074 s, duty 0.5081, 25 rising edges, confidence 0.9978, FFT 0.402807 Hz, SNR 859. Against 0.39598 Hz the LED is 0.18% fast. Clip: `/tmp/blink-dock-299c/clip.mkv`.
+
+Capture card UGREEN 15389, `/dev/video0`, already at 1024×768, 60 fps. A six-second peek opens on green snow, mean about (7.2, 27.0, 8.9), then a locked black field, about (3, 3, 3). The twenty-second clip stays locked: green mean 3.0, no frame above 20. A lit square is 400 pixels above luma 80, at x=300..319 and y=220..239, and 0 when dark. The glyphs at y=48..54, x=304..335 are 74 to 90 pixels on every lit frame, and on 580 of 654 dark frames. Six rise-to-rise gaps: five of 151 frames (2.5167 s, 0.39735 Hz) and one of 152 frames (2.5333 s, 0.39474 Hz). The mean is 0.39692 Hz, beside the LED. Clips: `/tmp/dock-screen-299c/peek.mkv`, `/tmp/dock-screen-299c/screen.mkv`.
+
+The Nano detect on bus 003:081 returned idcode `0x100981b`, GW1NSR-4C. `ftdi_sio` held both interfaces of `3-3.1.1`. The SRAM load did not find the reset busy, so the driver stayed bound and VBUS stayed on. `write to ram`, Load SRAM 100%, CRC check Success. Nothing was written to flash. The NOR disk already on the board is those same 17928 bytes, so this bootstrap read it at −72 and −68.
+
+Webcam `/dev/video2`, the Nano LED, box `206,240` 18×14, 30.002 fps: edge 0.427142 Hz, period 2.34114 s, duty 0.4952, 26 rising edges, confidence 0.9974, FFT 0.418938 Hz, SNR 383. Against 0.442035 Hz the LED is 3.37% slow, the same side as item 19's 0.425923 Hz and item 23's 0.426723 Hz. Clip: `/tmp/blink-nano-299c/clip.mkv`.
 
 ## Item 25 — the millisecond timer
 
