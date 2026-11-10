@@ -2,50 +2,17 @@ package gcd
 
 import chisel3._
 import chisel3.util._
-import java.io.{File, PrintWriter}
-
-// Sector bytes for Kernel.ReadSD. A synchronous read maps to BSRAM.
-// The hex is the three pages sim/sector_image.py builds. Firtool does not
-// emit this file; the elaborator writes it next to InstrRom.
-class SectorRom(hexPath: String) extends BlackBox {
-  override def desiredName = "SectorRom"
-  val io = IO(new Bundle {
-    val clk = Input(Clock())
-    val addr = Input(UInt(10.W))
-    val data = Output(UInt(32.W))
-  })
-  private val romFile = new File("generated/SectorRom.v")
-  romFile.getParentFile.mkdirs()
-  val romWriter = new PrintWriter(romFile)
-  romWriter.write(
-    s"""module SectorRom(
-       |  input clk,
-       |  input [9:0] addr,
-       |  output reg [31:0] data
-       |);
-       |  reg [31:0] mem [0:1023];
-       |  initial $$readmemh("${hexPath}", mem);
-       |  always @(posedge clk) begin
-       |    data <= mem[addr];
-       |  end
-       |endmodule
-       |""".stripMargin)
-  romWriter.close()
-}
 
 // SPI data at -48 and control at -44. There is no card and no pin.
 // A data write clocks one byte, or one little-endian word when the fast
 // bit is set during the ReadSD payload. Ready is bit 0 of the control
 // read. It drops on a fast word and is set again with the word, which
 // is what the poll in Kernel.SPI waits for.
-// pairCount > 0 reads a packed (index, word) table through romAddr/romData
-// instead of a flat sector ROM. The table is the live words of the three
-// pages. A missing index returns 0. Ready stays low for the scan, which is
-// what Kernel.SPI polls.
-// nor reads those same words from the SPI NOR. sectorBase is the flash
-// byte address of page 0. The CPU lends the one SpiNor; this side pulses
-// norStart and waits for norDone. Ready stays low for the shift.
-class SpiSector(pairCount: Int = 0, nor: Boolean = false) extends Module {
+// The word comes from outside this module. On the 4K that is one NOR
+// read. On the Dock it is one DDR3 read. sectorBase is the byte address
+// of page 0. This side pulses norStart and waits for norDone. Ready
+// stays low for the transfer.
+class SpiSector extends Module {
   val io = IO(new Bundle {
     val write = Input(Bool())
     val ctrl = Input(Bool())
@@ -53,29 +20,14 @@ class SpiSector(pairCount: Int = 0, nor: Boolean = false) extends Module {
     val ready = Output(Bool())
     val rdata = Output(UInt(32.W))
     val cdata = Output(UInt(32.W))
-    val romAddr = Output(UInt(12.W))
-    val romData = Input(UInt(32.W))
-    val scanning = Output(Bool())
     val sectorBase = Input(UInt(24.W))
     val norStart = Output(Bool())
     val norAddr = Output(UInt(24.W))
     val norWord = Input(UInt(32.W))
     val norDone = Input(Bool())
   })
-  io.romAddr := 0.U
   io.norStart := false.B
   io.norAddr := 0.U
-
-  val internal = if (pairCount == 0 && !nor) {
-    val root = sys.env.getOrElse("CHISEL_CPU_PROJECT_ROOT", new File(".").getAbsolutePath)
-    val hex = new File(root, "sim/visualizer/imem/sector.hex")
-    if (!hex.isFile) {
-      throw new RuntimeException(s"sector ROM missing at ${hex.getAbsolutePath}")
-    }
-    val rom = Module(new SectorRom(hex.getAbsolutePath))
-    rom.io.clk := clock
-    Some(rom)
-  } else None
 
   val ctrlReg = RegInit(0.U(4.W))
   val readyReg = RegInit(true.B)
@@ -95,25 +47,6 @@ class SpiSector(pairCount: Int = 0, nor: Boolean = false) extends Module {
   val inRange = isFs && index >= 1.U && index <= 3.U
   val which = index - 1.U
   val wordAddr = Cat(which(1, 0), half, idx(6, 0))
-  internal.foreach { rom =>
-    rom.io.addr := Mux(inRange, wordAddr, 0.U)
-  }
-  val scan = if (pairCount > 0) RegInit(false.B) else false.B
-  val scanAt = if (pairCount > 0) RegInit(0.U(8.W)) else 0.U
-  val scanPhase = if (pairCount > 0) RegInit(0.U(2.W)) else 0.U
-  val scanKey = if (pairCount > 0) Reg(UInt(10.W)) else 0.U(10.W)
-  if (pairCount > 0) {
-    when (scan) {
-      when (scanPhase === 0.U) {
-        io.romAddr := scanAt << 1
-        scanPhase := 1.U
-      } .elsewhen (scanPhase === 1.U) {
-        scanKey := io.romData(9, 0)
-        io.romAddr := (scanAt << 1) + 1.U
-        scanPhase := 2.U
-      }
-    }
-  }
 
   val byte = io.wdata(7, 0)
   val ocr = MuxLookup(idx(2, 0), 0.U(8.W))(Seq(
@@ -143,13 +76,7 @@ class SpiSector(pairCount: Int = 0, nor: Boolean = false) extends Module {
   def acceptByte(): Unit = {
     when (phase === 4.U && ctrlReg(2)) {
       readyReg := false.B
-      if (pairCount > 0) {
-        scan := true.B
-        scanAt := 0.U
-        scanPhase := 0.U
-      } else {
-        wordWait := true.B
-      }
+      wordWait := true.B
     } .otherwise {
       readyReg := true.B
       when (phase === 0.U) {
@@ -201,44 +128,21 @@ class SpiSector(pairCount: Int = 0, nor: Boolean = false) extends Module {
     }
   }
 
-  val norArmed = if (nor) RegInit(false.B) else false.B
-  if (nor) {
-    when (wordWait && !norArmed) {
-      io.norStart := true.B
-      io.norAddr := io.sectorBase + Cat(wordAddr, 0.U(2.W))
-      norArmed := true.B
-    }
-    when (norArmed && io.norDone) {
-      deliver(Mux(inRange, io.norWord, 0.U))
-      norArmed := false.B
-    }
-    when (io.write && !io.ctrl && !wordWait && !norArmed) {
-      acceptByte()
-    }
-  } else if (pairCount == 0) {
-    when (wordWait) {
-      deliver(Mux(inRange, internal.get.io.data, 0.U))
-    } .elsewhen (io.write && !io.ctrl) {
-      acceptByte()
-    }
-  } else {
-    when (scan && scanPhase === 2.U) {
-      val hit = scanKey === wordAddr
-      val last = scanAt === (pairCount - 1).U(8.W)
-      when (hit || last || !inRange) {
-        deliver(Mux(hit && inRange, io.romData, 0.U))
-        scan := false.B
-      } .otherwise {
-        scanAt := scanAt + 1.U
-        scanPhase := 0.U
-      }
-    } .elsewhen (io.write && !io.ctrl && !scan) {
-      acceptByte()
-    }
+  val norArmed = RegInit(false.B)
+  when (wordWait && !norArmed) {
+    io.norStart := true.B
+    io.norAddr := io.sectorBase + Cat(wordAddr, 0.U(2.W))
+    norArmed := true.B
+  }
+  when (norArmed && io.norDone) {
+    deliver(Mux(inRange, io.norWord, 0.U))
+    norArmed := false.B
+  }
+  when (io.write && !io.ctrl && !wordWait && !norArmed) {
+    acceptByte()
   }
 
   io.ready := readyReg
   io.rdata := rx
   io.cdata := Cat(0.U(31.W), readyReg)
-  io.scanning := scan
 }

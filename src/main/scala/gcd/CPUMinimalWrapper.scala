@@ -53,9 +53,6 @@ class CPUMinimalWrapper(
     customMemoryImage: Option[Seq[String]] = None,
     memBackend: String = "blockram",
     hyperFirstValid: Int = 12,
-    extraChecks: Int = 0,
-    fetchStored: Boolean = false,
-    chainFix: Boolean = false,
     bodyFetch: Boolean = false,
     core: Option[CoreMap] = None,
     flashBoot: Boolean = false,
@@ -74,12 +71,9 @@ class CPUMinimalWrapper(
     else new CpuWrapBase
   )
   
-  // Blink2 uses the small default IMEM (programInstructions). Blink3 passes
-  // the linked image + address-0 BL trampoline as customMemoryImage.
-  // HyperRAM uses that image plus the walking-pattern prologue, and stalls
-  // loads and stores. Block RAM keeps waitForStores false.
-  // The DDR3 CPU is on pclk/4. The bridge stays on pclk.
-  // The Modules CPU is on clk_out/2. The HyperRAM bridge stays on clk_out.
+  // The disk bootstrap is customMemoryImage. Loads and stores stall on
+  // HyperRAM and on DDR3. The DDR3 CPU is on pclk/4. The bridge stays on
+  // pclk. The 4K CPU is on clk_out/2. The HyperRAM bridge stays on clk_out.
   val hyperSlow = hyper && useRealGowin && core.isDefined
   val cpuClock = if (ddr3 && useRealGowin) io.asInstanceOf[CpuWrapDdr3].cpu_clock
     else if (hyperSlow) io.asInstanceOf[CpuWrapHyper].cpu_clock
@@ -98,10 +92,6 @@ class CPUMinimalWrapper(
       programInstructions,
       customMemoryImage = customMemoryImage,
       waitForStores = hyper || ddr3,
-      requireMemCheck = hyper || ddr3,
-      extraChecks = extraChecks,
-      fetchStored = fetchStored,
-      chainFix = chainFix,
       bodyFetch = bodyFetch,
       core = core,
       flashBoot = flashBoot,

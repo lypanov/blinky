@@ -7,19 +7,15 @@ import java.io.File
 /**
  * Simulation-only top: CPUSubset0 + mock RAM, no UART / Gowin IP.
  *
- * Does not change CPU behaviour. The Blink2 *program* loaded here is the
- * short-delay test image (maxIterations = 5) so a LED period is observable
- * in a few hundred cycles. Hardware still uses tests/Blink2hw.code
- * (maxIterations = 262144, 2x delay) via CPUSubset0.main / build.sh.
+ * Does not change CPU behaviour. The disk bootstrap is the program.
+ * N=5 is short enough that a LED period is observable. Hardware uses
+ * the same linker with N=65536.
  */
 class CPUSimTop(
     programInstructions: Seq[String],
     customMemoryImage: Option[Seq[String]] = None,
     memBackend: String = "blockram",
     hyperFirstValid: Int = 12,
-    extraChecks: Int = 0,
-    fetchStored: Boolean = false,
-    chainFix: Boolean = false,
     bodyFetch: Boolean = false,
     core: Option[CoreMap] = None,
     flashBoot: Boolean = false,
@@ -72,10 +68,6 @@ class CPUSimTop(
     programInstructions,
     customMemoryImage = customMemoryImage,
     waitForStores = hyper || ddr3,
-    requireMemCheck = hyper || ddr3,
-    extraChecks = extraChecks,
-    fetchStored = fetchStored,
-    chainFix = chainFix,
     bodyFetch = bodyFetch,
     core = core,
     flashBoot = flashBoot,
@@ -230,62 +222,32 @@ object CPUSimTop {
 
   def main(args: Array[String]): Unit = {
     val projectRoot = getProjectRoot()
-    val image = sys.env.getOrElse("SIM_IMAGE", "blink2")
+    val image = sys.env.getOrElse("SIM_IMAGE", "modules")
     val targetDir = "generated"
     new File(targetDir).mkdirs()
 
     val (gen, outFile, label) = image match {
-      case "blink3" =>
-        val imemPath = new File(
-          projectRoot,
-          sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/blink3.words")
-        ).getAbsolutePath
-        val words = loadInstructionsFromFile(imemPath)
-        println(s"CPUSimTop: Blink3 custom IMEM ${words.length} words from $imemPath")
-        (
-          () => new CPUSimTop(Seq.empty, customMemoryImage = Some(words)),
-          s"$targetDir/CPUSimTopBlink3.v",
-          "blink3"
-        )
-      case "ddr3" | "ddr3fixup" | "ddr3rsc" | "ddr3fetch" | "ddr3pd" | "ddr3moddesc" | "ddr3files" | "ddr3modules" =>
-        val extra = if (image == "ddr3modules" || image == "ddr3files" || image == "ddr3moddesc") 40 else if (image == "ddr3pd") 37 else if (image == "ddr3fetch") 34 else if (image == "ddr3rsc") 32 else if (image == "ddr3fixup") 20 else 0
-        val fetchStored = image == "ddr3fetch" && sys.env.getOrElse("FETCH_STORED", "1") != "0"
-        // CHAIN_FIX=0 is the same words with no patch table. The walk
-        // loads zeros, the compare fails, and the pin stays dark.
-        val chainFix = image == "ddr3pd" || ((image == "ddr3moddesc" || image == "ddr3files" || image == "ddr3modules") && sys.env.getOrElse("CHAIN_FIX", "1") != "0")
-        val bodyFetch = image == "ddr3modules" && sys.env.getOrElse("BODY_FETCH", "1") != "0"
+      case "ddr3modules" =>
         val externalPhy = sys.env.getOrElse("DDR3_PHY", "") == "micron"
         val imemPath = new File(
           projectRoot,
-          sys.env.getOrElse(
-            "BLINK3_IMEM",
-            if (image == "ddr3modules") "sim/visualizer/imem/ddr3modules.words"
-            else if (image == "ddr3files") "sim/visualizer/imem/ddr3files.words"
-            else if (image == "ddr3moddesc") "sim/visualizer/imem/ddr3moddesc.words"
-            else if (image == "ddr3pd") "sim/visualizer/imem/ddr3pd.words"
-            else if (image == "ddr3fetch") "sim/visualizer/imem/ddr3fetch.words"
-            else if (image == "ddr3rsc") "sim/visualizer/imem/ddr3rsc.words"
-            else if (image == "ddr3fixup") "sim/visualizer/imem/ddr3fixup.words"
-            else "sim/visualizer/imem/ddr3.words"
-          )
+          sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/ddr3modules.words")
         ).getAbsolutePath
         val words = loadInstructionsFromFile(imemPath)
-        val coreMap: Option[CoreMap] = if (image == "ddr3modules") {
-          Some(CoreMap.load(projectRoot).getOrElse(
-            throw new RuntimeException("ddr3modules needs sim/visualizer/imem/core.map — run sim/link_inner.py")
-          ))
-        } else None
+        val coreMap = Some(CoreMap.load(projectRoot).getOrElse(
+          throw new RuntimeException("ddr3modules needs sim/visualizer/imem/core.map — run sim/link_inner.py")
+        ))
         val uartDisk = coreMap.exists(_.uartDisk)
-        println(s"CPUSimTop: $image IMEM ${words.length} words extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix bodyFetch=$bodyFetch externalPhy=$externalPhy uartDisk=$uartDisk from $imemPath")
+        if (!uartDisk) {
+          throw new RuntimeException("ddr3modules needs the UART disk map")
+        }
+        println(s"CPUSimTop: ddr3modules IMEM ${words.length} words externalPhy=$externalPhy uartDisk=$uartDisk from $imemPath")
         (
           () => new CPUSimTop(
             Seq.empty,
             customMemoryImage = Some(words),
             memBackend = "ddr3",
-            extraChecks = extra,
-            fetchStored = fetchStored,
-            chainFix = chainFix,
-            bodyFetch = bodyFetch,
+            bodyFetch = true,
             core = coreMap,
             externalPhy = externalPhy,
             uartDisk = uartDisk
@@ -293,62 +255,30 @@ object CPUSimTop {
           s"$targetDir/CPUSimTopDdr3.v",
           image
         )
-      case "hyperram" | "fixup" | "rsc" | "fetchbl" | "pdchain" | "moddesc" | "files" | "modules" =>
+      case "modules" =>
         val imemPath = new File(
           projectRoot,
-          sys.env.getOrElse(
-            "BLINK3_IMEM",
-            if (image == "modules") "sim/visualizer/imem/modules.words"
-            else if (image == "files") "sim/visualizer/imem/files.words"
-            else if (image == "moddesc") "sim/visualizer/imem/moddesc.words"
-            else if (image == "pdchain") "sim/visualizer/imem/pdchain.words"
-            else if (image == "fetchbl") "sim/visualizer/imem/fetchbl.words"
-            else if (image == "rsc") "sim/visualizer/imem/rsc.words"
-            else if (image == "fixup") "sim/visualizer/imem/fixup.words"
-            else "sim/visualizer/imem/hyperram.words"
-          )
+          sys.env.getOrElse("BLINK3_IMEM", "sim/visualizer/imem/modules.words")
         ).getAbsolutePath
         val words = loadInstructionsFromFile(imemPath)
-        // 12 is the pre-load model. Later HyperRAM images simulate the fitted
-        // read latency unless HYPER_FIRST_VALID overrides it.
-        val firstValid = sys.env.get("HYPER_FIRST_VALID").map(_.toInt).getOrElse(
-          if (image == "hyperram") 12 else 13
-        )
-        val extra = image match {
-          case "modules" => 40
-          case "files" => 40
-          case "moddesc" => 40
-          case "pdchain" => 37
-          case "fetchbl" => 34
-          case "rsc" => 32
-          case "fixup" => 20
-          case _ => 0
-        }
-        // FETCH_STORED=0 is the split-bus sim: same words, ROM fetch. Dark.
-        val fetchStored = image == "fetchbl" && sys.env.getOrElse("FETCH_STORED", "1") != "0"
-        // CHAIN_FIX=0 is the same words with no patch table and no ROM read
-        // of the code window. The walk loads zeros and the pin stays dark.
-        val chainFix = (image == "pdchain" || image == "moddesc" || image == "files" || image == "modules") && sys.env.getOrElse("CHAIN_FIX", "1") != "0"
-        val bodyFetch = image == "modules" && sys.env.getOrElse("BODY_FETCH", "1") != "0"
-        val coreMap: Option[CoreMap] = if (image == "modules") {
-          Some(CoreMap.load(projectRoot).getOrElse(
-            throw new RuntimeException("modules needs sim/visualizer/imem/core.map — run sim/link_inner.py")
-          ))
-        } else None
+        val firstValid = sys.env.get("HYPER_FIRST_VALID").map(_.toInt).getOrElse(13)
+        val coreMap = Some(CoreMap.load(projectRoot).getOrElse(
+          throw new RuntimeException("modules needs sim/visualizer/imem/core.map — run sim/link_inner.py")
+        ))
         val uartDisk = coreMap.exists(_.uartDisk)
-        val flashBoot = image == "modules" && coreMap.exists(_.romWords <= 512) && !uartDisk
-        println(s"CPUSimTop: $image IMEM ${words.length} words from $imemPath")
-        println(s"CPUSimTop: FIRST_VALID=$firstValid extraChecks=$extra fetchStored=$fetchStored chainFix=$chainFix bodyFetch=$bodyFetch flashBoot=$flashBoot uartDisk=$uartDisk")
+        val flashBoot = coreMap.exists(_.romWords <= 512) && !uartDisk
+        if (!flashBoot && !uartDisk) {
+          throw new RuntimeException("modules needs the NOR disk map or the UART disk map")
+        }
+        println(s"CPUSimTop: modules IMEM ${words.length} words from $imemPath")
+        println(s"CPUSimTop: FIRST_VALID=$firstValid flashBoot=$flashBoot uartDisk=$uartDisk")
         (
           () => new CPUSimTop(
             Seq.empty,
             customMemoryImage = Some(words),
             memBackend = "hyperram",
             hyperFirstValid = firstValid,
-            extraChecks = extra,
-            fetchStored = fetchStored,
-            chainFix = chainFix,
-            bodyFetch = bodyFetch,
+            bodyFetch = true,
             core = coreMap,
             flashBoot = flashBoot,
             uartDisk = uartDisk
@@ -356,16 +286,8 @@ object CPUSimTop {
           s"$targetDir/CPUSimTopHyper.v",
           image
         )
-      case _ =>
-        val defaultCode = new File(projectRoot, "tests/Blink2test.code").getAbsolutePath
-        val codePath = sys.env.getOrElse("BLINK2_CODE", defaultCode)
-        val programInstructions = loadInstructionsFromFile(codePath)
-        println(s"CPUSimTop: loaded ${programInstructions.length} instructions from $codePath")
-        (
-          () => new CPUSimTop(programInstructions),
-          s"$targetDir/CPUSimTop.v",
-          "blink2"
-        )
+      case other =>
+        throw new RuntimeException(s"SIM_IMAGE=$other is retired. Use modules or ddr3modules.")
     }
 
     val verilog = ChiselStage.emitSystemVerilog(

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Phase 1: generate CPUSimTop Verilog (Blink2test, short sim delay),
-# Verilate, run, dump FST + LED log + waveform PNG.
+# Prove the two current images. Both boot the same disk.bin.
+# The 4K reads it from the NOR model. The Dock reads it from the UART,
+# with HyperRAM standing in for DDR3. N=5. The edge is 466*N+780.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,7 +18,7 @@ if ! command -v verilator >/dev/null 2>&1; then
   exit 1
 fi
 
-make -C sim sim "$@"
-echo ""
-echo "GTKWave:"
-echo "  gtkwave -S $ROOT/sim/gtkwave_led.tcl $ROOT/sim/out/blink2.fst $ROOT/sim/gtkwave_led.gtkw"
+echo "==> NOR disk boot"
+"$ROOT/sim/run_disk_boot.sh" 5
+echo "==> UART disk boot"
+"$ROOT/sim/run_uart_disk.sh" 5

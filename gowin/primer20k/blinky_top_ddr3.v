@@ -1,16 +1,5 @@
 `include "ddr3_eye.vh"
 `include "video_mode.vh"
-// ModDesc, Files, and Modules use the same holds as the P/D image.
-// The new blocks are not spins. A failed compare still sits on 0x1D8C.
-`ifdef DDR3_MODULES
-  `define DDR3_PD_HOLD
-`elsif DDR3_FILES
-  `define DDR3_PD_HOLD
-`elsif DDR3_MODDESC
-  `define DDR3_PD_HOLD
-`elsif DDR3_PD
-  `define DDR3_PD_HOLD
-`endif
 // Primer 20K Dock wrapper. Fetch stays in block RAM. Loads and stores
 // go through the DDR3 controller that already initializes the H5TQ1G63
 // on this board. The CPU and the bridge run on pclk (387 MHz / 4).
@@ -395,31 +384,11 @@ module blinky_top_ddr3 (
   assign port_s1 = 16'd0;
   assign port_s2 = 16'd0;
   // One status line about twice a second, after the PLL locks.
-  // H means the prologue hold. After the mask: the scanner index,
-  // the column of the last read, then dq_in beats 0..7 as four
-  // halfword pairs. Beat 0 is the byte the CPU is given today.
-  reg        hold_seen = 1'b0;
-  always @(posedge cpu_clk or negedge pll_lock) begin
-    if (!pll_lock)
-      hold_seen <= 1'b0;
-    else if (cpu_pc[15:0] >= 16'h1390 && cpu_pc[15:0] < 16'h1400)
-      hold_seen <= 1'b1;
-`ifdef DDR3_FETCH
-    // These are spin holds. The fetch itself stalls on 0x1F00 while
-    // the stored word is read, so that address is not a hold.
-    else if (cpu_pc[15:0] == 16'h1B44 || cpu_pc[15:0] == 16'h1B48
-          || cpu_pc[15:0] == 16'h1C20 || cpu_pc[15:0] == 16'h1C24
-          || cpu_pc[15:0] == 16'h1CD8 || cpu_pc[15:0] == 16'h1CDC)
-      hold_seen <= 1'b1;
-`elsif DDR3_PD_HOLD
-    // Reader spins, and the chain compare spin. The chain prologue
-    // at 0x1C00, the ModDesc block at 0x1EF8, the Files block at
-    // 0x00C0, and the Modules body at 0x06C0 are real code.
-    else if (cpu_pc[15:0] == 16'h1B44 || cpu_pc[15:0] == 16'h1B48
-          || cpu_pc[15:0] == 16'h1D8C || cpu_pc[15:0] == 16'h1D90)
-      hold_seen <= 1'b1;
-`endif
-  end
+  // H stays ".". The old prologue and chain holds are retired.
+  // After the mask: the scanner index, the column of the last read,
+  // then dq_in beats 0..7 as four halfword pairs. Beat 0 is the byte
+  // the CPU is given today.
+  wire       hold_seen = 1'b0;
   reg [1:0] hold_sync = 2'b00;
   reg [15:0] pc_snap = 16'd0;
   always @(posedge pclk) begin
@@ -489,18 +458,8 @@ module blinky_top_ddr3 (
     hex32({6'd0, wr_addr}), " ",
     hex32({16'd0, wr_data}), " ",
     hex32(cpu_r9), " ",
-`ifdef DDR3_READER
-    // Sweep image: programmed lane 1, then programmed lane 0.
+    // Programmed lane 1, then programmed lane 0. The trained eye.
     hex16({8'h00, wstep1_run}), " ",
-`elsif DDR3_FETCH
-    // Stored-BL image: programmed lane 1, then programmed lane 0.
-    hex16({8'h00, wstep1_run}), " ",
-`elsif DDR3_PD_HOLD
-    // P/D-chain, ModDesc, Files, and Modules: programmed lane 1, then lane 0.
-    hex16({8'h00, wstep1_run}), " ",
-`else
-    hex16({8'h00, unused_wstep}), " ",
-`endif
     hex16({8'h00, wstep_run}),
     " E0 ", hex16(unused_debug[63:48]),
     " G ", hex16(unused_debug[47:32]),

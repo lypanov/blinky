@@ -1,11 +1,8 @@
-# Blink2 / Blink3 Verilator simulation (CPUSubset0 + mock RAM).
-# Generate Verilog with Mill, then build/run the C++ testbench.
+# Retired Blink2 / Blink3 Verilator targets. The current proof is
+# sim/run_disk_boot.sh and sim/run_uart_disk.sh, via tools/run_verilator_sim.sh.
 #
 # Usage (from repo root):
-#   make -C sim traces          # both programs, copy JSON into visualizer/traces/
-#   make -C sim sim             # Blink2 only (legacy Phase 1)
 #   tools/run_verilator_sim.sh
-#   tools/run_visualizer.sh
 
 ROOT      := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 SIMDIR    := $(ROOT)/sim
@@ -136,8 +133,9 @@ plot: run-blink2
 		--png $(OUT)/led_waveform.png
 	@echo "Waveform PNG: $(OUT)/led_waveform.png"
 
-sim: plot
-	@echo "Phase 1 Blink2 simulation complete."
+sim:
+	@echo "the Blink2 sim is retired; run tools/run_verilator_sim.sh" >&2
+	@exit 1
 
 wave: run-blink2
 	gtkwave -S $(SIMDIR)/gtkwave_led.tcl $(OUT)/blink2.fst $(SIMDIR)/gtkwave_led.gtkw

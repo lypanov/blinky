@@ -24,11 +24,11 @@ CLS is the scarce resource on the 4K. After item 3 and the HDMI square (`docs/hd
 
 8. Boot the 4K from the flash disk. Done. The ROM is a 102-word bootstrap. Block RAM went from 10/10 to 3/10.
 
-9. Replace the 5-stage barrel with a 1-bit-per-clock shifter. Smaller CLS return than the 1-port file, same kind of effort, and the blink slope is unchanged. About 110–150 CLS and 250–280 LUT (about 95% CLS down to about 89% if that CLS comes back). Medium. The 4K netlist elaborates only the slow shifter. chainFix has to treat a pending shift like a memory stall. The delay loop does not shift. Open.
+9. Replace the 5-stage barrel with a 1-bit-per-clock shifter. Smaller CLS return than the 1-port file, same kind of effort, and the blink slope is unchanged. About 110–150 CLS and 250–280 LUT (about 95% CLS down to about 89% if that CLS comes back). Medium. The 4K netlist elaborates only the slow shifter. A pending shift stalls the same way a memory access does. The patch table is gone. The delay loop does not shift. Open.
 
 10. A 4-bit-per-clock shifter is last. The same medium change, for less area: about 90–120 CLS and 190–220 LUT. The blink slope is unchanged. Open.
 
-11. Retire the old step images from the CPU. Open. The work is `docs/todo.md` item 23. The CPU source still carries every past bring-up step (the 0x10/0x50 LED snoop, the patch table, the single fetch at 0x1F00, the zero-store checks, the ROM address translation). The 4K build switches most of them off, so the saving is mainly a simpler CPU that is easier to shrink. Measure what it frees anyway.
+11. Retire the old step images from the CPU. Done. The work is `docs/todo.md` item 23. The 0x10/0x50 LED snoop, the patch table, the single fetch at 0x1F00, the zero-store checks, and the ROM address translation are gone. The measured saving is below.
 
 12. Shifts on the hardware multipliers. Open, after `MUL` (`docs/todo.md` item 27). The GW1NSR-4C has 16 unused 18×18 multipliers. One 32×32→64 unsigned multiply does all three shifts: left by n is the low word of `x × 2ⁿ`, right by n is the high word of `x × 2³²⁻ⁿ`, rotate is the two ORed, and an arithmetic right shift inverts, shifts, and inverts back for negative x. A small table turns n into 2ⁿ. Replaces the 5-stage barrel. Estimate 60–100 CLS net. An alternative to 9 and 10.
 
@@ -420,3 +420,13 @@ openFPGALoader --busdev-num 003:081 -b tangnano4k -m \
 ```
 
 Webcam `measure_blink`, `/dev/video2`, `roi=nano4k`, duration 22, warmup 2. The analyzer's Blink3 "expected" field is not this rate. Status blinking, edge 0.431 Hz, FFT 0.438 Hz, confidence 1.0, 480 frames at 30 fps, ROI `264,222` 48×39. Against 0.4459 Hz that is the same slow side as the item C clip (0.430 Hz). The LED was not dark. Clip: `/home/lypanov/fpga/blink-measure/20261109-004330-mcp/clip.mkv`.
+
+## Item 11, measured
+
+The retired paths were already switched off on the two disk images, except the 0x10 and 0x50 compares, the fetch-state registers, and, on the Dock, the old hold-PC compares. Removing them is what the place can see. The patch table, the zero-store mask, and the ROM translation were not in the current netlist.
+
+4K, `modules_n65536`, square, against the item 22 place. Logic 3752/4608 was 3792 (40 LUT, ALU stays 322). Registers 1973/3612, unchanged. CLS 2149/2304 was 2156, so 7 CLS, and 155 are free. Block RAM 4/10, unchanged (2 SDPB, 1 SDPX9B, 1 pROM). Setup violated endpoints 0. Worst setup slack +2.595 ns. `cpu_clk` Fmax 15.065 MHz against 13.500. Hold violated endpoints 2, the same cpu-to-pixel synchronizers (`armed_s1` −0.211 ns, button latch to `blank_s1` −0.068 ns).
+
+Dock, `ddr3modules_n65536`, text, route_option 2, place_option 0, against the item 22 place. Logic 5455/20736 was 5524 (69 LUT, ALU stays 490). Registers 2916/16173 was 2921. CLS 3962/10368 was 3990. Block RAM 2/46, unchanged (1 SDPB, 1 pROM). OSER10 4, rPLL 3/4. Setup and hold violated endpoints 0. Worst listed setup slack +1.657 ns. `pclk` Fmax 115.227 MHz against 96.749. `cpu_clk` Fmax 27.002 MHz against 24.187. Pixel clock Fmax 96.508 MHz against 64.800.
+
+Place is not reproducible, so the slack and the Fmax are not the saving. The resource counts are. The write-up, including both blinks, is `docs/next-steps.md` item 23.

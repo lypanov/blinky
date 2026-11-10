@@ -74,7 +74,25 @@ A disk with the build byte flipped halts at PC `0260`, mask `0000000000`, R9 `00
 
 ## Item 23 — retire the old step images
 
-Once neither board runs code from ROM, remove from the CPU the code paths that only existed for past bring-up steps: the 0x10/0x50 LED snoop, the patch table (chainFix), the single fetch at 0x1F00, the zero-store check mask, the ROM address translation, and any image that needs them. Keep the simulations and tests that still prove something on the current images, and drop the ones that only proved a retired image. This is also bring-up ledger item 11: record what each board frees.
+Done. The CPU no longer carries the paths that only existed for past bring-up steps. The LED store is the address the linker records. The 0x10/0x50 snoop, the patch table, the single fetch at 0x1F00, the zero-store check mask, and the ROM address translation are gone, and so is the in-ROM image that needed them. `SpiSector` reads the NOR or the DDR3 word only. The Dock status line no longer compares the old hold PCs, so `H` stays `.`. The 128-byte line and the write-step fields stay. The blink edge is still `466*N+780`.
+
+The current images are the two disk boots. `FPGA_IMAGE` and `SIM_IMAGE` accept `modules` and `ddr3modules`. The 4K ROM is the NOR bootstrap. The Dock ROM is the UART bootstrap. The same `disk.bin` is both. N=65536 disk bytes match the previous tip: 17928 bytes, checksum `6bae42b7`, arm word `cab24f52`. Nothing was written to the NOR.
+
+Verilator, N=5. The NOR disk blinks at period 3110, PC `0x2070`, mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. The UART disk, on the HyperRAM stand-in, does the same. A wrong build halts at PC `0x260` with the LED off. One flipped payload byte does the same. `tools/run_verilator_sim.sh` runs those two. The Blink2 mill test, the ignored `final_system` test, and the three Blink3 IMEM checks are gone. The ISA tests stay.
+
+4K place, `modules_n65536`, square. Against the item 22 place this frees 40 logic (40 LUT, the ALU stays 322), 0 registers, and 7 CLS. Block RAM stays 4/10 (2 SDPB, 1 SDPX9B, 1 pROM). Logic 3752/4608 (82%; 3430 LUT, 322 ALU), registers 1973/3612, CLS 2149/2304 (94%, 155 free). Setup violated endpoints 0. Worst setup slack +2.595 ns. `cpu_clk` Fmax 15.065 MHz against 13.500. Hold violated endpoints 2, the same cpu-to-pixel synchronizers: `armed_s1` at −0.211 ns, and the button latch to `blank_s1` at −0.068 ns. Place is not reproducible; the slack and the Fmax moved, and both stay on the same side of the constraint.
+
+Dock place, `ddr3modules_n65536`, text, route_option 2, place_option 0. Against the item 22 place this frees 69 logic (69 LUT, the ALU stays 490), 5 registers, and 28 CLS. Block RAM stays 2/46 (1 SDPB, 1 pROM). Logic 5455/20736 (27%; 4965 LUT, 490 ALU), registers 2916/16173, CLS 3962/10368 (39%), OSER10 4, rPLL 3/4. Setup and hold violated endpoints 0. The worst listed setup slack is +1.657 ns. `pclk` Fmax 115.227 MHz against 96.749. `cpu_clk` Fmax 27.002 MHz against 24.187. The pixel clock Fmax is 96.508 MHz against 64.800. The serializer is 324 MHz. The placed report names `ddr3_hdmi.cst`. The gate group stays in `R[2:22]C[2:18]`.
+
+The first SRAM load stayed in training: PC `0080`, `F` `4B`, dark line `..`. The second load of the same bitstream trained. The line starts `C.`. The write delay after training is lane 1 step 12 and lane 0 step 10, shown as `000C 000A`. `G` is `A55A`, `E0` is `A500`, `F` is `AB`. SRAM load was bus 003:078 only (`-m`, `write to ram`, Load SRAM 100%). Idcode `0x81b`, GW2A-18. UART was FTDI channel B, 115200 8N1, opened without a USB reset. After `tools/send_dock_disk.py` sent the 17928-byte disk, the PC sits in the delay loop (`2214`, `2220`, `2224`, `222C`, `2230`, `2238`, `225C`), mask `FFFFFFFFFF`, R5 `00000000`, R9 `00000000`. The write halfword is `000010F9`.
+
+Webcam `/dev/video2`, the Dock LED, box `300,28` 50×40, 30.003 fps: edge 0.396672 Hz, period 2.52098 s, duty 0.4983, 24 edges, confidence 0.9978, FFT SNR 417. Against 0.39598 Hz the LED is 0.17% fast. Clip: `/tmp/blink-retire-4b73/clip.mkv`.
+
+Capture card UGREEN 15389, `/dev/video0`, already at 1024×768, 60 fps. The first frames were green snow, mean about (6.3, 36.6, 7.6). Frame 17 is a locked black field, about (3, 3, 3). A lit square is 400 pixels above luma 80, at x=300..319 and y=220..239. The glyphs at y=48..54, x=304..335 reach 88 pixels. One full rise-to-rise gap is 151 frames, 2.5167 s, 0.39735 Hz. Clip: `/tmp/dock-screen-4b73/screen.mkv`.
+
+The Nano load needed the FTDI serial interface released first. `ftdi_usb_reset` returned busy while `ftdi_sio` held interface 1 of bus 003:081. After that driver was detached, a USB reset (VBUS stayed on) let the SRAM load through. `write to ram`, Load SRAM 100%, CRC check Success. The serial driver was attached again afterwards. Nothing was written to flash.
+
+Webcam `/dev/video2`, the Nano LED, `roi=nano4k` resolved to `206,240` 18×14, 30.002 fps: edge 0.426723 Hz, period 2.34344 s, duty 0.5135, 28 edges, confidence 0.9977, FFT 0.436619 Hz, SNR 252. Against 0.442035 Hz the LED is 3.46% slow, the same side as item 19's 0.425923 Hz. Clip: `/tmp/blink-nano-4b73/clip.mkv`.
 
 ## Item 24 — move the bootstrap flash ports off −64 and −60
 

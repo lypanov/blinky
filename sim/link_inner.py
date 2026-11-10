@@ -879,7 +879,9 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
          uart_disk: bool = False) -> dict:
     if flash_boot and uart_disk:
         raise SystemExit("flash boot and the UART disk are different images")
-    disk_boot = flash_boot or uart_disk
+    if not flash_boot and not uart_disk:
+        raise SystemExit("the in-ROM image is retired; pass --flash-boot or --uart-disk")
+    disk_boot = True
     mods = _load_modules()
     payload = _compile_payload()
     blink_key = payload["AMemoryMappedToggle"]["key"]
@@ -1077,16 +1079,8 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     static_end = desc_at + DESC_SIZE
     if uart_disk:
         stub = _uart_bootstrap(static_end)
-    elif flash_boot:
-        stub = _bootstrap(static_end)
     else:
-        a = Asm()
-        _plant(a, static_end, flash=False)
-        a.at(lambda pc: cond_branch(pc, body, 7))
-        stub = a.encode(STUB_PC)
-        done_pc = a.labels["done"]
-        if cond_branch(done_pc, body, 7) != stub[(done_pc - STUB_PC) // 4]:
-            raise SystemExit("stub branch does not encode the body")
+        stub = _bootstrap(static_end)
 
     names = (b"AMemoryMappedToggle.rsc", b"Blink5.rsc")
     if names != tuple(sorted(names)):
@@ -1099,50 +1093,18 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     raw_sector = rom_words(pages)
     if raw_sector[768:] != [0] * (len(raw_sector) - 768):
         raise SystemExit("sector image uses more than three pages")
-    # The three pages are mostly zeros. A scan of the live pairs fits in
-    # the same ROM; a flat 768-word image does not.
-    nz = [(i, w) for i, w in enumerate(raw_sector[:768]) if w]
-    sector = []
-    for index, word in nz:
-        sector.extend((index, word))
 
-    if disk_boot:
-        rom = [(w & 0xFFFFFFFF) for w in stub]
-        rom.extend([HALT_WORD] * (BOOT_ROM - len(rom)))
-        used = len(stub)
-        nrom = BOOT_ROM
-        # The core, the init stream, and the sectors live in the disk.
-        # The ROM is the bootstrap only. sector_pairs stays 0 so nothing
-        # elaborates a second ROM port.
-        map_sector_words = 0
-        map_sector_pairs = 0
-        map_core_rom = 0
-        map_init_rom = 0
-        map_sector_rom = 0
-    else:
-        rom = [0] * ROM_WORDS
-        regions = [
-            ("stub", 0, stub),
-            ("code", len(stub), words),
-            ("init", len(stub) + len(words), stream),
-            ("sector", len(stub) + len(words) + len(stream), sector),
-        ]
-        used = 0
-        for _name, at, chunk in regions:
-            if at + len(chunk) > ROM_WORDS:
-                raise SystemExit(
-                    f"ROM needs {at + len(chunk)} words, {ROM_WORDS} exist "
-                    f"(stub {len(stub)}, code {len(words)}, init {len(stream)}, sector {len(sector)})"
-                )
-            for i, word in enumerate(chunk):
-                rom[at + i] = word & 0xFFFFFFFF
-            used = at + len(chunk)
-        nrom = ROM_WORDS
-        map_sector_words = len(sector)
-        map_sector_pairs = len(sector) // 2
-        map_core_rom = len(stub)
-        map_init_rom = len(stub) + len(words)
-        map_sector_rom = len(stub) + len(words) + len(stream)
+    rom = [(w & 0xFFFFFFFF) for w in stub]
+    rom.extend([HALT_WORD] * (BOOT_ROM - len(rom)))
+    used = len(stub)
+    nrom = BOOT_ROM
+    # The core, the init stream, and the sectors live in the disk.
+    # The ROM is the bootstrap only.
+    map_sector_words = 0
+    map_sector_pairs = 0
+    map_core_rom = 0
+    map_init_rom = 0
+    map_sector_rom = 0
     light = _light(payload["AMemoryMappedToggle"])
     info = {
         "stub_words": len(stub),

@@ -42,4 +42,8 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/sim/disk_boot_top.v" \
   "$ROOT/sim/tb_disk_boot.cpp"
 
-echo "[ok] elaborated N=$N  binary sim/obj_dir_disk/disk_boot"
+BIN="$ROOT/sim/obj_dir_disk/disk_boot"
+PERIOD=$((466 * N + 780))
+echo "[ok] elaborated N=$N period=$PERIOD  binary sim/obj_dir_disk/disk_boot"
+"$BIN" --period "$PERIOD" --edges 3
+echo "[ok] NOR disk N=$N period $PERIOD"

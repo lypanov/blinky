@@ -1,77 +1,43 @@
-# Blinky — Project Oberon RISC5 subset (Tang Nano 4K)
+# Blinky — Project Oberon RISC5 subset
 
 Chisel 6.6 / Mill 0.12.5 CPU. **Not RISC-V.** ISA: [`docs/risc_5_arch.txt`](docs/risc_5_arch.txt). Memory map: [`docs/memory_map.txt`](docs/memory_map.txt).
 
-Commit `a68a501` is the last known-good-on-hardware snapshot: Oberon `Blink2hw` plus UART. `main` through PR #16 is Blink3 on the **Tang Nano 4K**. This branch SRAM-loads the same Blink3 image on the **Tang Primer 20K Dock** (never flash; do not touch the Nano 4K — it stays on the Pi). LED MMIO snoops stores to `0x10` or `0x50`.
+Neither board runs its body from ROM. The Tang Nano 4K boots `disk.bin` from the NOR. The Tang Primer 20K Dock boots the same file, sent over the UART into DDR3. Bitstreams are SRAM-loaded (`openFPGALoader -m`). Do not pass `-f`. The Dock gets no flash write. A Nano NOR write, when one is needed, stays inside `0x200000`–`0x3FFFFF`.
+
+The blink edge is `466*N+780` CPU clocks. The board image is N=65536. `gw_sh` needs `DISPLAY=:0`.
+
+## Tang Nano 4K
+
+```sh
+tools/gowin_build.sh
+tools/sram_load.sh -b tangnano4k gowin/impl/pnr/modules_n65536.fs
+```
+
+Square video is the default. `VIDEO_MODE=flash` and `VIDEO_MODE=off` are the other two.
 
 ## Tang Primer 20K Dock
 
-SRAM-only. Detected on Bee as **Dock** (`usb-SIPEED_JTAG_Debugger_FactoryAIOT_Pro`, `openFPGALoader --detect` → GW2A-18C). Not Lite — do not use Lite-bottom constraints (they clash with Dock UART on T13).
-
-Blink3 (same linked image as the 4K) on user LED **L14**, 27 MHz **H11**:
+Confirm the Dock with `openFPGALoader --detect` before a load. HDMI and DDR3 constraints stay in one pin file. The modules build uses `route_option` 2.
 
 ```sh
-BOARD=primer20k tools/gowin_build.sh                          # N=262144
-tools/sram_load.sh -b tangprimer20k gowin/primer20k/impl/pnr/blink3_n262144.fs
-BOARD=primer20k BLINK3_MAXITER=131072 tools/gowin_build.sh    # then load blink3_n131072.fs
+FPGA_IMAGE=ddr3modules BOARD=primer20k tools/gowin_build.sh
+tools/sram_load.sh -b tangprimer20k gowin/primer20k/impl/pnr/ddr3modules_n65536.fs
 ```
 
-`.fs` bitstreams are gitignored (~1.7 MB). Predicted blink rate is `15N+18` cycles at 27 MHz: **3.433 Hz** at N=262144, **6.866 Hz** at N=131072. Measurements: [`docs/blink-measure/blink3-primer20k/`](docs/blink-measure/blink3-primer20k/).
+Text video is the default. After the SRAM load, `tools/send_dock_disk.py` sends `sim/out/disk.bin`.
 
-Also: pinout, wiki 1 Hz / 2 Hz blinky, NESTang v0.4 UART ROM load.
+Pins and the SRAM rule: [`docs/primer20k/board-notes.md`](docs/primer20k/board-notes.md).
 
-- Pins, HDMI pairs, BL702 UART, SRAM rule: [`docs/primer20k/board-notes.md`](docs/primer20k/board-notes.md)
-- NESTang build, UART loader, nestest / Alter Ego stills: [`docs/primer20k/nestang.md`](docs/primer20k/nestang.md)
-- Wiki blinky measurements: [`docs/blink-measure/primer20k/`](docs/blink-measure/primer20k/)
-
-Load bitstreams with `tools/sram_load.sh` (`openFPGALoader -b tangprimer20k -m`).
-Do not pass `-f`.
-
-## Verilator simulation (Phase 1)
-
-Needs: JDK 11+, Mill 0.12.x on `PATH`, Verilator 5.x, Python 3 with `matplotlib` (for the PNG), optional GTKWave.
+## Simulation
 
 ```sh
-# from the repo root
 tools/run_verilator_sim.sh
-# equivalent:
-make -C sim sim
+sim/run_disk_boot.sh 5
+sim/run_uart_disk.sh 5
+mill chisel-blinky.test
 ```
 
-What you get:
-
-| artifact | path |
-|---|---|
-| FST waveform (GTKWave) | `sim/out/blink2.fst` |
-| LED edge log | `sim/out/led_toggles.csv` |
-| timing-diagram PNG | `sim/out/led_waveform.png` |
-| cycle trace | `sim/out/blink2_trace.json` |
-
-Open the waveform:
-
-```sh
-gtkwave -S sim/gtkwave_led.tcl sim/out/blink2.fst sim/gtkwave_led.gtkw
-```
-
-The sim prints `[LED] cycle=…` lines and a mean period. After the `main` MT/0x50 map, Verilator measures a **steady 84-cycle** LED period (edges at 98, 182, 266, …). That is the old 78-cycle loop plus six extra memory-wait cycles now that `LDW R13, [R12, 0x4]` is a real load instead of the R13 hack. Hardware `Blink2hw` uses `maxIterations := 262144` and is not the sim default.
-
-Sim-only delay: set `BLINK2_CODE` if you want a different image (the hardware image is a long delay loop and is not the default):
-
-```sh
-BLINK2_CODE=tests/Blink2test.code mill chisel-blinky.runMain gcd.CPUSimTop
-make -C sim run CYCLES=800 TOGGLES=6
-```
-
-FPGA bitstream for the Tang Nano 4K is Blink3 (linked `LightToggle` + `AMemoryMappedToggle`, trampoline at address 0 that `BL`s each BEGIN). SRAM only:
-
-```sh
-tools/gowin_build.sh                          # N=262144
-tools/sram_load.sh -b tangnano4k gowin/impl/pnr/blink3_n262144.fs
-BLINK3_MAXITER=131072 tools/gowin_build.sh    # N=131072, then load blink3_n131072.fs
-tools/measure_blink.sh
-```
-
-`FPGA_IMAGE=blink2 tools/gowin_build.sh` still emits the old Blink2hw small IMEM. `BOARD=primer20k` builds the same CPU for the Dock (GW2A-18C). Do not pass `-f` / flash. Do not load the Nano 4K from Bee (it is on the Pi). Sim says an LED edge is `15N+18` cycles at 27 MHz (upper bound if SPRAM wait-states apply). 4K measurements: [`docs/blink-measure/blink3/`](docs/blink-measure/blink3/).
+N=5 is period 3110 at PC `0x2070`. A bad disk halts at PC `0x260` with the LED off. Older Blink2 and Blink3 measurements stay under [`docs/blink-measure/`](docs/blink-measure/). The visualizer below is that older trace viewer.
 
 ## Oberon compiler (Norebo)
 
