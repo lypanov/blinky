@@ -2,7 +2,7 @@
 
 One item at a time, from the top. This file is an index. The write-up is in the file each item names.
 
-Next: 28.
+Next: 29.
 
 1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay. Done. The measured result is in the ledger.
 
@@ -38,7 +38,7 @@ Ledger items are not to-dos. If a later item cannot fit on the Nano 4K without a
 25. The millisecond timer at −64; Blink paces itself with `Kernel.Time`. Same file, item 25. Done. The measured result is in that file.
 26. The button as Oberon input: Blink reads it and decides. Same file, item 26. Done. The measured result is in that file. The Nano S1 check is the maintainer's, by hand.
 27. Hardware `MUL`. Same file, item 27. Done. The measured result is in that file.
-28. `NEW` and garbage collection, with a lowered memory limit. Same file, item 28.
+28. `NEW` and garbage collection, with a lowered memory limit. Same file, item 28. Done. The measured result is in that file. The Nano S1 check is the maintainer's, by hand.
 29. The blink rate read from a file on the disk. Same file, item 29.
 30. File writes through a RAM overlay; the rate changes partway through a run. Same file, item 30.
 31. Oberon's own boot linker and `BootLoad` build and boot the disk. Same file, item 31.
