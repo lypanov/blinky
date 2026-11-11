@@ -17,12 +17,12 @@ module uart_disk_top (
   output wire screen_we,
   output wire status_we,
   output wire [8:0] status_word,
+  output wire armed,
   // Idle-high. The bench bit-bangs a press byte here after the disk.
   // Wired with the disk sender: only one of them drives a zero.
   input  wire host_rx
 );
   wire cpu_clk;
-  wire armed;
   wire pressed;
   wire disk_valid;
   wire disk_take;

@@ -26,6 +26,7 @@ int main(int argc, char** argv) {
   uint64_t slack = 0;
   int edges_needed = 3;
   int expect_halt = 0;
+  int expect_no_arm = 0;
   int exhaust_rises = 0;
   int reset_cycles = 32;
   uint32_t min_pc = 0;
@@ -51,6 +52,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--slack")) slack = strtoull(need("--slack"), nullptr, 10);
     else if (!strcmp(argv[i], "--edges")) edges_needed = atoi(need("--edges"));
     else if (!strcmp(argv[i], "--expect-halt")) expect_halt = 1;
+    else if (!strcmp(argv[i], "--expect-no-arm")) expect_no_arm = 1;
     else if (!strcmp(argv[i], "--exhaust-rises")) exhaust_rises = atoi(need("--exhaust-rises"));
     else if (!strcmp(argv[i], "--reset")) reset_cycles = atoi(need("--reset"));
     else if (!strcmp(argv[i], "--min-pc")) min_pc = strtoul(need("--min-pc"), nullptr, 0);
@@ -86,6 +88,7 @@ int main(int argc, char** argv) {
   std::vector<uint64_t> edges;
   int prev = 0;
   int saw_led = 0;
+  int saw_arm = 0;
   int rises = 0;
   uint64_t halt_at = 0;
   uint64_t cycle = 0;
@@ -155,6 +158,7 @@ int main(int argc, char** argv) {
     prev_screen = screen;
     int led = top->led ? 1 : 0;
     if (led) saw_led = 1;
+    if (top->armed) saw_arm = 1;
     if (cycle > 0 && led != prev) {
       if (led && !prev) rises++;
       edges.push_back(cycle);
@@ -223,6 +227,10 @@ int main(int argc, char** argv) {
   } else if (expect_halt) {
     if (!halt_at || saw_led) {
       fprintf(stderr, "FAIL expected a dark halt\n");
+      failed = 1;
+    }
+    if (expect_no_arm && saw_arm) {
+      fprintf(stderr, "FAIL arm word was stored\n");
       failed = 1;
     }
   } else {

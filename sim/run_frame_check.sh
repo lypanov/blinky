@@ -80,6 +80,11 @@ grab "$TX" dock 200 "$OUT/dock-counter-blank.ppm" \
   --led-cycle 64 --store-cycle 64 --blank-cycle 128 --status-cycle 2 --status-word 0x1A5
 grab "$TX" dock 200 "$OUT/dock-status-a5-text.ppm" \
   --led-cycle 64 --store-cycle 64 --status-cycle 2 --status-word 0xA5
+# Index trap: bit 7 and bit 0. Bit 8 stays clear, so the square stays off.
+grab "$SQ" nano 200 "$OUT/nano-status-81.ppm" \
+  --led-cycle 64 --store-cycle 64 --status-cycle 2 --status-word 0x81
+grab "$SQ_DOCK" dock 200 "$OUT/dock-status-81.ppm" \
+  --led-cycle 64 --store-cycle 64 --status-cycle 2 --status-word 0x81
 
 cmp -s "$OUT/nano-counter.ppm" "$OUT/nano-square-on.ppm"
 
@@ -101,6 +106,9 @@ check "$OUT/nano-status-a5.ppm" status --byte 0xA5 "${NANO_SIZE[@]}"
 check "$OUT/dock-status-a5.ppm" status --byte 0xA5 "${DOCK_SIZE[@]}"
 check "$OUT/dock-status-a5-text.ppm" status --byte 0xA5 "${DOCK_SIZE[@]}"
 check "$OUT/nano-status-a5.ppm" status --byte 0x5A --must-differ "${NANO_SIZE[@]}"
+check "$OUT/nano-status-81.ppm" status --byte 0x81 "${NANO_SIZE[@]}"
+check "$OUT/dock-status-81.ppm" status --byte 0x81 "${DOCK_SIZE[@]}"
+check "$OUT/nano-status-81.ppm" status --byte 0xA5 --must-differ "${NANO_SIZE[@]}"
 check "$OUT/nano-counter.ppm" square --square "${NANO_SIZE[@]}"
 check "$OUT/dock-counter-off.ppm" text --count 0 "${DOCK_SIZE[@]}"
 check "$OUT/dock-counter-on.ppm" text --count 1 --square "${DOCK_SIZE[@]}"

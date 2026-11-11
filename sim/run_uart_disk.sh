@@ -156,6 +156,24 @@ echo "[ok] UART disk N=$ALT period $ALT_PERIOD, same image"
 
 python3 "$ROOT/sim/link_inner.py" \
   --uart-disk \
+  --index-trap \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/index-trap-uart.words"
+cp "$DISK" "$ROOT/sim/out/disk-index-trap-uart.bin"
+python3 "$ROOT/sim/link_inner.py" \
+  --flash-boot \
+  --index-trap \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/index-trap-flash.words"
+cmp "$DISK" "$ROOT/sim/out/disk-index-trap-uart.bin"
+echo "[ok] index-trap UART disk bytes match the 4K flash disk"
+"$BIN" --expect-halt --expect-no-arm --expect-status 0x81 --min-pc 0x900 \
+  --status-seq 1,3,4,5,6,7,8,9,10,11,0x81 \
+  +disk="$ROOT/sim/out/disk-index-trap-uart.bin"
+echo "[ok] UART disk index trap is 81H, the arm word stays unstored, the LED stays dark"
+
+python3 "$ROOT/sim/link_inner.py" \
+  --uart-disk \
   --no-collect \
   --max-iter "$N" \
   --out "$WORDS"

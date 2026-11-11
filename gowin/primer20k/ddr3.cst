@@ -166,9 +166,9 @@ GRP_LOC w5432 R54C32;
 // from the DQ flops. The bridge's got flag was at R4C17.
 GROUP ms_grp = {"*msPhase*"};
 GRP_LOC ms_grp R8C[20:30];
-GROUP got_grp = {"*got_s0*" "*got_s4*"};
+GROUP got_grp = {"*got_s0*"};
 GRP_LOC got_grp R4C[16:18];
-// got_s4 landed at R4C16. got_s0 stayed at R45C24.
+// This netlist has no got_s4. got_s0 stays in the group.
 // The same image keeps the PC on rows 38-44, columns 20-28, next
 // to the ROM. Left free, this netlist puts it on rows 23-29. The
 // columns stay clear of the write flops above.
@@ -180,7 +180,8 @@ GROUP pc41 = {"*pc_8_s0*" "*pc_10_s0*" "*pc_15_s0*" "*pc_20_s0*" "*pc_21_s0*" "*
 GRP_LOC pc41 R41C[20:30];
 GROUP pc42 = {"*pc_9_s0*" "*pc_14_s0*"};
 GRP_LOC pc42 R42C[20:30];
-GROUP pc43 = {"*pc_6_s0*" "*pc_7_s0*" "*pc_18_s0*" "*pc_19_s0*" "*pc_24_s0*" "*pc_25_s0*" "*pc_30_s4*" "*pc_30_s7*"};
+// pc_30_s4 is not in this netlist. pc_30_s7 stays on this row.
+GROUP pc43 = {"*pc_6_s0*" "*pc_7_s0*" "*pc_18_s0*" "*pc_19_s0*" "*pc_24_s0*" "*pc_25_s0*" "*pc_30_s7*"};
 GRP_LOC pc43 R43C[20:30];
 GROUP pc44 = {"*pc_2_s0*" "*pc_3_s0*" "*pc_4_s0*" "*pc_5_s0*"};
 GRP_LOC pc44 R44C[20:28];

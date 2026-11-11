@@ -14,6 +14,7 @@ module disk_boot_top (
   output wire screen_we,
   output wire status_we,
   output wire [8:0] status_word,
+  output wire armed,
   // Active-low, like S1. Held high unless the bench is pausing.
   input  wire btn_n
 );
@@ -22,7 +23,6 @@ module disk_boot_top (
   wire mosi;
   wire miso;
   wire cpu_clk;
-  wire armed;
   wire pressed;
 
   CPUSimTop cpu (

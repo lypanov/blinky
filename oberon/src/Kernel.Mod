@@ -272,7 +272,8 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
     VAR u, v, w: INTEGER;
   BEGIN u := SYSTEM.REG(15); SYSTEM.GET(u - 4, v); w := v DIV 10H MOD 10H; (*trap number*)
     IF w = 0 THEN New(a, b)
-    ELSE (*stop*) LED(w + 192); REPEAT UNTIL FALSE
+    ELSE (*status mode: bit 7, then the trap number*)
+      SYSTEM.PUT(-84, 80H + w); LED(w + 192); REPEAT UNTIL FALSE
     END
   END Trap;
 

@@ -479,7 +479,61 @@ def _compile_boot(env: dict[str, str], uart: int) -> list[int]:
     return words
 
 
-def _compile_files(env: dict[str, str]) -> dict[str, bytes]:
+def _with_index_trap(text: str) -> str:
+    """The first statements of Blink5 index past an array of 4.
+
+    The index is a variable, so ORG emits the runtime check: trap 1,
+    condition CC. The arm prologue is left off this disk, and the entry
+    stays on this body, so the store at 0x7C0 never runs.
+    """
+    var = "  VAR last, now, wait, old, keys, n, due: INTEGER;\n"
+    body = "BEGIN\n  SYSTEM.PUT(-84, 10BH);\n"
+    if text.count(var) != 1 or text.count(body) != 1:
+        raise SystemExit("Blink5.Mod has no single place for the index trap")
+    text = text.replace(
+        var,
+        var + "    sample: ARRAY 4 OF INTEGER;\n    idx: INTEGER;\n",
+        1,
+    )
+    return text.replace(
+        body,
+        "BEGIN\n"
+        "  idx := 4;\n"
+        "  sample[idx] := 0;\n"
+        "  SYSTEM.PUT(-84, 10BH);\n",
+        1,
+    )
+
+
+def _check_index_trap(code: list[int], entry: int) -> None:
+    """One BLR, condition CC, trap number 1, in the body that is the entry."""
+    if entry % 4:
+        raise SystemExit(f"index-trap entry {entry:#x} is not a word")
+    start = entry // 4
+    hits = [i for i, word in enumerate(code) if (word & 0xFF0000FF) == 0xDA00001C]
+    if len(hits) != 1:
+        raise SystemExit(f"index trap encodings {len(hits)}, wanted one")
+    at = hits[0]
+    if not start <= at < start + 40:
+        raise SystemExit(f"index trap at word {at}, entry word {start}")
+    arm = [
+        i for i, word in enumerate(code)
+        if (word & 0xF0FF0000) in (0x40000000, 0x50000000) and (word & 0xFFFF) == 0x07C0
+    ]
+    if arm:
+        raise SystemExit(f"index-trap Blink loads the arm address at {arm}")
+    print(f"[ok] index trap word {at} entry {start} insn {code[at]:08X}")
+
+
+def _check_trap_status(code: list[int]) -> None:
+    """The failed trap stores the status byte at -84. Trap 0 does not."""
+    ports = [i for i, word in enumerate(code) if (word & 0xF0FFFFFF) == 0x5000FFAC]
+    if len(ports) != 1:
+        raise SystemExit(f"Kernel has {len(ports)} MOV -84, wanted the trap status store")
+    print(f"[ok] trap status store at Kernel word {ports[0]}")
+
+
+def _compile_files(env: dict[str, str], index_trap: bool = False) -> dict[str, bytes]:
     # Isolated from sim/payload. Norebo's inner core loads module Oberon
     # from the working directory before the command, so a leftover
     # Oberon.rsc here would run Blink5.Go and never reach the compiler.
@@ -495,6 +549,10 @@ def _compile_files(env: dict[str, str]) -> dict[str, bytes]:
     for name in ("AMemoryMappedToggle", "Blink5", "Oberon"):
         src = os.path.join(ROOT, "tests", f"{name}.Mod")
         open(os.path.join(work, f"{name}.Mod"), "wb").write(open(src, "rb").read())
+    if index_trap:
+        path = os.path.join(work, "Blink5.Mod")
+        patched = _with_index_trap(open(path, encoding="utf-8").read())
+        open(path, "w", encoding="utf-8").write(patched)
     run_env = dict(os.environ)
     run_env.update(NOREBO_BIN=env["bin"], NOREBO_ROOT=env["root"], NOREBO_PATH=env["path"])
     text = ""
@@ -522,13 +580,18 @@ def _checksum(payload: bytes) -> int:
 
 
 def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
-         uart_disk: bool = False, no_collect: bool = False) -> dict:
+         uart_disk: bool = False, no_collect: bool = False,
+         index_trap: bool = False) -> dict:
     if flash_boot == uart_disk:
         raise SystemExit("pass one of flash boot or the UART disk")
+    if index_trap and (no_collect or break_arm):
+        raise SystemExit("the index trap is its own disk")
     if max_iter % 2 or not 1 <= max_iter <= 0x7FFF:
         raise SystemExit(f"rate {max_iter} must be a positive even millisecond count")
     env = _norebo()
     boot = _link_core(env)
+    kernel = parse_rsc(os.path.join(ROOT, "sim", "inner-core", "Kernel.rsc"), output_format="quiet")
+    _check_trap_status(kernel["code"])
     image = bytearray(boot[SECTOR:])
     if len(image) % 4:
         raise SystemExit(f"boot image is {len(image)} bytes")
@@ -538,7 +601,7 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         raise SystemExit(f"AllocPtr {alloc:#x} is not the image length {len(image):#x}")
     if int.from_bytes(image[28:32], "little") != 0:
         raise SystemExit("address 28 is already used")
-    files = _compile_files(env)
+    files = _compile_files(env, index_trap=index_trap)
     blink = parse_rsc(os.path.join(ROOT, "sim", "out", "bootfiles", "Blink5.rsc"), output_format="quiet")
     blink["raw"] = files["Blink5"]
     names = [item[0] for item in blink["imports"]]
@@ -554,10 +617,13 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     # Oberon is module 5, its import of nothing new leaves it as root, then
     # Blink5's first import is AMemoryMappedToggle (6) and Blink5 is 7.
     blink_mt = 0x20 + 7 * 4
-    prologue = _arm_prologue(
-        with_disk=True, memlim=MEMLIM, alloc=alloc, root=root, stack=STACK, blink_mt=blink_mt
-    )
-    files["Blink5"] = _append_arm(files["Blink5"], prologue)
+    if index_trap:
+        _check_index_trap(blink["code"], blink["entry_point"])
+    else:
+        prologue = _arm_prologue(
+            with_disk=True, memlim=MEMLIM, alloc=alloc, root=root, stack=STACK, blink_mt=blink_mt
+        )
+        files["Blink5"] = _append_arm(files["Blink5"], prologue)
     mem = Mem(bytes(image), LIMIT)
     root_now, alloc_now = _load(mem, root, alloc, "Oberon", files)
     if mem.get(root_now + NUM) != 5:

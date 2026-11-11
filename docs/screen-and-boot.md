@@ -143,6 +143,41 @@ The trap entry at `MT[0]` (item 4) gets a handler that switches to status mode a
 
 Proof: a deliberately broken Blink indexes an array out of range. The capture card reads the index trap's code. The LED stays dark: the arm word is never stored. The good Blink is unchanged and blinks at 0.500 Hz.
 
+`Kernel.Trap` still handles trap 0 as `New`. Any other number stores `80H +` that number at −84 and then stops. Bit 8 stays clear, so the blocks stay in status mode. Bit 7 is set. The low nibble is the number `ORG` puts in bits 7:4 of the branch-and-link to `R12`. The book's `LED` store at −60 stays, and this board drops that store. The stop is `REPEAT UNTIL FALSE`, the halt word `E7FFFFFF`.
+
+The number is the one the compiler emits. Index out of range is 1 (`ORG.Index`, condition CC). The byte is `81H`, bits `10000001`, bit 7 on the left: the leftmost block and the rightmost block, 25600 white pixels.
+
+| Number | Byte, bit 7 on the left | Where `ORG` emits it |
+|---:|---|---|
+| 0 | (not shown; `New` runs) | `ORG.New` |
+| 1 | 10000001 | index |
+| 2 | 10000010 | type guard |
+| 3 | 10000011 | copy or string longer than the destination |
+| 4 | 10000100 | NIL check |
+| 5 | 10000101 | call |
+| 6 | 10000110 | `DIV` or `MOD` |
+| 7 | 10000111 | assertion |
+
+The broken disk is still module `Blink5`. Its body starts with `idx := 4` and `sample[idx] := 0` on `ARRAY 4 OF INTEGER`. The index is a variable, so the check is the runtime trap, not a compile error. The compiler emits `DA10C41C` at the body's word 48, entry word 41: condition CC, trap number 1, link through `R12`. That disk does not get the arm prologue, and the entry stays on this body. `Kernel` has one `MOV` of −84, at word 1186. The good `tests/Blink5.Mod` is unchanged, and the good disk still arms and blinks at 0.500 Hz. The rate pair is still `E8 03 00 00 18 FC FF FF`. A good boot's final store is still `0x10B`. The broken boot's final store is `0x81`, after stage 11.
+
+`tools/run_verilator_sim.sh` exits 0. The good image is elaborated once. The broken disk is swapped in afterwards, so the baked arm word is the good disk's word. The NOR sequence is `1, 2, 5, 6, 7, 8, 9, 10, 11, 0x81`. The `0x81` store is cycle 304906088. Halt is cycle 304906270, PC `0x3C30`, zero edges, the LED never rises, and the arm flop stays clear. The UART sequence is `1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0x81`. The `0x81` store is cycle 28452090. Halt is cycle 28452272, same PC, zero edges, the LED dark, the arm flop clear. The UART broken disk and the NOR broken disk are the same bytes. Mode stays 0, so the square stays off. The frame check draws `0x81` as 25600 white pixels on both 720×480 and 1024×768, and that picture differs from an `A5` expectation.
+
+Both disks are 47124 bytes. The good disk's checksum is `9ab6fae7`, arm word `3baaf702`, sha256 `91c62283b6a52308aa7e4b59cb3503bcb910215541dc6b593185e698368931c2`. The rate bytes at file offset `0xA974` are `e8 03 00 00 18 fc ff ff`. The broken disk's checksum is `ed2004d7`, sha256 `7447dd0d2fc41cd813c0c7cc6ffd3aaac8a5b92f84c520176e0965b1cc3e9c24`. Its arm word is not the one in the bitstream. The UART file and the NOR file are the same bytes, for the good disk and again for the broken disk. `Kernel.Mod` is `6dbaefaa54797b0599a0c3422b4abdc7a597a7db37b2f07c91dde723e0103c6c`.
+
+4K place, `modules_n1000`, square. Logic 4117/4608 (90%; 3763 LUT, 354 ALU), registers 2045, CLS 2230/2304 (97%, 74 free). Block RAM 4/10 (2 SDPB, 1 SDPX9B, 1 pROM). The instruction ROM is `BSRAM_R10[4]`. The screen bitmap is `BSRAM_R10[9]`. DSP 2/8, one `MULT36X36`, site `DSP_R19[1]` (R19C11). Setup and hold violated endpoints 0. Worst setup slack +2.592 ns. Worst hold slack +0.408 ns. `cpu_clk` Fmax is 14.524 MHz against 13.500. The HyperRAM `clkdiv` Fmax is 65.132 MHz against 27.000. The bitstream is `gowin/impl/pnr/modules_n1000.fs`, 1772222 bytes, sha256 `2278d74bca8fb745c29704589aacacadc394e645f9ec0b90f48a9aac2458f9cd`. CLS fits. Ledger item 9 was not taken.
+
+The NOR write was the data file only, at `0x200000`, bus 003 device 012, port `3-3.3`. JEDEC `856016`. The read-back matches. The 256 bytes at `0x1FFF00` are unchanged. SRAM load `openFPGALoader -m`, `write to ram`, Load SRAM 100%, CRC check Success. Nothing was written outside `0x200000`–`0x3FFFFF`. The good disk was written back the same way after the trap capture, and that read-back matches too.
+
+Capture card UGREEN 15389, `/dev/video0`, 720×480, 60 fps. The good boot's stable codes are `00000001`, `00000010`, `00000101`, `00000110`, `00000111`, `00001000`, `00001001`, `00001010`, `00001011`, then the blocks go off. A lit block is 12800 white pixels. The square's first two rise-to-rise gaps are 120 frames (2.000 s) and 121 frames (2.017 s). The later gaps are 60 frames (1.000 s). Clip `/home/lypanov/fpga/blink-measure/trap-status-d54e/nano-boot-screen.mkv`. Webcam `/dev/video2`, the Nano LED, box `138,186` 20×22: the first two rise-to-rise gaps are 1.996 s and 1.996 s. From the third rise the gap is 0.998 s. Clip `/home/lypanov/fpga/blink-measure/trap-status-d54e/nano-boot-led.mkv`.
+
+The broken disk's stable codes end at `10000001`. Frames after that hold have 12800 white pixels in the leftmost block, 12800 in the rightmost, and no white pixel outside those two blocks, so the square stays off. Clip `/home/lypanov/fpga/blink-measure/trap-status-d54e/nano-trap-screen.mkv`. The Nano LED's last bright frame is 0.83 s into the clip, which is the previous image. After that the box stays under 6, standard deviation 0.57, through the rest of the 28 s. Clip `/home/lypanov/fpga/blink-measure/trap-status-d54e/nano-trap-led.mkv`.
+
+Dock place, `ddr3modules_n1000`, text, `place_option` 0, `route_option` 1. Logic 5834/20736 (29%; 5312 LUT, 522 ALU), CLS 4087/10368 (40%), registers 2988. BSRAM 2/46 (1 SDPB, 1 pROM). The instruction ROM stays `BSRAM_R46[4]`. The multiplier stays `DSP_R19[1]` (R19C11). The screen bitmap is `PLACE_BSRAM_R28[13]`. Setup and hold violated endpoints 0. Worst setup slack +1.855 ns. Worst hold slack +0.272 ns. `pclk` Fmax is 117.904 MHz against 96.749. `cpu_clk` Fmax is 31.034 MHz against 24.187. The pixel clock Fmax is 98.498 MHz against 64.800. This netlist has no `got_s4` and no `pc_30_s4`. Those two names came out of the groups in `gowin/primer20k/ddr3.cst`. The rows and columns are the ones that trained. The bitstream is `gowin/primer20k/impl/pnr/ddr3modules_n1000.fs`, 7261998 bytes, sha256 `06eab0057ad86ad4a3592bc9d68bea51eed3022d0e5c5c504f88fed7fecc0280`.
+
+Three SRAM loads of that file, each `openFPGALoader -m` on bus 003 device 013, port `3-3.1.1`, each `write to ram`, Load SRAM 100%. Each waited at `C.0440` with lanes `000C` `000A`, E0 `A5AA`, G `A55A`, F `A8`. After the good disk the mask was `FFFFFFFFFF` and the PC entered the core. Other loads sat at PC `0080` with G `0000`. Those are not counted. Nothing was written to the Dock flash. Webcam `/dev/video2`, the Dock LED, box `244,30` 20×16, on the first of the three: the first two rise-to-rise gaps are 1.997 s and 1.997 s, then 0.998 s. Clip `/home/lypanov/fpga/blink-measure/trap-status-d54e/dock-load1-led.mkv`. The third load, already past those two gaps, holds 0.997 s. Clip `/home/lypanov/fpga/blink-measure/trap-status-d54e/dock-load3-led2.mkv`.
+
+The broken disk did not get a Dock proof. Later loads of this file, and one load of the known-good image `c382b0f6a7b20875fa416aad9be74f4b3f495b688f87c52fde5013f4abab0f6b`, did not sit at `C.0440`. Several sat at PC `0624` with the same eye (lanes `000C` `000A`, E0 `A55A`, G `A55A`, F `A8`) and ignored a disk sent there: the PC did not move. The Micron PHY sim was not started. The same bitstream had already trained three times. The item stays open.
+
 ## Item 36 — the bitmap in block RAM
 
 The bitmap replaces the 32×24 grid. 180×120 on the 4K (2 block RAMs, 4× pixels), 512×384 on the Dock (12 block RAMs, 2× pixels). The CPU writes it as ordinary words at a fixed address. Bit 8 of the status register shows it. Blink draws its 20×20-screen-pixel square by hand with plain stores (5×5 bitmap pixels on the 4K, 10×10 on the Dock) at the same place as today.

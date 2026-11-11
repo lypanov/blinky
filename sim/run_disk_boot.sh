@@ -146,6 +146,17 @@ cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
 python3 "$ROOT/sim/link_inner.py" \
   --flash-boot \
+  --index-trap \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/index-trap.words"
+cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-index-trap.bin"
+"$BIN" --expect-halt --expect-no-arm --expect-status 0x81 \
+  --status-seq 1,2,5,6,7,8,9,10,11,0x81
+echo "[ok] NOR disk index trap is 81H, the arm word stays unstored, the LED stays dark"
+cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
+
+python3 "$ROOT/sim/link_inner.py" \
+  --flash-boot \
   --no-collect \
   --max-iter "$N" \
   --out "$ROOT/sim/visualizer/imem/modules.words"
