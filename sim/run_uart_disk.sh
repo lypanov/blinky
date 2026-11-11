@@ -71,6 +71,9 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/sim/tb_uart_disk.cpp"
 
 BIN="$ROOT/sim/obj_dir_uart_disk/uart_disk"
+# DDR3 trained and UART receive take the NOR read's place. The shared
+# tail is magic, build, checksum, core, init, jump, then the inner core.
+GOOD=(--expect-status 0x10B --status-seq 1,3,4,5,6,7,8,9,10,11,0x10B)
 if (( N % 2 )); then
   echo "error: millisecond wait $N must be even" >&2
   exit 1
@@ -78,11 +81,11 @@ fi
 PERIOD=$((N * 48375))
 echo "[ok] elaborated N=$N ms period=$PERIOD"
 
-"$BIN" --period "$PERIOD" --slack 2048 --edges 3 --min-pc 0x900
+"$BIN" --period "$PERIOD" --slack 2048 --edges 3 --min-pc 0x900 "${GOOD[@]}"
 echo "[ok] UART disk N=$N period $PERIOD, button released"
 # 0x01 is the Dock press byte. The LED stays on, then 0x00 resumes it.
 "$BIN" --press --period "$PERIOD" --slack 2048 --edges 1 --min-pc 0x900 \
-  --hold-cycles $((PERIOD * 3)) --bit-clocks 210
+  --hold-cycles $((PERIOD * 3)) --bit-clocks 210 "${GOOD[@]}"
 
 python3 - "$DISK" "$ROOT/sim/out/disk_bad_build.bin" "$ROOT/sim/out/disk_bad_byte.bin" << 'PY'
 import sys
@@ -95,13 +98,15 @@ data[40] ^= 0x01
 open(bad_byte, "wb").write(data)
 PY
 
-"$BIN" --expect-halt +disk="$ROOT/sim/out/disk_bad_build.bin"
-"$BIN" --expect-halt +disk="$ROOT/sim/out/disk_bad_byte.bin"
+"$BIN" --expect-halt --expect-status 0x06 --status-seq 1,3,4,5,6 \
+  +disk="$ROOT/sim/out/disk_bad_build.bin"
+"$BIN" --expect-halt --expect-status 0x07 --status-seq 1,3,4,5,6,7 \
+  +disk="$ROOT/sim/out/disk_bad_byte.bin"
 echo "[ok] UART disk N=$N period $PERIOD, bad build dark, flipped byte dark"
 # Twelve on-edges is past the eighth, where the heap would have run out.
 # Collect runs on the fourth on-edge and stretches that half. The
 # three-edge run above is the period. This run only has to keep going.
-"$BIN" --edges 24 --min-pc 0x900
+"$BIN" --edges 24 --min-pc 0x900 "${GOOD[@]}"
 echo "[ok] UART disk still blinking after the heap would have run out"
 # Same third-rise change as the NOR bench. The directory search is the
 # long part of the reopen, about 35 ms on the 4K clock and less here.
@@ -118,7 +123,7 @@ print(f"[ok] switch disk {delay} ms")
 PY
 "$BIN" --period "$SWITCH_PERIOD" --period2 $((SWITCH_PERIOD / 2)) \
   --switch-after 4 --slack 2048 --edges 7 --min-pc 0x900 \
-  +disk="$ROOT/sim/out/disk-rate-switch.bin"
+  +disk="$ROOT/sim/out/disk-rate-switch.bin" "${GOOD[@]}"
 echo "[ok] UART disk halves 100 ms after the third rise"
 
 ALT=$((N + 2))
@@ -146,7 +151,7 @@ open(dst_path, "wb").write(alt)
 print(f"[ok] second rate {delay} ms differs in {len(diffs)} rate bytes, checksum held")
 PY
 "$BIN" --period "$ALT_PERIOD" --slack 2048 --edges 3 --min-pc 0x900 \
-  +disk="$ROOT/sim/out/disk-rate-alt.bin"
+  +disk="$ROOT/sim/out/disk-rate-alt.bin" "${GOOD[@]}"
 echo "[ok] UART disk N=$ALT period $ALT_PERIOD, same image"
 
 python3 "$ROOT/sim/link_inner.py" \
@@ -181,5 +186,5 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/gowin/button_gate.v" \
   "$ROOT/sim/uart_disk_top.v" \
   "$ROOT/sim/tb_uart_disk.cpp"
-"$BIN" --exhaust-rises 8 --min-pc 0x900
+"$BIN" --exhaust-rises 8 --min-pc 0x900 "${GOOD[@]}"
 echo "[ok] UART disk goes dark at rise 8 without the collector"

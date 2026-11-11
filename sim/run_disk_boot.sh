@@ -48,6 +48,9 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/sim/tb_disk_boot.cpp"
 
 BIN="$ROOT/sim/obj_dir_disk/disk_boot"
+# Stage codes: started, NOR, magic, build, checksum, core, init, jump,
+# inner core, then Blink sets bit 8 on the inner-core byte.
+GOOD=(--expect-status 0x10B --status-seq 1,2,5,6,7,8,9,10,11,0x10B)
 if (( N % 2 )); then
   echo "error: millisecond wait $N must be even" >&2
   exit 1
@@ -57,15 +60,15 @@ fi
 # bridge clocks covers that poll. The gaps still add up inside it.
 PERIOD=$((N * 27000))
 echo "[ok] elaborated N=$N ms period=$PERIOD  binary sim/obj_dir_disk/disk_boot"
-"$BIN" --period "$PERIOD" --slack 2048 --edges 3
+"$BIN" --period "$PERIOD" --slack 2048 --edges 3 "${GOOD[@]}"
 echo "[ok] NOR disk N=$N period $PERIOD"
 # S1 held across three edges. The LED stays on, then the period resumes.
-"$BIN" --press --period "$PERIOD" --slack 2048 --edges 1 --hold-cycles $((PERIOD * 3))
+"$BIN" --press --period "$PERIOD" --slack 2048 --edges 1 --hold-cycles $((PERIOD * 3)) "${GOOD[@]}"
 echo "[ok] NOR disk N=$N paused while the button was held"
 # Twelve on-edges is past the eighth, where the heap would have run out.
 # Collect runs on the fourth on-edge and stretches that half. The
 # three-edge run above is the period. This run only has to keep going.
-"$BIN" --edges 24
+"$BIN" --edges 24 "${GOOD[@]}"
 echo "[ok] NOR disk still blinking after the heap would have run out"
 # Reopening the file searches the directory, which is still a disk read.
 # That read is about 35 ms, so a 1 ms half would queue a burst. A 100 ms
@@ -86,7 +89,7 @@ PY
 cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-rate-base.bin"
 cp "$ROOT/sim/out/disk-rate-switch.bin" "$ROOT/sim/out/disk.bin"
 "$BIN" --period "$SWITCH_PERIOD" --period2 $((SWITCH_PERIOD / 2)) \
-  --switch-after 4 --slack 2048 --edges 7
+  --switch-after 4 --slack 2048 --edges 7 "${GOOD[@]}"
 echo "[ok] NOR disk halves 100 ms after the third rise"
 cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
@@ -118,8 +121,27 @@ print(f"[ok] second rate {delay} ms differs in {len(diffs)} rate bytes, checksum
 PY
 cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-rate-base.bin"
 cp "$ROOT/sim/out/disk-rate-alt.bin" "$ROOT/sim/out/disk.bin"
-"$BIN" --period "$ALT_PERIOD" --slack 2048 --edges 3
+"$BIN" --period "$ALT_PERIOD" --slack 2048 --edges 3 "${GOOD[@]}"
 echo "[ok] NOR disk N=$ALT period $ALT_PERIOD, same image"
+cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
+
+# The build byte is header offset 8. One payload byte is offset 40.
+python3 - "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk_bad_build.bin" "$ROOT/sim/out/disk_bad_byte.bin" << 'PY'
+import sys
+good, bad_build, bad_byte = sys.argv[1:]
+data = bytearray(open(good, "rb").read())
+data[8] ^= 0x01
+open(bad_build, "wb").write(data)
+data = bytearray(open(good, "rb").read())
+data[40] ^= 0x01
+open(bad_byte, "wb").write(data)
+PY
+cp "$ROOT/sim/out/disk_bad_build.bin" "$ROOT/sim/out/disk.bin"
+"$BIN" --expect-halt --expect-status 0x06 --status-seq 1,2,5,6
+echo "[ok] NOR disk stops at the build code"
+cp "$ROOT/sim/out/disk_bad_byte.bin" "$ROOT/sim/out/disk.bin"
+"$BIN" --expect-halt --expect-status 0x07 --status-seq 1,2,5,6,7
+echo "[ok] NOR disk stops at the checksum code"
 cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
 python3 "$ROOT/sim/link_inner.py" \
@@ -143,5 +165,5 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/gowin/button_gate.v" \
   "$ROOT/sim/disk_boot_top.v" \
   "$ROOT/sim/tb_disk_boot.cpp"
-"$BIN" --exhaust-rises 8
+"$BIN" --exhaust-rises 8 "${GOOD[@]}"
 echo "[ok] NOR disk goes dark at rise 8 without the collector"

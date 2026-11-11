@@ -371,7 +371,7 @@ def _link_core(env: dict[str, str]) -> bytes:
 
 
 def _check_first_store(words: list[int]) -> None:
-    """The body's first store is 0xA5 at -84. Straight-line MOVs until then."""
+    """The body's first store is stage 1 at -84. Straight-line MOVs until then."""
     w0 = words[0]
     if (w0 >> 24) != 0xE7:
         raise SystemExit(f"BootLoad word 0 is {w0:08X}")
@@ -393,9 +393,9 @@ def _check_first_store(words: list[int]) -> None:
                 disp -= 0x100000
             addr = (reg[rb] + disp) & 0xFFFFFFFF
             data = reg[ra] & (0xFF if top == 0xB else 0xFFFFFFFF)
-            if addr != 0xFFFFFFAC or (data & 0x1FF) != 0xA5:
+            if addr != 0xFFFFFFAC or (data & 0x1FF) != 0x1:
                 raise SystemExit(
-                    f"BootLoad first store is {data:#x} at {addr:#x}, want 0xA5 at -84"
+                    f"BootLoad first store is {data:#x} at {addr:#x}, want stage 1 at -84"
                 )
             return
         if top not in (4, 5):

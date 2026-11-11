@@ -3,7 +3,13 @@ MODULE* BootLoad;  (*NW 20.10.2013 / PR 4.2.2014; boot from the disk*)
   (* The book's loader. The card is already the way InitSPI would leave it,
      so this body does not bit-bang the init sequence. The switch is the
      button, not the boot source, so the line path stays out. Uart is 0
-     for the NOR and 1 for the Dock: the builder compiles each image. *)
+     for the NOR and 1 for the Dock: the builder compiles each image.
+
+     Each stage stores its code at -84 before the work, and leaves it
+     there if the check fails. The codes are published in
+     docs/screen-and-boot.md. The 4K holds a short code long enough for
+     one whole capture frame. The Dock does not: its UART keeps eight
+     words, and a hold while the host is sending would drop the file. *)
   CONST MT = 12; SP = 14;
     MTOrg = 20H; MemLim = 19D00H; stackOrg = 18000H;
     Uart = 0;
@@ -15,6 +21,10 @@ MODULE* BootLoad;  (*NW 20.10.2013 / PR 4.2.2014; boot from the disk*)
     FlashBase = 200000H; DiskOrg = 21000H;
     Magic = 314B5344H; Version = 1; Build = 0E1H;
     Halt = 0E7FFFFFFH;
+    StStarted = 1; StNor = 2; StDdr = 3; StUart = 4;
+    StMagic = 5; StBuild = 6; StSum = 7; StCore = 8;
+    StInit = 9; StJump = 10;
+    Hold = 300000;
 
   PROCEDURE SPIIdle(n: INTEGER); (*send n FFs slowly with no card selected*)
   BEGIN SYSTEM.PUT(spiCtrl, 0);
@@ -79,35 +89,65 @@ MODULE* BootLoad;  (*NW 20.10.2013 / PR 4.2.2014; boot from the disk*)
   BEGIN SYSTEM.PUT(0, Halt)
   END Fail;
 
+  PROCEDURE Pause;
+    VAR i: INTEGER;
+  BEGIN
+    IF Uart = 0 THEN i := Hold; WHILE i > 0 DO DEC(i) END END
+  END Pause;
+
+  PROCEDURE Stage(code: INTEGER);
+  BEGIN SYSTEM.PUT(statusPort, code); Pause
+  END Stage;
+
   PROCEDURE Check;
     VAR magic, version, build, n, p, sum, want, w: INTEGER;
   BEGIN
-    IF Uart = 0 THEN SYSTEM.PUT(wordPort, FlashBase) END;
-    magic := Word(); version := Word(); build := Word(); n := Word(); want := Word();
-    IF (magic # Magic) OR (version # Version) OR (build # Build) OR (n <= 0) OR (n MOD 4 # 0) THEN
-      Fail
+    IF Uart = 0 THEN
+      Stage(StNor); SYSTEM.PUT(wordPort, FlashBase)
     ELSE
-      sum := 0; p := DiskOrg;
-      WHILE n > 0 DO
-        w := Word();
-        IF Uart = 1 THEN SYSTEM.PUT(p, w); INC(p, 4) END;
-        sum := sum + w; DEC(n, 4)
-      END;
-      IF sum # want THEN Fail
+      Stage(StDdr); Stage(StUart)
+    END;
+    magic := Word(); version := Word(); build := Word(); n := Word(); want := Word();
+    Stage(StMagic);
+    IF magic # Magic THEN Fail
+    ELSE
+      Stage(StBuild);
+      IF (version # Version) OR (build # Build) OR (n <= 0) OR (n MOD 4 # 0) THEN Fail
       ELSE
-        IF Uart = 1 THEN SYSTEM.PUT(secPort, DiskOrg) ELSE SYSTEM.PUT(secPort, FlashBase + 20) END;
-        LoadFromDisk;
-        (* A disk that ends on a zero beat leaves the Dock bridge busy.
-           Address 4 is a zero in the boot image. A 1 there lets the
-           checksum store finish. The NOR path does not store it. *)
-        IF Uart = 1 THEN SYSTEM.PUT(4, 1) END;
-        SYSTEM.PUT(8, sum); SYSTEM.PUT(12, MemLim); SYSTEM.PUT(24, stackOrg);
-        SYSTEM.PUT(MemLim, 8); SYSTEM.PUT(MemLim + 4, -1)
+        Stage(StSum);
+        sum := 0; p := DiskOrg;
+        WHILE n > 0 DO
+          w := Word();
+          IF Uart = 1 THEN SYSTEM.PUT(p, w); INC(p, 4) END;
+          sum := sum + w; DEC(n, 4)
+        END;
+        IF sum # want THEN Fail
+        ELSE
+          Stage(StCore);
+          IF Uart = 1 THEN SYSTEM.PUT(secPort, DiskOrg) ELSE SYSTEM.PUT(secPort, FlashBase + 20) END;
+          LoadFromDisk;
+          (* The copied image already holds its variables. These stores
+             are the init the core still needs: the checksum, MemLim,
+             the stack origin, and the heap sentinel. *)
+          Stage(StInit);
+          (* A disk that ends on a zero beat leaves the Dock bridge busy.
+             Address 4 is a zero in the boot image. A 1 there lets the
+             checksum store finish. The NOR path does not store it. *)
+          IF Uart = 1 THEN SYSTEM.PUT(4, 1) END;
+          SYSTEM.PUT(8, sum); SYSTEM.PUT(12, MemLim); SYSTEM.PUT(24, stackOrg);
+          SYSTEM.PUT(MemLim, 8); SYSTEM.PUT(MemLim + 4, -1);
+          Stage(StJump)
+        END
       END
     END
   END Check;
 
-  (* First store: status byte 0A5H, mode bit clear. The blocks show
-     10100101 until Blink stores bit 8. *)
-BEGIN SYSTEM.PUT(statusPort, 0A5H); SYSTEM.LDREG(SP, stackOrg); SYSTEM.LDREG(MT, MTOrg); Check
+  (* First store: stage 1, mode bit clear. The stack is set before Pause,
+     which is the first use of it. The started code is held three times.
+     One hold is about a second, and the capture card spends that long
+     locking onto the new picture, so a single hold never reaches the file. *)
+BEGIN
+  SYSTEM.PUT(statusPort, StStarted);
+  SYSTEM.LDREG(SP, stackOrg); SYSTEM.LDREG(MT, MTOrg);
+  Pause; Pause; Pause; Check
 END BootLoad.

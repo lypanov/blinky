@@ -87,6 +87,44 @@ The bootstrap writes a numbered code into the status byte as each stage before O
 
 Proof: a capture card recording of a good boot shows the codes in order, ending in bitmap/square mode with the LED at 0.500 Hz. A disk with the build byte flipped stops at the build code, and a disk with one payload byte flipped stops at the checksum code. In both the LED stays dark, and the recording names the stage. Verilator checks the same final code for each case.
 
+The code is one byte at −84, bit 7 on the left. Bit 8 stays clear until Blink stores the inner-core code with the mode bit set (`0x10B`), which is the square. A failed stage leaves its code up and branches to the halt word. The build byte is header offset 8, flipped by XOR 1 (`0xE1` becomes `0xE0`). The payload byte is file offset 40, also XOR 1.
+
+`BootLoad` writes the code, then does the work. The 4K then waits 300000 iterations, so a stage that is only a compare still fills a capture frame. The started code waits three times, about three seconds. One second is what the capture card spends locking onto the new picture, and a single wait never reached the recording. The Dock skips that wait. Its receiver holds eight words, and the host is already sending.
+
+The core stage is `LoadFromDisk`: the linked image copied to address 0. The init stage is the stores after that copy. The image already contains its variables, so there is no pair list. The stores are the checksum at 8, `MemLim` at 12, the stack origin at 24, and the heap sentinel at `MemLim`. The jump stage is the branch to address 0. Oberon then stores 11 and calls `Modules.Load("Blink5")`.
+
+| Code | Bits, bit 7 on the left | 4K | Dock |
+|---:|---|---|---|
+| 1 | 00000001 | started | started |
+| 2 | 00000010 | NOR read | |
+| 3 | 00000011 | | DDR3 trained |
+| 4 | 00000100 | | UART receive |
+| 5 | 00000101 | disk magic | disk magic |
+| 6 | 00000110 | version and build | version and build |
+| 7 | 00000111 | checksum | checksum |
+| 8 | 00001000 | core copied | core copied |
+| 9 | 00001001 | init stream copied | init stream copied |
+| 10 | 00001010 | jumping to the inner core | jumping to the inner core |
+| 11 | 00001011 | before `Modules.Load("Blink5")` | before `Modules.Load("Blink5")` |
+
+A good boot's final store is `0x10B`. A flipped build byte stops at 6. A flipped payload byte stops at 7.
+
+`tools/run_verilator_sim.sh` exits 0. The NOR sequence is 1, 2, 5, 6, 7, 8, 9, 10, 11, then `0x10B`. Code 1 is stored at bridge cycle 10 and code 2 at cycle 81000566, three holds, 3.000 s at 27 MHz. The final word is at cycle 305599056. A flipped build byte halts at cycle 158407556 with final word `0x06` and the LED dark. A flipped payload byte halts at cycle 200600214 with final word `0x07` and the LED dark. The UART image does not hold. It reaches `0x10B`, and the same two disks halt at cycles 7268 and 15080444 with words `0x06` and `0x07`, LED dark. `BootLoad` is 430 of 512 words.
+
+4K place, `modules_n1000`, square. Logic 4129/4608 (90%; 3775 LUT, 354 ALU), registers 2045, CLS 2230/2304 (97%, 74 free). Block RAM 4/10 (2 SDPB, 1 SDPX9B, 1 pROM). The instruction ROM is `BSRAM_R10[4]`. The screen bitmap is `BSRAM_R10[9]`. DSP 2/8, one `MULT36X36`, site `DSP_R19[1]` (R19C11). Setup and hold violated endpoints 0. Worst setup slack +2.285 ns. Worst hold slack +0.232 ns. `cpu_clk` Fmax is 14.236 MHz against 13.500. The HyperRAM `clkdiv` Fmax is 67.349 MHz against 27.000. The bitstream is `gowin/impl/pnr/modules_n1000.fs`, 1772222 bytes, sha256 `096ed6fcb9a7e15f7d7f7abceb45bf2a0191186c784389adeb55b6fbb9f21191`. CLS fits. Ledger item 9 was not taken.
+
+The disk is 47124 bytes, checksum `e7bdfa06`, arm word `46a1f7e3`, sha256 `a68cd634669e6ed3efc64fdc1e6f9445a74a81ee299ad924efe0e239068dfcfa`. The rate bytes at `0xA974` are `e8 03 00 00 18 fc ff ff`, 1000 ms and its negation. The NOR write was the data file only, at `0x200000`, bus 003 device 012. JEDEC `856016`. The read-back matches. The 256 bytes at `0x1FFF00` are unchanged. SRAM load `openFPGALoader -m`, Load SRAM 100%, CRC check Success. Idcode `0x100981b`. Nothing was written outside `0x200000`–`0x3FFFFF`.
+
+A single one-second hold of code 1 never reached the capture. Two recordings of that image are black until code 2. The started code is therefore held three times. The recording of that image is `/home/lypanov/fpga/blink-measure/boot-stage-6fe7/good3/hdmi.yuyv`, 11 Nov 2026, `/dev/video0`, YUYV, 720×480, 60 frames a second, 1920 frames. After the load the codes are 1, 2, 5, 6, 7, 8, 9, 10, 11, then the square. Code 1 is 118 frames (1.967 s) and is only the rightmost block, x 560..639, y 160..319, exactly 12800 pixels above luma 180. Each later lit block is the same 12800. The runs are 59, 58, 59, 96, 89, 60, 72, and 18 frames: 0.983 s, 0.967 s, 0.983 s, 1.600 s, 1.483 s, 1.000 s, 1.200 s, and 0.300 s. The square is exactly 400 pixels at x 300..319, y 220..239. Its first two rise-to-rise intervals are 120 frames, 2.000 s, and the third is 60 frames, 1.000 s.
+
+The lit core on `/dev/video2` is x 145..155, y 197..205, 961 frames at 30 frames a second, `good3/led.mkv`. The first two rise-to-rise intervals are 60 frames, 2.000 s, and the third is 30 frames, 1.000 s. That is 0.500 Hz, then 1.000 Hz.
+
+The build-byte disk differs from the good file in one byte, offset 8, `E1` to `E0`. The write used the same window and the same guard. The read-back matches, and the 256 bytes at `0x1FFF00` are unchanged. The recording `bad-build/hdmi.yuyv` shows 1, 2, 5, then 6 held for the remaining 13.450 s. A frame of that hold has exactly two lit blocks, the `00000110` pair, 12800 pixels each, and the square is dark. The webcam `bad-build/led.mkv` has no rise. The red mean in the same box stays at most 11.5; the good clip's lit mean is about 130.
+
+The payload-byte disk differs in one byte, offset 40, `00` to `01`. Same window, same guard, read-back matches. `bad-byte/hdmi.yuyv` shows 1, 2, 5, 6, then 7 held for the remaining 10.467 s. A late frame is the `00000111` triple. `bad-byte/led.mkv` has no rise, and the same box stays at most 11.5. The good disk was written back afterwards. The read-back matches, the guard is unchanged, and a final SRAM load of the good bitstream reports CRC check Success.
+
+The Dock image does not train, so this item is not done. `place_option` 0 with `route_option` 1 was placed several times. Every SRAM load stays at PC `0080` with E0 `FFFF`, G `0000`, and F `4B`. Lanes are `000A` `000C`. `route_option` 2 on this netlist does the same. `place_option` 1 ends at F `10` with E0 `0000`. `place_option` 2 ends at F `09` with E0 `0000`. None of those loads is counted. The item 33 bitstream, sha256 `1f8bcaa7d26c73e3c265cbcd0e93a90f272614eec235955889b3ae529530a2f6`, still trains on the same port: `C.0440`, lanes `000C` `000A`, E0 `A55A`, G `A55A`, F `A8`. It was loaded again after the failed places and trained again. No disk was sent. Nothing was written to the Dock flash. The Dock LED proof was not taken. The HDMI cable stayed on the Nano. Interface B (`3-3.1.1:1.1`) was on `ftdi_sio` as `/dev/ttyUSB3` when the listen started. Each listen detaches it, and it is unbound at the end. Rebinding needs root. Interface A stayed bound.
+
 ## Item 35 — the trap code in the status blocks
 
 The trap entry at `MT[0]` (item 4) gets a handler that switches to status mode and writes a trap byte: the high bit set, then the trap number. No text yet. This is the fall-back for everything that follows, and the debugging aid for items 36–47.

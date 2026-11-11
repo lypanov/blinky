@@ -33,6 +33,8 @@ int main(int argc, char** argv) {
   int press = 0;
   uint64_t hold_cycles = 0;
   int bit_clocks = 210;
+  int expect_status = -1;
+  std::vector<int> expect_seq;
   for (int i = 1; i < argc; i++) {
     auto need = [&](const char* name) -> const char* {
       if (i + 1 >= argc) {
@@ -56,6 +58,21 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--press")) press = 1;
     else if (!strcmp(argv[i], "--hold-cycles")) hold_cycles = strtoull(need("--hold-cycles"), nullptr, 10);
     else if (!strcmp(argv[i], "--bit-clocks")) bit_clocks = atoi(need("--bit-clocks"));
+    else if (!strcmp(argv[i], "--expect-status")) expect_status = (int)strtol(need("--expect-status"), nullptr, 0);
+    else if (!strcmp(argv[i], "--status-seq")) {
+      const char* spec = need("--status-seq");
+      expect_seq.clear();
+      while (*spec) {
+        char* end = nullptr;
+        long v = strtol(spec, &end, 0);
+        if (end == spec) {
+          fprintf(stderr, "bad status-seq\n");
+          return 2;
+        }
+        expect_seq.push_back((int)v);
+        spec = (*end == ',') ? end + 1 : end;
+      }
+    }
     else {
       fprintf(stderr, "unknown %s\n", argv[i]);
       return 2;
@@ -91,6 +108,8 @@ int main(int argc, char** argv) {
   int status_writes = 0;
   int saw_mode = 0;
   int mem_before_status = 0;
+  int status_last = -1;
+  std::vector<int> status_seq;
   for (; cycle < max_cycles; cycle++) {
     step();
     if (top->mem_write && (top->mem_addr == 0xFFFFFFACu ||
@@ -106,12 +125,19 @@ int main(int argc, char** argv) {
     }
     if (status_writes == 0 && top->mem_write) mem_before_status = 1;
     if (top->status_we) {
-      if (status_writes == 0 && top->status_word != 0x0A5) {
-        fprintf(stderr, "FAIL first status store %x\n", top->status_word);
+      int word = top->status_word & 0x1ff;
+      if (status_writes == 0 && word != 0x001) {
+        fprintf(stderr, "FAIL first status store %x\n", word);
         failed = 1;
         break;
       }
-      if (top->status_word & 0x100) saw_mode = 1;
+      if (word != status_last) {
+        status_seq.push_back(word);
+        status_last = word;
+        printf("STATUS %zu cycle %llu word %03x\n",
+               status_seq.size(), (unsigned long long)cycle, word);
+      }
+      if (word & 0x100) saw_mode = 1;
       status_writes++;
     }
     if (watch && top->mem_write && top->mem_addr < 0x100u) {
@@ -162,6 +188,26 @@ int main(int argc, char** argv) {
   } else if (!expect_halt && !saw_mode) {
     fprintf(stderr, "FAIL Blink did not set status bit 8\n");
     failed = 1;
+  }
+  if (!failed && expect_status >= 0 && status_last != expect_status) {
+    fprintf(stderr, "FAIL final status %03x wanted %03x\n", status_last, expect_status);
+    failed = 1;
+  }
+  if (!failed && !expect_seq.empty()) {
+    if (status_seq.size() != expect_seq.size()) {
+      fprintf(stderr, "FAIL status sequence length %zu wanted %zu\n",
+              status_seq.size(), expect_seq.size());
+      failed = 1;
+    } else {
+      for (size_t i = 0; i < expect_seq.size(); i++) {
+        if (status_seq[i] != expect_seq[i]) {
+          fprintf(stderr, "FAIL status seq[%zu] %03x wanted %03x\n",
+                  i, status_seq[i], expect_seq[i]);
+          failed = 1;
+          break;
+        }
+      }
+    }
   }
 
   if (exhaust_rises) {
