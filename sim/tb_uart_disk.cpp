@@ -14,7 +14,9 @@ double sc_time_stamp() { return static_cast<double>(main_time); }
 
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
-  uint64_t max_cycles = 80000000;
+  // The UART file is the same ~47 KB image. The 100 ms switch needs
+  // the ingest plus seven Dock-rate edges.
+  uint64_t max_cycles = 160000000;
   uint64_t period = 0;
   // After switch_after gaps the edge uses period2. Zero leaves every
   // gap on period. The accumulated error stays inside one poll of

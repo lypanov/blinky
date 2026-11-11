@@ -1,13 +1,13 @@
 MODULE Blink5;
   IMPORT MMT := AMemoryMappedToggle, Kernel, Modules, Files, SYSTEM;
   (*
-    sim/link_inner.py places the arm sequence ahead of this loop. It runs once,
-    before the wait, and stores one word at 7C0H. The word is
-    0A11C0DE5H only when addresses 12, 16, 20, and 24 still hold MemLim,
-    AllocPtr, the planted root, and the stack origin, 58 DIV 29 is 2 and
-    the remainder in H is 0, the two products match, and the sum of this
-    placed code matches the word the linker stored at address 28. The LED
-    pin stays dark otherwise.
+    The arm sequence is placed ahead of this loop. It runs once, before
+    the wait, and stores one word at 7C0H. The word is 0A11C0DE5H only
+    when addresses 12, 16, 20, and 24 still hold MemLim, AllocPtr, the
+    boot root, and the stack origin, 58 DIV 29 is 2 and the remainder in
+    H is 0, the two products match, and the sum of this placed code
+    matches the word stored at address 28. Modules loads Oberon, and
+    Oberon loads this module. The LED pin stays dark otherwise.
 
     The loop stores the new light at -80 (0FFFFFFB0H). That is the one
     screen address: bit 0 of the word sets block (15, 11) and clears it.
@@ -41,11 +41,11 @@ MODULE Blink5;
     Each on-edge allocates one record and drops it. head stays reachable,
     and its next field points at itself, so the collector follows one real
     pointer offset from the type descriptor the loader placed. MemLim is
-    0D600H. The heap is the 5632 bytes from the stack origin 0C000H up to
-    that limit. Files.Old of each module takes a 1280-byte buffer and a
-    512-byte descriptor. Blink.Rate takes that same pair, 1792 bytes.
-    Reading this module's second page reuses its one buffer. Eight
-    32-byte blocks remain. head takes one. Seven on-edges succeed.
+    19D00H. The heap is the 7424 bytes from the stack origin 18000H up to
+    that limit. Files.Old of Oberon, AMemoryMappedToggle, this module, and
+    Blink.Rate each take a 1280-byte buffer and a 512-byte descriptor,
+    1792 bytes. Reading this module's second page reuses its one buffer.
+    Eight 32-byte blocks remain. head takes one. Seven on-edges succeed.
     The eighth stores the light, finds no block, forces the light off,
     and stops. The Dock counter then reads 0008.
 

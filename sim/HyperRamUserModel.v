@@ -54,10 +54,10 @@ module HyperRamUserModel (
   input  [3:0]  data_mask
 );
 
-  // 40960 words is 160 KB. The packed core ends just under 128 KB.
-  // The flash bootstrap also parks the init stream at 0x20000, which
-  // is the first byte past 32768 words. 10240 words stopped at 0x9FFC.
-  localparam integer WORDS = 40960;
+  // 49152 words is 192 KB. The boot image, the heap, and the UART
+  // disk copy at 0x21000 have to sit in this array together. 40960
+  // words ended at 0x27FFF, short of a 40 KB boot file stored there.
+  localparam integer WORDS = 49152;
   localparam integer INIT_CYCLES = 64;
   // See the header. 12 is the pre-load model. 13 is the post-measurement fit.
   parameter integer FIRST_VALID = 12;

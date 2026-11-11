@@ -152,10 +152,12 @@ PY
 echo "==> Checking the bootstrap at ROM[0]"
 entry="$(sed -n '1p' "$IMEM_HEX")"
 lines="$(wc -l < "$IMEM_HEX")"
-if [[ "$entry" == "40000000" ]]; then
-  echo "    ROM[0] is MOV R0, 0 ($entry)"
+# BootLoad's first word branches to its body. The epilogue is BR R0,
+# which starts the image copied to address 0.
+if [[ "$entry" =~ ^[eE]7 ]]; then
+  echo "    ROM[0] is the BootLoad branch ($entry)"
 else
-  echo "error: ROM[0] is $entry, expected the bootstrap MOV R0, 0" >&2
+  echo "error: ROM[0] is $entry, expected BootLoad's branch" >&2
   exit 1
 fi
 if [[ "$lines" -eq 512 ]]; then
@@ -164,10 +166,10 @@ else
   echo "error: ROM is $lines words, expected 512" >&2
   exit 1
 fi
-if grep -qi 'c7000001' "$IMEM_HEX"; then
-  echo "    bootstrap branches with B R1"
+if grep -qi 'c7000000' "$IMEM_HEX"; then
+  echo "    bootstrap returns through BR R0"
 else
-  echo "error: bootstrap B R1 is not in the ROM" >&2
+  echo "error: bootstrap BR R0 is not in the ROM" >&2
   exit 1
 fi
 

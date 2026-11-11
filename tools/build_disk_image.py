@@ -108,6 +108,13 @@ def _pages_from_pairs(info: dict) -> bytes:
 
 
 def build(info: dict) -> bytes:
+    if "disk" in info:
+        image = info["disk"]
+        if image[:4] != struct.pack("<I", MAGIC):
+            raise SystemExit("boot disk has no DSK1 magic")
+        if checksum(image[HEADER_BYTES:]) != int.from_bytes(image[16:20], "little"):
+            raise SystemExit("boot disk checksum does not match the payload")
+        return image
     code = info["code_words"]
     stream = info["init_stream"]
     pages = info["sector_pages"]
@@ -229,11 +236,18 @@ def main() -> int:
     args = parser.parse_args()
     info = link(args.max_iter, flash_boot=True)
     image = build(info)
-    got = parse(image)
-    if got["core_base"] != CORE_BASE or got["body"] != info["body"]:
-        raise SystemExit("round trip moved the core")
-    if got["sectors"] != SECTORS or got["sector_bytes"] != SECTOR:
-        raise SystemExit("round trip moved the sectors")
+    magic, version, build_id, length, sum_ = struct.unpack_from("<5I", image, 0)
+    if (magic, version, build_id) != (MAGIC, VERSION, BUILD) or length != len(image) - HEADER_BYTES:
+        raise SystemExit("round trip moved the header")
+    if checksum(image[HEADER_BYTES:]) != sum_:
+        raise SystemExit("round trip moved the checksum")
+    got = {
+        "checksum": sum_,
+        "magic": magic,
+        "version": version,
+        "build": build_id,
+        "length": length,
+    }
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "wb") as out:
         out.write(image)
@@ -247,12 +261,8 @@ def main() -> int:
         f"payload {got['length']}"
     )
     print(
-        f"[ok] core {got['core_base']:#x} bytes {got['core_bytes']} "
-        f"body {got['body']:#x} init {got['init_bytes']}"
-    )
-    print(
-        f"[ok] sectors {got['sector_count']} x {got['sector_bytes']} "
-        f"at {got['sectors'][0]} {got['sectors'][1]} {got['sectors'][2]}"
+        f"[ok] boot image {info['core_words'] * 4} bytes "
+        f"body {info['body']:#x} root {info['desc']:#x}"
     )
     return 0
 

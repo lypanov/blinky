@@ -13,7 +13,10 @@ double sc_time_stamp() { return static_cast<double>(main_time); }
 
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
-  uint64_t max_cycles = 40000000;
+  // The boot file is about 40 KB behind a 20-byte header. Each NOR
+  // word is one SPI read, about 5600 bridge clocks, so ingesting the
+  // file is past 60 million clocks before LoadFromDisk starts.
+  uint64_t max_cycles = 160000000;
   uint64_t period = 0;
   // After switch_after gaps the edge uses period2. Zero leaves every
   // gap on period. Blink polls Kernel.Time, so an edge lands up to one

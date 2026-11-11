@@ -89,7 +89,8 @@ module uart_disk_send #(
   input  wire resetn,
   output reg  tx
 );
-  reg [7:0] mem [0:32767];
+  // Eighty 1 KB pages plus the 20-byte header. The boot file is ~40 KB.
+  reg [7:0] mem [0:98303];
   integer nbytes;
   integer idx;
   integer wait_n;
@@ -110,7 +111,7 @@ module uart_disk_send #(
     end
     n = $fread(mem, fd);
     $fclose(fd);
-    if (n <= 0 || n > 32768) begin
+    if (n <= 0 || n > 98304) begin
       $display("FAIL disk length %0d", n);
       $finish;
     end

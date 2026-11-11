@@ -44,11 +44,12 @@ class SpiSector extends Module {
   val rel = block(15, 0)
   val half = rel(0)
   val index = rel(15, 1)
-  // Page 4 is Blink5's continuation. Page 5 is Blink.Rate. The page
-  // index is index - 1, and 0..4 fits in three address bits.
-  val inRange = isFs && index >= 1.U && index <= 5.U
+  // Page 1 is the directory. The boot file starts at page 2 and the
+  // modules follow it. Eighty pages is 80 KB, past a 40 KB boot file
+  // and the four files that sit behind it. which is seven bits.
+  val inRange = isFs && index >= 1.U && index <= 80.U
   val which = index - 1.U
-  val wordAddr = Cat(which(2, 0), half, idx(6, 0))
+  val wordAddr = Cat(which(6, 0), half, idx(6, 0))
 
   val byte = io.wdata(7, 0)
   val ocr = MuxLookup(idx(2, 0), 0.U(8.W))(Seq(
