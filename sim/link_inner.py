@@ -321,9 +321,10 @@ def _drop_collect(raw: bytes, code: list[int], kernel_mno: int, proc_pnos: set[i
 ARM_ADDR = 0x7C0
 ARM_WORD = 0xA11C0DE5
 SUM_ADDR = 28
-# Modules' descriptor. MemLim 0xD600 puts the static image 0x700 above
-# the item 28 root, and 0x700 is a multiple of the 16-byte pad.
-EXPECT_ROOT = 0xF7A0
+# Modules' descriptor. The two-slot table is 2060 bytes. Kernel's static
+# image started 8 bytes past a 16-byte boundary, so the pad grows by 4
+# and the root moves 2064 bytes past item 29's 0xF7A0.
+EXPECT_ROOT = 0xFFB0
 BLINK_MT = 0x38
 PLANTED_NUM = 4
 EQ = 1
@@ -1073,6 +1074,12 @@ def _uart_bootstrap(static_end: int) -> list[int]:
     a.label("summed")
     a.word(f0(9, 3, 4, 8))
     a.branch("halt", 9)
+    # This disk ends on a zero beat. The checksum store at address 8
+    # then never finishes: the bridge stays busy and the PC sits on the
+    # next instruction. A nonzero store first lets that store complete.
+    # Address 4 is not read. The init stream plants 12, 16, 20 and 24.
+    a.word(f1(0, 1, 0, 1))
+    a.word(stw(1, 0, 4))
     a.word(stw(4, 0, CHECK_ADDR))
     for word in load_const(1, DISK_DDR + 20 + 36):
         a.word(word)
@@ -1225,6 +1232,43 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     seeds.add(("Kernel", time_index))
     seeds.add(("Kernel", mark_index))
     seeds.add(("Kernel", scan_index))
+    # Blink calls WriteInt and Close, which the boot path does not.
+    # Those entries have to be packed or the read-back of the rate stops.
+    files_mod = mods["Files"]
+    files_limit = (
+        len(files_mod["type_descriptors"]) * 4 + files_mod["data_size"]
+    )
+    blink_fix = payload["Blink5"]["fix_org"][0]
+    blink_code = payload["Blink5"]["code"]
+    called = set()
+    adr = blink_fix * 4
+    seen_fix = set()
+    while adr and adr not in seen_fix:
+        seen_fix.add(adr)
+        inst = blink_code[adr // 4]
+        if (inst // 0x100000) % 0x10 == 4:
+            called.add((inst // 0x1000) % 0x100)
+        disp = inst % 0x1000
+        if disp == 0:
+            break
+        adr -= disp * 4
+    if len(called) < 3:
+        raise SystemExit(f"Blink5 calls Files {sorted(called)}")
+    for pno in sorted(called):
+        if pno >= len(files_mod["entries"]):
+            raise SystemExit(f"Files entry {pno} is past the table")
+        entry = files_mod["entries"][pno]
+        index = entry // 4
+        if not (
+            entry >= files_limit
+            and entry % 4 == 0
+            and 0 <= index < len(codes["Files"])
+            and _sub_sp(codes["Files"][index])
+        ):
+            raise SystemExit(
+                f"Blink calls Files entry {pno} at {entry:#x}, not a procedure"
+            )
+        seeds.add(("Files", index))
 
     def targets_of(seen):
         extra = set()

@@ -5,6 +5,7 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
     CARD0 = 1; SPIFAST = 4;
     FSoffset = 80000H; (*256MB in 512-byte blocks*)
     mapsize = 10000H; (*1K sectors, 64MB*)
+    OverlaySlots = 2; (*pages kept in RAM; lost at power-off*)
 
   TYPE Sector* = ARRAY SectorLength OF BYTE;
 
@@ -15,6 +16,11 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
     list0, list1, list2, list3: INTEGER;  (*lists of free blocks of size n*256, 128, 64, 32 bytes*)
     data: INTEGER; (*SPI data in*)
     sectorMap: ARRAY mapsize DIV 32 OF SET;
+    (* A written sector stays here. The flash is not erased.
+       GetSector returns the entry when the sector is present. *)
+    nofOver: INTEGER;
+    overSec: ARRAY OverlaySlots OF INTEGER;
+    overData: ARRAY OverlaySlots OF Sector;
     
 (* ---------- New: heap allocation ----------*)
 
@@ -197,7 +203,8 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
   PROCEDURE InitSecMap*;
     VAR i: INTEGER;
   BEGIN NofSectors := 0; sectorMap[0] := {0 .. 31}; sectorMap[1] := {0 .. 31};
-    FOR i := 2 TO mapsize DIV 32 - 1 DO sectorMap[i] := {} END
+    FOR i := 2 TO mapsize DIV 32 - 1 DO sectorMap[i] := {} END ;
+    nofOver := 0
   END InitSecMap;
 
   PROCEDURE MarkSector*(sec: INTEGER);
@@ -221,15 +228,25 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
   END AllocSector;
 
   PROCEDURE GetSector*(src: INTEGER; VAR dst: Sector);
-  BEGIN src := src DIV 29; ASSERT(SYSTEM.H(0) = 0);
-    src := src * 2 + FSoffset;
-    ReadSD(src, SYSTEM.ADR(dst)); ReadSD(src+1, SYSTEM.ADR(dst)+512) 
+    VAR i, n: INTEGER;
+  BEGIN i := 0;
+    WHILE (i < nofOver) & (overSec[i] # src) DO INC(i) END ;
+    IF i < nofOver THEN dst := overData[i]
+    ELSE n := src DIV 29; ASSERT(SYSTEM.H(0) = 0);
+      n := n * 2 + FSoffset;
+      ReadSD(n, SYSTEM.ADR(dst)); ReadSD(n+1, SYSTEM.ADR(dst)+512)
+    END
   END GetSector;
-  
+
   PROCEDURE PutSector*(dst: INTEGER; VAR src: Sector);
-  BEGIN dst := dst DIV 29; ASSERT(SYSTEM.H(0) =  0);
-    dst := dst * 2 + FSoffset;
-    WriteSD(dst, SYSTEM.ADR(src)); WriteSD(dst+1, SYSTEM.ADR(src)+512)
+    VAR i, n: INTEGER;
+  BEGIN n := dst DIV 29; ASSERT(SYSTEM.H(0) = 0);
+    i := 0;
+    WHILE (i < nofOver) & (overSec[i] # dst) DO INC(i) END ;
+    IF i = nofOver THEN
+      ASSERT(nofOver < OverlaySlots); overSec[i] := dst; INC(nofOver)
+    END ;
+    overData[i] := src
   END PutSector;
 
 (*-------- Miscellaneous procedures----------*)

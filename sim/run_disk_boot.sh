@@ -67,6 +67,28 @@ echo "[ok] NOR disk N=$N paused while the button was held"
 # three-edge run above is the period. This run only has to keep going.
 "$BIN" --edges 24
 echo "[ok] NOR disk still blinking after the heap would have run out"
+# Reopening the file searches the directory, which is still a disk read.
+# That read is about 35 ms, so a 1 ms half would queue a burst. A 100 ms
+# file halves to 50 ms, and the copy finishes inside the half. The third
+# rising edge is edge 5. The four gaps before it are 100 ms. The next
+# two are 50 ms. Edge 7 is the fourth rise, where Collect runs, so this
+# run stops on that edge.
+SWITCH=100
+SWITCH_PERIOD=$((SWITCH * 27000))
+python3 - "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-rate-switch.bin" "$SWITCH" << 'PY'
+import sys
+sys.path.insert(0, "tools")
+from build_disk_image import set_rate
+src, dst, delay = sys.argv[1:]
+open(dst, "wb").write(set_rate(open(src, "rb").read(), int(delay)))
+print(f"[ok] switch disk {delay} ms")
+PY
+cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-rate-base.bin"
+cp "$ROOT/sim/out/disk-rate-switch.bin" "$ROOT/sim/out/disk.bin"
+"$BIN" --period "$SWITCH_PERIOD" --period2 $((SWITCH_PERIOD / 2)) \
+  --switch-after 4 --slack 2048 --edges 7
+echo "[ok] NOR disk halves 100 ms after the third rise"
+cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
 # A second delay, same elaborated image. The file's next word is the
 # negation, so the checksum and the arm word stay put.

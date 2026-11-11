@@ -15,9 +15,12 @@ int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   uint64_t max_cycles = 40000000;
   uint64_t period = 0;
-  // Blink polls Kernel.Time, so an edge lands up to one poll after the
-  // tick. The gaps add up to the counter: the accumulated error stays
-  // inside one poll.
+  // After switch_after gaps the edge uses period2. Zero leaves every
+  // gap on period. Blink polls Kernel.Time, so an edge lands up to one
+  // poll after the tick. The gaps add up to the counter: the accumulated
+  // error stays inside one poll.
+  uint64_t period2 = 0;
+  int switch_after = 0;
   uint64_t slack = 0;
   int edges_needed = 3;
   int expect_halt = 0;
@@ -36,6 +39,8 @@ int main(int argc, char** argv) {
     if (argv[i][0] == '+') continue;
     if (!strcmp(argv[i], "--cycles")) max_cycles = strtoull(need("--cycles"), nullptr, 10);
     else if (!strcmp(argv[i], "--period")) period = strtoull(need("--period"), nullptr, 10);
+    else if (!strcmp(argv[i], "--period2")) period2 = strtoull(need("--period2"), nullptr, 10);
+    else if (!strcmp(argv[i], "--switch-after")) switch_after = atoi(need("--switch-after"));
     else if (!strcmp(argv[i], "--slack")) slack = strtoull(need("--slack"), nullptr, 10);
     else if (!strcmp(argv[i], "--edges")) edges_needed = atoi(need("--edges"));
     else if (!strcmp(argv[i], "--expect-halt")) expect_halt = 1;
@@ -145,20 +150,22 @@ int main(int argc, char** argv) {
     }
     if (period && edges.size() >= 2) {
       uint64_t acc = 0;
+      uint64_t want = 0;
       for (size_t i = 1; i < edges.size(); i++) {
+        uint64_t expect = (period2 && (int)i > switch_after) ? period2 : period;
         uint64_t d = edges[i] - edges[i - 1];
-        uint64_t diff = d > period ? d - period : period - d;
+        uint64_t diff = d > expect ? d - expect : expect - d;
         acc += d;
+        want += expect;
         if (diff > slack) {
-          fprintf(stderr, "FAIL period %llu wanted %llu slack %llu\n",
-                  (unsigned long long)d, (unsigned long long)period,
-                  (unsigned long long)slack);
+          fprintf(stderr, "FAIL period %llu wanted %llu slack %llu gap %zu\n",
+                  (unsigned long long)d, (unsigned long long)expect,
+                  (unsigned long long)slack, i);
           failed = 1;
           break;
         }
       }
       if (!failed) {
-        uint64_t want = period * (edges.size() - 1);
         uint64_t ad = acc > want ? acc - want : want - acc;
         if (ad > slack) {
           fprintf(stderr, "FAIL accumulated %llu wanted %llu slack %llu\n",

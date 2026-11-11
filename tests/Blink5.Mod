@@ -18,10 +18,19 @@ MODULE Blink5;
     start of Blink.Rate, read once through Files.Old. One thousand is a
     toggle every second and a full blink of 0.500 Hz. The next four bytes
     are the negation of that integer, so a second delay keeps the same
-    disk checksum and the same arm word.     A missing file, or a delay that
+    disk checksum and the same arm word. A missing file, or a delay that
     is not positive, stores the light off and stops. The clock starts
     after that read. Opening the file takes longer than the delay, and
     a clock started earlier would queue a burst of toggles.
+
+    The third time the light turns on, this loop writes half that delay
+    and the negation of the half, closes the file, and reads it back.
+    Close has dropped the cached page, so the read is Kernel.GetSector
+    of the page PutSector kept in RAM. The flash is unchanged. The word
+    read back has to be the half that was written. The next edge is one
+    half-delay later, and every edge after that stays there. The four
+    edge gaps before that half are the file's original delay. A wrong
+    word stores the light off and stops.
 
     -60 is the book's switch word. Bit 0 is switch 0: 1 while the button
     is held, or while the Dock UART press latch is set. There are no
@@ -48,7 +57,7 @@ MODULE Blink5;
   TYPE Node = POINTER TO Rec;
     Rec = RECORD n: INTEGER; next: Node END;
 
-  VAR last, now, wait, keys, n, due: INTEGER;
+  VAR last, now, wait, old, keys, n, due: INTEGER;
     node, head: Node;
     rate: Files.File;
     R: Files.Rider;
@@ -101,6 +110,18 @@ BEGIN
         node.next := NIL;
         node := head;
         INC(n);
+        IF n = 3 THEN
+          old := wait;
+          Files.Set(R, rate, 0);
+          Files.WriteInt(R, old DIV 2);
+          Files.WriteInt(R, -(old DIV 2));
+          Files.Close(rate);
+          rate := Files.Old("Blink.Rate");
+          IF rate = NIL THEN Dark END;
+          Files.Set(R, rate, 0);
+          Files.ReadInt(R, wait);
+          IF wait # old DIV 2 THEN Dark END
+        END;
         DEC(due);
         IF due = 0 THEN Collect; due := 4 END
       END

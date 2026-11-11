@@ -2,7 +2,7 @@
 
 One item at a time, from the top. This file is an index. The write-up is in the file each item names.
 
-Next: 30.
+Next: 31.
 
 1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay. Done. The measured result is in the ledger.
 
@@ -40,7 +40,7 @@ Ledger items are not to-dos. If a later item cannot fit on the Nano 4K without a
 27. Hardware `MUL`. Same file, item 27. Done. The measured result is in that file.
 28. `NEW` and garbage collection, with a lowered memory limit. Same file, item 28. Done. The measured result is in that file. The Nano S1 check is the maintainer's, by hand.
 29. The blink rate read from a file on the disk. Same file, item 29. Done. The measured result is in that file. The Nano S1 check is the maintainer's, by hand. A Dock result counts only after three SRAM loads.
-30. File writes through a RAM overlay; the rate changes partway through a run. Same file, item 30.
+30. File writes through a RAM overlay; the rate changes partway through a run. Same file, item 30. Done. The measured result is in that file. The Nano S1 check is the maintainer's, by hand. A Dock result counts only after three SRAM loads.
 31. Oberon's own boot linker and `BootLoad` build and boot the disk. Same file, item 31.
 
 32. Nano 4K: standard 720×480 at 60 Hz, so the capture card records it pixel for pixel. [`docs/screen-and-boot.md`](screen-and-boot.md), item 32.

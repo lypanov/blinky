@@ -6,20 +6,31 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${1:-$ROOT/sim/out/disk.bin}"
-BUS="${BUS:-003:081}"
 BOARD="${BOARD:-tangnano4k}"
 OFFSET=0x200000
 LIMIT=$((0x400000))
 OUT="${OUT:-$ROOT/sim/out}"
+# The Nano 4K is USB port 3-3.3. The device number moves when the cable
+# is replugged. The Dock is port 3-3.1.1, and a stale bus number must
+# not select it.
+NANO_PORT="3-3.3"
+PORT_SYS="/sys/bus/usb/devices/${NANO_PORT}"
 
 if [[ "$BOARD" != "tangnano4k" ]]; then
   echo "error: disk writes are Nano 4K only" >&2
   exit 1
 fi
-if [[ "$BUS" != "003:081" ]]; then
-  echo "error: refusing bus $BUS; the Nano 4K is 003:081" >&2
+if [[ ! -f "$PORT_SYS/busnum" || ! -f "$PORT_SYS/devnum" ]]; then
+  echo "error: Nano 4K port $NANO_PORT is not present" >&2
   exit 1
 fi
+FOUND="$(printf '%03d:%03d' "$(cat "$PORT_SYS/busnum")" "$(cat "$PORT_SYS/devnum")")"
+if [[ -n "${BUS:-}" && "$BUS" != "$FOUND" ]]; then
+  echo "error: BUS=$BUS is not the Nano on $NANO_PORT ($FOUND)" >&2
+  exit 1
+fi
+BUS="$FOUND"
+echo "Nano NOR write: port $NANO_PORT bus $BUS"
 case "$IMAGE" in
   *.fs|*.bit|*.bin.bak)
     echo "error: refusing $IMAGE; this script writes the data file only" >&2

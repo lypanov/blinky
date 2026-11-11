@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile the unmodified inner core and lift Modules.Check.
+"""Compile the inner core and lift Modules.Check.
 
 Norebo compiles oberon/src/Kernel.Mod, FileDir.Mod, Files.Mod, and
 Modules.Mod in that order, in one directory, so the import keys match.

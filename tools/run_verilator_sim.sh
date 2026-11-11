@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Prove the two current images. Both boot the same disk.bin.
 # The 4K reads it from the NOR model. The Dock reads it from the UART,
-# with HyperRAM standing in for DDR3. The wait is 2 ms, then 4 ms from
-# a second Blink.Rate in the same image. Hardware is 1000 ms and
-# 500 ms. The two sims count different clocks because each image uses
-# its own board's divider. Each image also holds the switch bit: the
-# button on the 4K, the press byte on the Dock. The LED stays put, then
-# the same period resumes.
+# with HyperRAM standing in for DDR3. The wait is 2 ms. A 100 ms disk
+# halves to 50 ms after the third rising edge: Blink writes the half
+# back through the RAM sector table, and the directory search finishes
+# inside that half. A second disk at 4 ms still boots at 4 ms.
+# Hardware is 1000 ms, then 500 ms. The two sims count different clocks
+# because each image uses its own board's divider. Each image also holds
+# the switch bit: the button on the 4K, the press byte on the Dock. The
+# LED stays put, then the same period resumes.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

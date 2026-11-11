@@ -103,6 +103,23 @@ echo "[ok] UART disk N=$N period $PERIOD, bad build dark, flipped byte dark"
 # three-edge run above is the period. This run only has to keep going.
 "$BIN" --edges 24 --min-pc 0x900
 echo "[ok] UART disk still blinking after the heap would have run out"
+# Same third-rise change as the NOR bench. The directory search is the
+# long part of the reopen, about 35 ms on the 4K clock and less here.
+# 100 ms halves to 50, which covers it.
+SWITCH=100
+SWITCH_PERIOD=$((SWITCH * 48375))
+python3 - "$DISK" "$ROOT/sim/out/disk-rate-switch.bin" "$SWITCH" << 'PY'
+import sys
+sys.path.insert(0, "tools")
+from build_disk_image import set_rate
+src, dst, delay = sys.argv[1:]
+open(dst, "wb").write(set_rate(open(src, "rb").read(), int(delay)))
+print(f"[ok] switch disk {delay} ms")
+PY
+"$BIN" --period "$SWITCH_PERIOD" --period2 $((SWITCH_PERIOD / 2)) \
+  --switch-after 4 --slack 2048 --edges 7 --min-pc 0x900 \
+  +disk="$ROOT/sim/out/disk-rate-switch.bin"
+echo "[ok] UART disk halves 100 ms after the third rise"
 
 ALT=$((N + 2))
 ALT_PERIOD=$((ALT * 48375))

@@ -239,8 +239,21 @@ MODULE Files;  (*NW 11.1.86 / 22.9.93 / 25.5.95 / 25.12.95 / 15.8.2013*)
   END Register;
 
   PROCEDURE Close*(f: File);
+    VAR buf: Buffer; a, i: INTEGER;
   BEGIN
-    IF f # NIL THEN Unbuffer(f) END
+    IF f # NIL THEN
+      Unbuffer(f);
+      (* The page is in the Kernel table. Drop the cache and wipe it,
+         so the next read is GetSector and a stale buffer reads as zeros. *)
+      buf := f.firstbuf;
+      REPEAT
+        buf.apos := -1; buf.lim := 0; buf.mod := FALSE;
+        a := SYSTEM.ADR(buf.data); i := 0;
+        WHILE i < SS DO SYSTEM.PUT(a, 0); INC(a, 4); INC(i, 4) END ;
+        buf := buf.next
+      UNTIL buf = f.firstbuf;
+      f.nofbufs := MaxBufs
+    END
   END Close;
 
   PROCEDURE Purge*(f: File);
