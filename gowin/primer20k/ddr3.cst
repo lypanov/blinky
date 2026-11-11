@@ -127,9 +127,10 @@ IO_PORT "btn_n" IO_TYPE=LVCMOS15 PULL_MODE=UP;
 GROUP gate_grp = {"u_gate*" "u_disk_rx*" "u_cpu/cpu/btnLoad*"};
 GRP_LOC gate_grp R[2:22]C[2:18];
 // The boot file's sector-word flops landed on the DDR3 rows and the
-// write eye never saw the test byte (PC 0080, E0 FFFF, F 4B). Keep
-// that state with the sampler, away from the DQS at R56.
-GROUP spi_grp = {"u_cpu/cpu/spi*" "u_cpu/cpu/body*" "u_cpu/cpu/secAddr*"};
+// write eye never saw the test byte (PC 0080, E0 FFFF, F 48/4B).
+// secWordR is that word. Keep it with the sampler, away from the
+// DQS at R56, and off R41/R43.
+GROUP spi_grp = {"u_cpu/cpu/spi*" "u_cpu/cpu/body*" "u_cpu/cpu/secAddr*" "u_cpu/cpu/secWord*" "u_cpu/cpu/secPhase*" "u_cpu/cpu/sectorBase*"};
 GRP_LOC spi_grp R[2:22]C[20:40];
 // The 10:05 design still trains: ROM at BSRAM_R46[4], multiplier at
 // DSP_R19[1] (R19C11). The 12:33 pin put the ROM at BSRAM_R28[7],

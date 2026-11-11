@@ -14,6 +14,13 @@ from pathlib import Path
 
 from font8x8 import SQUARE, SQUARE_X, SQUARE_Y, active_white
 
+# Eight blocks across the middle of the 640-wide grid. Bit 7 is the
+# left block. Each block is four by eight of the 20×20 cells.
+STATUS_W = 80
+STATUS_H = 160
+STATUS_Y = 160
+STATUS_N = 8
+
 def load_p5(path: Path, width: int, height: int) -> bytes:
     data = path.read_bytes()
     header = f"P5\n{width} {height}\n255\n".encode()
@@ -25,6 +32,13 @@ def load_p5(path: Path, width: int, height: int) -> bytes:
     return body
 
 
+def byte_value(text: str) -> int:
+    value = int(text, 0)
+    if not 0 <= value <= 0xFF:
+        raise argparse.ArgumentTypeError(f"{text} is not a status byte")
+    return value
+
+
 def draw(
     kind: str,
     count: int,
@@ -33,9 +47,24 @@ def draw(
     blank: bool,
     width: int,
     height: int,
+    status_byte: int,
 ) -> bytes:
     img = bytearray(width * height)
     if blank:
+        return bytes(img)
+    if kind == "status":
+        for i in range(STATUS_N):
+            if ((status_byte >> (7 - i)) & 1) == 0:
+                continue
+            x0 = i * STATUS_W
+            for y in range(STATUS_Y, STATUS_Y + STATUS_H):
+                if not 0 <= y < height:
+                    raise SystemExit(f"status row {y} outside the picture")
+                row = y * width
+                for x in range(x0, x0 + STATUS_W):
+                    if not 0 <= x < width:
+                        raise SystemExit(f"status pixel {x},{y} outside the picture")
+                    img[row + x] = 255
         return bytes(img)
     if kind == "flash":
         if flash_white:
@@ -71,7 +100,8 @@ def first_diff(got: bytes, exp: bytes, width: int) -> str:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--got", type=Path, required=True)
-    p.add_argument("--kind", choices=("flash", "square", "text"), required=True)
+    p.add_argument("--kind", choices=("flash", "square", "text", "status"), required=True)
+    p.add_argument("--byte", type=byte_value, default=0)
     p.add_argument("--count", type=int, default=0)
     p.add_argument("--square", action="store_true")
     p.add_argument("--flash-white", action="store_true")
@@ -89,6 +119,7 @@ def main() -> None:
         args.blank,
         args.width,
         args.height,
+        args.byte,
     )
     white = exp.count(255)
     same = got == exp

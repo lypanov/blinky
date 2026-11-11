@@ -24,6 +24,9 @@ class CpuWrapHyper extends CpuWrapBase {
   val screen_we = Output(Bool())
   val screen_bit = Output(Bool())
   val armed = Output(Bool())
+  // -84. The video module keeps the nine flops. Bit 8 is the mode.
+  val status_we = Output(Bool())
+  val status_word = Output(UInt(9.W))
   // Switch bit at -60. The sampler outside this wrapper drives it.
   val btnPressed = Input(Bool())
 }
@@ -43,6 +46,9 @@ class CpuWrapDdr3 extends CpuWrapBase {
   val screen_we = Output(Bool())
   val screen_bit = Output(Bool())
   val armed = Output(Bool())
+  // -84. The video module keeps the nine flops. Bit 8 is the mode.
+  val status_we = Output(Bool())
+  val status_word = Output(UInt(9.W))
   // UART word port. The Dock bootstrap loads disk.bin through these.
   val disk_valid = Input(Bool())
   val disk_word = Input(UInt(32.W))
@@ -126,6 +132,8 @@ class CPUMinimalWrapper(
     pins.screen_we := cpu.io.screenWe
     pins.screen_bit := cpu.io.screenBit
     pins.armed := cpu.io.armed
+    pins.status_we := cpu.io.statusWe
+    pins.status_word := cpu.io.statusWord
   } else {
     cpu.io.spiMiso := false.B
   }
@@ -220,6 +228,8 @@ class CPUMinimalWrapper(
       wrap.screen_we := cpu.io.screenWe
       wrap.screen_bit := cpu.io.screenBit
       wrap.armed := cpu.io.armed
+      wrap.status_we := cpu.io.statusWe
+      wrap.status_word := cpu.io.statusWord
     }
     if (useRealGowin) {
       val ddr = io.asInstanceOf[CpuWrapDdr3].ddr

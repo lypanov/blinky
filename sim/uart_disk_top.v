@@ -15,6 +15,8 @@ module uart_disk_top (
   output wire mem_write,
   output wire [31:0] mem_addr,
   output wire screen_we,
+  output wire status_we,
+  output wire [8:0] status_word,
   // Idle-high. The bench bit-bangs a press byte here after the disk.
   // Wired with the disk sender: only one of them drives a zero.
   input  wire host_rx
@@ -47,6 +49,8 @@ module uart_disk_top (
     .io_memWrite(mem_write),
     .io_memAddr(mem_addr),
     .io_screenWe(screen_we),
+    .io_statusWe(status_we),
+    .io_statusWord(status_word),
     .io_diskValid(disk_valid),
     .io_diskWord(disk_word),
     .io_diskTake(disk_take),

@@ -88,9 +88,13 @@ int main(int argc, char** argv) {
   int failed = 0;
   int screen_pulses = 0;
   int prev_screen = 0;
+  int status_writes = 0;
+  int saw_mode = 0;
+  int mem_before_status = 0;
   for (; cycle < max_cycles; cycle++) {
     step();
-    if (top->mem_write && (top->mem_addr == 0xFFFFFFB0u ||
+    if (top->mem_write && (top->mem_addr == 0xFFFFFFACu ||
+                           top->mem_addr == 0xFFFFFFB0u ||
                            top->mem_addr == 0xFFFFFFB8u ||
                            top->mem_addr == 0xFFFFFFBCu ||
                            top->mem_addr == 0xFFFFFFC0u ||
@@ -99,6 +103,16 @@ int main(int argc, char** argv) {
               (unsigned)top->mem_addr, (unsigned long long)cycle);
       failed = 1;
       break;
+    }
+    if (status_writes == 0 && top->mem_write) mem_before_status = 1;
+    if (top->status_we) {
+      if (status_writes == 0 && top->status_word != 0x0A5) {
+        fprintf(stderr, "FAIL first status store %x\n", top->status_word);
+        failed = 1;
+        break;
+      }
+      if (top->status_word & 0x100) saw_mode = 1;
+      status_writes++;
     }
     if (watch && top->mem_write && top->mem_addr < 0x100u) {
       printf("W cycle %llu pc %08x addr %08x r2 %08x r5 %08x r9 %08x\n",
@@ -138,9 +152,17 @@ int main(int argc, char** argv) {
     }
   }
 
-  printf("DONE cycles %llu edges %zu saw_led %d halt %llu screen %d\n",
+  printf("DONE cycles %llu edges %zu saw_led %d halt %llu screen %d status %d mode %d\n",
          (unsigned long long)cycle, edges.size(), saw_led,
-         (unsigned long long)halt_at, screen_pulses);
+         (unsigned long long)halt_at, screen_pulses, status_writes, saw_mode);
+  if (!status_writes || mem_before_status) {
+    fprintf(stderr, "FAIL status store count %d mem-before %d\n",
+            status_writes, mem_before_status);
+    failed = 1;
+  } else if (!expect_halt && !saw_mode) {
+    fprintf(stderr, "FAIL Blink did not set status bit 8\n");
+    failed = 1;
+  }
 
   if (exhaust_rises) {
     int led_now = top->led ? 1 : 0;
@@ -247,7 +269,8 @@ int main(int argc, char** argv) {
         return failed;
       }
       auto watch = [&]() -> int {
-        if (top->mem_write && (top->mem_addr == 0xFFFFFFB0u ||
+        if (top->mem_write && (top->mem_addr == 0xFFFFFFACu ||
+                               top->mem_addr == 0xFFFFFFB0u ||
                                top->mem_addr == 0xFFFFFFB8u ||
                                top->mem_addr == 0xFFFFFFBCu ||
                                top->mem_addr == 0xFFFFFFC0u ||

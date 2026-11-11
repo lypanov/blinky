@@ -220,9 +220,19 @@ int main(int argc, char** argv) {
   top->screen_we = 0;
   top->screen_bit = 0;
   top->armed = 0;
+  top->status_we = 0;
+  top->status_in = 0;
   top->text_we = 0;
   top->text_word = 0;
   top->eval();
+
+  // Bit 8 selects today's picture. The digit test is that picture.
+  top->status_in = 0x100;
+  top->status_we = 1;
+  posedge(top);
+  top->status_we = 0;
+  posedge(top);
+  posedge(top);
 
   put_count(top, 1);
   frame(top, 0, 0, "unarmed");

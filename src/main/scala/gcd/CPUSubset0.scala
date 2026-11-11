@@ -169,6 +169,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val screenWe = Output(Bool())
     val screenBit = Output(Bool())
     val armed = Output(Bool())
+    // -84 (0xFFFFFFAC). Nine bits: the status byte, and bit 8 for the
+    // screen mode. The store is dropped. The video module keeps the
+    // register. A load is not decoded.
+    val statusWe = Output(Bool())
+    val statusWord = Output(UInt(9.W))
 
     // UART word port for the Dock disk. valid/word/take are the byte
     // assembler outside this module. A -72 load stalls until valid.
@@ -388,6 +393,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   io.screenWe := false.B
   io.screenBit := false.B
   io.armed := armed
+  io.statusWe := false.B
+  io.statusWord := 0.U
 
   // Logger boilerplate
   io.messageCode := 0.U
@@ -414,8 +421,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // -72 is the bootstrap's word port: a store sets the flash address, a
   // load reads one word and adds 4. -68 is the sector base SpiSector adds
   // its word index to. Both sit under the book's window, which starts at
-  // -64, and above the screen word at -80. -64 is the millisecond counter.
-  // The SD window stays -48/-44.
+  // -64, and above the screen word at -80. -84 is the status register,
+  // the next word under -80. -76 stays reserved and is not decoded.
+  // -64 is the millisecond counter. The SD window stays -48/-44.
   val norPtr = if (flashBoot) RegInit(0.U(24.W)) else 0.U(24.W)
   val sectorBase = if (diskBoot) RegInit(0.U(24.W)) else 0.U(24.W)
   val norPending = if (flashBoot) RegInit(false.B) else false.B
@@ -824,6 +832,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     // -80. One word, bit 0. Dropped on every image, including this one
     // when the video module is left out of the build.
     val screenHit = !isByte && effectiveAddr === "hFFFFFFB0".U
+    // -84. Bits 0-7 are the status byte. Bit 8 is the screen mode.
+    // Dropped on every image. The video module holds the nine flops.
+    val statusHit = !isByte && effectiveAddr === "hFFFFFFAC".U
     // -64 (0xFFFFFFC0). Kernel.Time loads the millisecond counter.
     val timerAddr = effectiveAddr === "hFFFFFFC0".U
     // -60 (0xFFFFFFC4). The book's switches. Bit 0 is the button.
@@ -905,6 +916,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         memoryIsLoad := false.B
         memoryIsByte := false.B
         memoryAccessPending := waitForStores.B
+      } .elsewhen (statusHit) {
+        io.statusWe := true.B
+        io.statusWord := rdX(8, 0)
       } .elsewhen (screenHit) {
         io.screenWe := true.B
         io.screenBit := rdX(0)

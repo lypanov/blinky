@@ -12,6 +12,8 @@ module disk_boot_top (
   output wire mem_write,
   output wire [31:0] mem_addr,
   output wire screen_we,
+  output wire status_we,
+  output wire [8:0] status_word,
   // Active-low, like S1. Held high unless the bench is pausing.
   input  wire btn_n
 );
@@ -39,6 +41,8 @@ module disk_boot_top (
     .io_memWrite(mem_write),
     .io_memAddr(mem_addr),
     .io_screenWe(screen_we),
+    .io_statusWe(status_we),
+    .io_statusWord(status_word),
     .io_diskValid(1'b0),
     .io_diskWord(32'd0),
     .io_diskTake(),

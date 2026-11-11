@@ -42,6 +42,15 @@ static int in_square(int x, int y) {
   return (ax / 20) == 15 && (ay / 20) == 11;
 }
 
+static void status_pulse(Vvideo* top, int word) {
+  top->status_in = word;
+  top->status_we = 1;
+  posedge(top);
+  top->status_we = 0;
+  posedge(top);
+  posedge(top);
+}
+
 static void pulse(Vvideo* top, int bit) {
   top->screen_bit = bit;
   top->screen_we = 1;
@@ -113,8 +122,13 @@ int main(int argc, char** argv) {
   top->screen_we = 0;
   top->screen_bit = 0;
   top->armed = 0;
+  top->status_we = 0;
+  top->status_in = 0;
   top->eval();
 
+  // Bit 8 selects today's square. Until it is set the picture is the
+  // status blocks, and a zero register is all dark.
+  status_pulse(top, 0x100);
   pulse(top, 1);
   frame(top, 0, "unarmed");
 

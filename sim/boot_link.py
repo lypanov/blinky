@@ -370,6 +370,54 @@ def _link_core(env: dict[str, str]) -> bytes:
     return data
 
 
+def _check_first_store(words: list[int]) -> None:
+    """The body's first store is 0xA5 at -84. Straight-line MOVs until then."""
+    w0 = words[0]
+    if (w0 >> 24) != 0xE7:
+        raise SystemExit(f"BootLoad word 0 is {w0:08X}")
+    off = w0 & 0xFFFFFF
+    if off & 0x800000:
+        off -= 0x1000000
+    pc = 1 + off
+    reg = [0] * 16
+    for _ in range(12):
+        if not 0 <= pc < len(words):
+            raise SystemExit("BootLoad ran off the image before its first store")
+        w = words[pc]
+        top = w >> 28
+        if top in (0xA, 0xB):
+            ra = (w >> 24) & 0xF
+            rb = (w >> 20) & 0xF
+            disp = w & 0xFFFFF
+            if disp & 0x80000:
+                disp -= 0x100000
+            addr = (reg[rb] + disp) & 0xFFFFFFFF
+            data = reg[ra] & (0xFF if top == 0xB else 0xFFFFFFFF)
+            if addr != 0xFFFFFFAC or (data & 0x1FF) != 0xA5:
+                raise SystemExit(
+                    f"BootLoad first store is {data:#x} at {addr:#x}, want 0xA5 at -84"
+                )
+            return
+        if top not in (4, 5):
+            raise SystemExit(f"BootLoad word {pc} is {w:08X} before the status store")
+        rd = (w >> 24) & 0xF
+        rb = (w >> 20) & 0xF
+        op = (w >> 16) & 0xF
+        imm = w & 0xFFFF
+        if top == 5 and imm & 0x8000:
+            simm = imm - 0x10000
+        else:
+            simm = imm
+        if op == 0 and top in (4, 5):
+            reg[rd] = simm & 0xFFFFFFFF
+        elif op == 8 and top in (4, 5):
+            reg[rd] = (reg[rb] + simm) & 0xFFFFFFFF
+        else:
+            raise SystemExit(f"BootLoad word {pc} is {w:08X} before the status store")
+        pc += 1
+    raise SystemExit("BootLoad has no status store in the first instructions of the body")
+
+
 def _compile_boot(env: dict[str, str], uart: int) -> list[int]:
     src = open(os.path.join(ROOT, "oberon", "src", "BootLoad.Mod"), "r", encoding="ascii").read()
     if "MemLim = 19D00H" not in src or "stackOrg = 18000H" not in src:
@@ -420,11 +468,12 @@ def _compile_boot(env: dict[str, str], uart: int) -> list[int]:
     def movs(imm: int) -> int:
         return sum(1 for w in words if (w >> 28) == 5 and (w & 0xFFFF) == (imm & 0xFFFF))
 
-    for imm, label in ((-72, "word port"), (-68, "sector base"), (-48, "SPI data"), (-44, "SPI ctrl")):
+    for imm, label in ((-72, "word port"), (-68, "sector base"), (-48, "SPI data"), (-44, "SPI ctrl"), (-84, "status")):
         if movs(imm) < 1:
             raise SystemExit(f"BootLoad has no MOV of {label}")
     if movs(-60) or movs(-80):
         raise SystemExit("BootLoad touches the button or the screen")
+    _check_first_store(words)
     if not any((w & 0xFFFF) == 0xE7FF for w in words):
         raise SystemExit("BootLoad does not build the halt word")
     return words

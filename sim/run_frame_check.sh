@@ -52,22 +52,34 @@ DOCK_SIZE=(--width 1024 --height 768)
 
 grab "$FLASH" nano 32 "$OUT/nano-flash-off.ppm"
 grab "$FLASH" nano 200 "$OUT/nano-flash-on.ppm" --led-cycle 64
-grab "$SQ" nano 32 "$OUT/nano-square-off.ppm"
-grab "$SQ" nano 200 "$OUT/nano-square-on.ppm" --led-cycle 64 --store-cycle 64
+grab "$SQ" nano 32 "$OUT/nano-square-off.ppm" --status-cycle 2 --status-word 0x1A5
+grab "$SQ" nano 200 "$OUT/nano-square-on.ppm" \
+  --led-cycle 64 --store-cycle 64 --status-cycle 2 --status-word 0x1A5
 grab "$SQ" nano 200 "$OUT/nano-square-blank.ppm" \
-  --led-cycle 64 --store-cycle 64 --blank-cycle 128
+  --led-cycle 64 --store-cycle 64 --blank-cycle 128 --status-cycle 2 --status-word 0x1A5
+# 0xA5 with the square store still armed. Bit 8 is clear, so the
+# blocks show and the square does not.
+grab "$SQ" nano 200 "$OUT/nano-status-a5.ppm" \
+  --led-cycle 64 --store-cycle 64 --status-cycle 2 --status-word 0xA5
 grab "$FLASH_DOCK" dock 32 "$OUT/dock-flash-off.ppm"
 grab "$FLASH_DOCK" dock 200 "$OUT/dock-flash-on.ppm" --led-cycle 64
-grab "$SQ_DOCK" dock 32 "$OUT/dock-square-off.ppm"
-grab "$SQ_DOCK" dock 200 "$OUT/dock-square-on.ppm" --led-cycle 64 --store-cycle 64
+grab "$SQ_DOCK" dock 32 "$OUT/dock-square-off.ppm" --status-cycle 2 --status-word 0x1A5
+grab "$SQ_DOCK" dock 200 "$OUT/dock-square-on.ppm" \
+  --led-cycle 64 --store-cycle 64 --status-cycle 2 --status-word 0x1A5
 grab "$SQ_DOCK" dock 200 "$OUT/dock-square-blank.ppm" \
-  --led-cycle 64 --store-cycle 64 --blank-cycle 128
+  --led-cycle 64 --store-cycle 64 --blank-cycle 128 --status-cycle 2 --status-word 0x1A5
+grab "$SQ_DOCK" dock 200 "$OUT/dock-status-a5.ppm" \
+  --led-cycle 64 --store-cycle 64 --status-cycle 2 --status-word 0xA5
 # The 4K build stops at square, so the same on-store draws no digits.
-grab "$SQ" nano 200 "$OUT/nano-counter.ppm" --led-cycle 64 --store-cycle 64
-grab "$TX" dock 32 "$OUT/dock-counter-off.ppm"
-grab "$TX" dock 200 "$OUT/dock-counter-on.ppm" --led-cycle 64 --store-cycle 64
+grab "$SQ" nano 200 "$OUT/nano-counter.ppm" \
+  --led-cycle 64 --store-cycle 64 --status-cycle 2 --status-word 0x1A5
+grab "$TX" dock 32 "$OUT/dock-counter-off.ppm" --status-cycle 2 --status-word 0x1A5
+grab "$TX" dock 200 "$OUT/dock-counter-on.ppm" \
+  --led-cycle 64 --store-cycle 64 --status-cycle 2 --status-word 0x1A5
 grab "$TX" dock 200 "$OUT/dock-counter-blank.ppm" \
-  --led-cycle 64 --store-cycle 64 --blank-cycle 128
+  --led-cycle 64 --store-cycle 64 --blank-cycle 128 --status-cycle 2 --status-word 0x1A5
+grab "$TX" dock 200 "$OUT/dock-status-a5-text.ppm" \
+  --led-cycle 64 --store-cycle 64 --status-cycle 2 --status-word 0xA5
 
 cmp -s "$OUT/nano-counter.ppm" "$OUT/nano-square-on.ppm"
 
@@ -85,6 +97,10 @@ check "$OUT/dock-flash-on.ppm" flash --flash-white "${DOCK_SIZE[@]}"
 check "$OUT/dock-square-off.ppm" square "${DOCK_SIZE[@]}"
 check "$OUT/dock-square-on.ppm" square --square "${DOCK_SIZE[@]}"
 check "$OUT/dock-square-blank.ppm" square --square --blank "${DOCK_SIZE[@]}"
+check "$OUT/nano-status-a5.ppm" status --byte 0xA5 "${NANO_SIZE[@]}"
+check "$OUT/dock-status-a5.ppm" status --byte 0xA5 "${DOCK_SIZE[@]}"
+check "$OUT/dock-status-a5-text.ppm" status --byte 0xA5 "${DOCK_SIZE[@]}"
+check "$OUT/nano-status-a5.ppm" status --byte 0x5A --must-differ "${NANO_SIZE[@]}"
 check "$OUT/nano-counter.ppm" square --square "${NANO_SIZE[@]}"
 check "$OUT/dock-counter-off.ppm" text --count 0 "${DOCK_SIZE[@]}"
 check "$OUT/dock-counter-on.ppm" text --count 1 --square "${DOCK_SIZE[@]}"

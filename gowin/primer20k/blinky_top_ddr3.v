@@ -70,6 +70,8 @@ module blinky_top_ddr3 (
   wire        led_pin;
   wire        pressed;
   wire        screen_we;
+  wire        status_we;
+  wire [8:0]  status_word;
   wire        screen_bit;
   wire        cpu_armed;
   wire [31:0] cpu_pc;
@@ -554,6 +556,8 @@ module blinky_top_ddr3 (
     .io_screen_we     (screen_we),
     .io_screen_bit    (screen_bit),
     .io_armed         (cpu_armed),
+    .io_status_we     (status_we),
+    .io_status_word   (status_word),
     .io_btnPressed    (pressed),
     .io_disk_valid    (disk_valid),
     .io_disk_word     (disk_word),
@@ -737,6 +741,8 @@ module blinky_top_ddr3 (
     .screen_we  (screen_we),
     .screen_bit (screen_bit),
     .armed      (cpu_armed),
+    .status_we  (status_we),
+    .status_in  (status_word),
     .clk_cpu    (cpu_clk),
 `endif
 `ifdef VIDEO_TEXT

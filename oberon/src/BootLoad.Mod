@@ -8,6 +8,7 @@ MODULE* BootLoad;  (*NW 20.10.2013 / PR 4.2.2014; boot from the disk*)
     MTOrg = 20H; MemLim = 19D00H; stackOrg = 18000H;
     Uart = 0;
     wordPort = -72; secPort = -68;
+    statusPort = -84;
     spiData = -48; spiCtrl = -44;
     CARD0 = 1; SPIFAST = 4;
     FSoffset = 80000H;
@@ -106,5 +107,7 @@ MODULE* BootLoad;  (*NW 20.10.2013 / PR 4.2.2014; boot from the disk*)
     END
   END Check;
 
-BEGIN SYSTEM.LDREG(SP, stackOrg); SYSTEM.LDREG(MT, MTOrg); Check
+  (* First store: status byte 0A5H, mode bit clear. The blocks show
+     10100101 until Blink stores bit 8. *)
+BEGIN SYSTEM.PUT(statusPort, 0A5H); SYSTEM.LDREG(SP, stackOrg); SYSTEM.LDREG(MT, MTOrg); Check
 END BootLoad.

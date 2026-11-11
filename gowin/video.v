@@ -56,6 +56,11 @@ module video (
   input  screen_we,
   input  screen_bit,
   input  armed,
+  // -84. Bits 0-7 are the status byte. Bit 8 is 0 for the status
+  // blocks and 1 for today's square picture. The nine flops sit on
+  // the CPU clock. The pixel clock samples them.
+  input  status_we,
+  input  [8:0] status_in,
 `ifndef VIDEO_SIM
   input  clk_cpu,
 `elsif FRAME_CHECK
@@ -311,6 +316,12 @@ module video (
   reg [4:0] by_d = 5'd0;
   reg armed_s1 = 1'b0;
   reg armed_s2 = 1'b0;
+  // The status register resets to 0: status mode, every block dark.
+  // status_q is the pixel-clock sample. in_grid_d is the same pixel
+  // the block counters belong to, so the right-hand margin stays dark.
+  reg [8:0] status = 9'd0;
+  reg [8:0] status_q = 9'd0;
+  reg in_grid_d = 1'b0;
   wire [9:0] rad = {by, bx};
   wire rbit;
 `ifdef VIDEO_SIM
@@ -360,6 +371,37 @@ module video (
   defparam u_screen.BLK_SEL_1 = 3'b000;
   defparam u_screen.RESET_MODE = "SYNC";
   assign rbit = ram_do[0];
+`endif
+  // The write is one CPU cycle, the same pulse as the square bit.
+  // On the Dock the pixel clock is not an integer multiple of the
+  // CPU clock, so the flops have to sit on the CPU clock. The
+  // picture samples the level, which stays put after the store.
+`ifdef VIDEO_SIM
+`ifndef FRAME_CHECK
+  always @(posedge pix) begin
+    if (status_we)
+      status <= status_in;
+  end
+`else
+  always @(posedge clk_cpu) begin
+    if (status_we)
+      status <= status_in;
+  end
+`endif
+`else
+  always @(posedge clk_cpu) begin
+    if (status_we)
+      status <= status_in;
+  end
+`endif
+`ifdef VIDEO_DOCK
+  // 640-wide grid at the top left: hx 296..935, vy 35..514.
+  wire grid_x = (hx <= 11'd935);
+  wire grid_y = (vy <= 10'd514);
+`else
+  // 640-wide grid at the top left of 720×480: hx 122..761, vy 36..515.
+  wire grid_x = (hx <= 10'd761);
+  wire grid_y = (vy <= 10'd515);
 `endif
 `ifdef VIDEO_TEXT
   // 40×15 characters, 8×8, origin (160, 48) of the active picture.
@@ -597,7 +639,7 @@ module video (
   // FONT8 END
   wire [7:0] grow = font8(char_q, suby_d);
   wire gbit = grow[3'd7 - subx_d];
-  wire text_on = de_r && in_text_d && armed_s2 && gbit;
+  wire text_on = de_r && in_text_d && armed_s2 && status_q[8] && gbit;
 `else
   wire text_on = 1'b0;
 `endif
@@ -607,9 +649,18 @@ module video (
       ({vs_r, hs_r} == 2'b10) ? CTRL10 : CTRL11;
   // armed gates the block the way it gates the LED. The store itself
   // is not thrown away: the bit is remembered, and it stays dark
-  // until the arm word.
-  wire square_on = de_r && rbit && armed_s2 && (bx_d == 5'd15) && (by_d == 5'd11);
-  wire lit = (square_on || text_on) && !blank_s2;
+  // until the arm word. Bit 8 of the status register selects it.
+  // Bit 8 = 0 shows the status byte instead: eight blocks across
+  // the middle, bit 7 on the left. Each block is four by eight of
+  // the 20×20 grid cells, 80×160, active x 0..639 and y 160..319.
+  // A set bit is white. The blocks are not armed: they show during
+  // the boot, before the arm word.
+  // Bits 0-7 only. The zero extension keeps the select off bit 8.
+  wire [3:0] status_idx = {1'b0, ~bx_d[4:2]};
+  wire status_bit = status_q[status_idx];
+  wire status_on = de_r && in_grid_d && (by_d[4:3] == 2'b01) && !status_q[8] && status_bit;
+  wire square_on = de_r && rbit && armed_s2 && status_q[8] && (bx_d == 5'd15) && (by_d == 5'd11);
+  wire lit = (status_on || square_on || text_on) && !blank_s2;
   wire [9:0] word0_o = !de_r ? ctrl0 : (lit ? WHITE : BLACK);
   wire [9:0] word1_o = !de_r ? CTRL00 : (lit ? WHITE : BLACK);
   wire [9:0] word2_o = word1_o;
@@ -631,6 +682,8 @@ module video (
     armed_s2 <= armed_s1;
     bx_d <= bx;
     by_d <= by;
+    status_q <= status;
+    in_grid_d <= de && grid_x && grid_y;
 `ifdef VIDEO_TEXT
     in_text_d <= in_text;
     subx_d <= tx[2:0];
@@ -645,13 +698,13 @@ module video (
     // The 640×480 grid sits at the top left. hx 296..935 and
     // vy 35..514. Past that the counters hold, so block (15, 11)
     // is not drawn again.
-    end else if (de && (hx <= 11'd935) && (vy <= 10'd514)) begin
+    end else if (de && grid_x && grid_y) begin
       if (hx == 11'd935) begin
 `else
     // The 640-wide grid sits at the top left of the 720×480 picture.
     // hx 122..761 and vy 36..515. Past hx 761 the counters hold, so
     // block (15, 11) is not drawn again.
-    end else if (de && (hx <= 10'd761) && (vy <= 10'd515)) begin
+    end else if (de && grid_x && grid_y) begin
       if (hx == 10'd761) begin
 `endif
         bx <= 5'd0;

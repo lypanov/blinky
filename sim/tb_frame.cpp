@@ -54,6 +54,8 @@ int main(int argc, char** argv) {
   int arm_cycle = 2;
   int store_cycle = -1;
   int blank_cycle = -1;
+  int status_cycle = -1;
+  int status_word = 0;
 
   for (int i = 1; i < argc; i++) {
     auto need = [&](const char* name) -> const char* {
@@ -70,6 +72,8 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--arm-cycle")) arm_cycle = atoi(need("--arm-cycle"));
     else if (!strcmp(argv[i], "--store-cycle")) store_cycle = atoi(need("--store-cycle"));
     else if (!strcmp(argv[i], "--blank-cycle")) blank_cycle = atoi(need("--blank-cycle"));
+    else if (!strcmp(argv[i], "--status-cycle")) status_cycle = atoi(need("--status-cycle"));
+    else if (!strcmp(argv[i], "--status-word")) status_word = (int)strtol(need("--status-word"), nullptr, 0);
     else {
       fprintf(stderr, "unknown %s\n", argv[i]);
       return 2;
@@ -105,7 +109,8 @@ int main(int argc, char** argv) {
   auto past = [&](int edge) {
     return edge >= 0 && edge > target;
   };
-  if (past(led_cycle) || past(arm_cycle) || past(store_cycle) || past(blank_cycle)) {
+  if (past(led_cycle) || past(arm_cycle) || past(store_cycle) || past(blank_cycle) ||
+      past(status_cycle)) {
     fprintf(stderr, "stimulus cycle is after the capture cycle\n");
     return 2;
   }
@@ -119,6 +124,8 @@ int main(int argc, char** argv) {
   top->screen_we = 0;
   top->screen_bit = 1;
   top->armed = 0;
+  top->status_we = 0;
+  top->status_in = 0;
   top->clk_cpu = 0;
 #endif
 #ifdef FRAME_TEXT
@@ -137,11 +144,14 @@ int main(int argc, char** argv) {
     top->armed = (arm_cycle >= 0 && c >= arm_cycle) ? 1 : 0;
     top->screen_bit = 1;
     top->screen_we = (store_cycle >= 0 && c == store_cycle) ? 1 : 0;
+    top->status_in = status_word & 0x1FF;
+    top->status_we = (status_cycle >= 0 && c == status_cycle) ? 1 : 0;
     top->clk_cpu = 0;
     top->eval();
     top->clk_cpu = 1;
     top->eval();
     top->screen_we = 0;
+    top->status_we = 0;
 #endif
     cpu_cycle = c;
   };

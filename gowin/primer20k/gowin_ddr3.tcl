@@ -97,6 +97,9 @@ set_option -synthesis_tool gowinsynthesis
 # other images stay on route_option 2.
 # place_option 0 is the modules default. DDR3_PLACE_OPTION overrides
 # it for one image; other images stay on 0.
+# The status-register netlist fails the write eye at route_option 2
+# (PC 0080, E0 FFFF, F 48). route_option 1 trains it: lanes 000C 000A,
+# E0 A55A, G A55A, F A8. DDR3_ROUTE_OPTION still overrides one image.
 if {[info exists ::env(DDR3_PLACE_OPTION)] && $::env(DDR3_PLACE_OPTION) ne ""} {
   set_option -place_option $::env(DDR3_PLACE_OPTION)
 } else {
@@ -105,7 +108,7 @@ if {[info exists ::env(DDR3_PLACE_OPTION)] && $::env(DDR3_PLACE_OPTION) ne ""} {
 if {[info exists ::env(DDR3_ROUTE_OPTION)] && $::env(DDR3_ROUTE_OPTION) ne ""} {
   set_option -route_option $::env(DDR3_ROUTE_OPTION)
 } else {
-  set_option -route_option 2
+  set_option -route_option 1
 }
 set_option -use_done_as_gpio 1
 set_option -use_ready_as_gpio 1

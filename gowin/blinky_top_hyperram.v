@@ -80,6 +80,8 @@ module blinky_top (
   wire cpu_clk;
   wire screen_we;
   wire screen_bit;
+  wire status_we;
+  wire [8:0] status_word;
   wire cpu_armed;
   wire cpu_led;
   wire pressed;
@@ -117,6 +119,8 @@ module blinky_top (
     .io_screen_we      (screen_we),
     .io_screen_bit     (screen_bit),
     .io_armed          (cpu_armed),
+    .io_status_we      (status_we),
+    .io_status_word    (status_word),
     .io_btnPressed     (pressed)
   );
 
@@ -171,6 +175,8 @@ module blinky_top (
     .screen_we  (screen_we),
     .screen_bit (screen_bit),
     .armed      (cpu_armed),
+    .status_we  (status_we),
+    .status_in  (status_word),
     .clk_cpu    (cpu_clk),
 `endif
     .tmds_clk_p (tmds_clk_p),

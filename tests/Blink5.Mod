@@ -10,7 +10,11 @@ MODULE Blink5;
     Oberon loads this module. The LED pin stays dark otherwise.
 
     The loop stores the new light at -80 (0FFFFFFB0H). That is the one
-    screen address: bit 0 of the word sets block (15, 11) and clears it.
+    screen block: bit 0 of the word sets block (15, 11) and clears it.
+    -84 (0FFFFFFACH) is the status register. Bit 8 selects the picture.
+    This body stores 1A5H once, before the file is opened, so the square
+    replaces the status blocks. Until that store the bootstrap's 0A5H
+    is the picture: bits 10100101, bit 7 on the left.
     A board without that device decodes the store and drops it. The Dock
     counts the stores whose bit is 1.
 
@@ -82,6 +86,7 @@ MODULE Blink5;
   END Dark;
 
 BEGIN
+  SYSTEM.PUT(-84, 1A5H);
   rate := Files.Old("Blink.Rate");
   IF rate = NIL THEN Dark END;
   Files.Set(R, rate, 0);
