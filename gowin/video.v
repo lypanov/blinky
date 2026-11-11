@@ -3,7 +3,7 @@
 // Flash is timing and the TMDS pins. Square adds the 32×24 screen and
 // includes flash. Text adds the 40×15 character window and includes
 // square. The 4K build stops at square. VIDEO_DOCK is the Primer 20K:
-// 1024×768 timing and two rPLLs. The 4K stays at 640×480 on its PLLVR.
+// 1024×768 timing and two rPLLs. The 4K stays at 720×480 on its PLLVR.
 
 `ifndef VIDEO_SIM
 `include "video_mode.vh"
@@ -29,7 +29,8 @@
 // 5× it (135 MHz, VCO 540, inside the C6/I5 320–960 window). A
 // first bitstream used CLKDIV /5 for a 25.2 MHz pixel clock. That
 // divider is not a 50% clock, and the capture card showed snow
-// rather than a picture. 800×525 at 27 MHz is 64.3 Hz.
+// rather than a picture. CEA 480p is 858×525 at this same 27 MHz,
+// 59.94 Hz. The earlier 800×525 totals were 64.3 Hz.
 //
 // The Dock screen is 1024×768. CLKOUTD's divider is even only, so
 // it cannot make the pixel clock as the serializer divided by 5.
@@ -252,11 +253,15 @@ module video (
 `endif
 
   // Sync pulses are negative: the control bit is 0 during the pulse
-  // and 1 otherwise. The Nano is 640×480, 800×525, 64.3 Hz at 27 MHz.
-  // The Dock is VESA 1024×768 counted from the start of the sync
-  // pulse: sync 136, back porch 160, active 1024, front porch 24
-  // (1344), and sync 6, back porch 29, active 768, front porch 3
-  // (806). The same 32×24 grid is placed at the top left of that
+  // and 1 otherwise. The Nano is CEA 480p, counted from the start of
+  // the sync pulse: sync 62, back porch 60, active 720, front porch
+  // 16 (858), and sync 6, back porch 30, active 480, front porch 9
+  // (525). 858×525 at 27 MHz is 59.94 Hz. The 32×24 grid of 20×20
+  // blocks is 640 wide and sits at the top left. The 80 columns past
+  // it stay black. The Dock is VESA 1024×768 counted from the start
+  // of the sync pulse: sync 136, back porch 160, active 1024, front
+  // porch 24 (1344), and sync 6, back porch 29, active 768, front
+  // porch 3 (806). The same grid is placed at the top left of that
   // picture. The rest of the screen stays black.
 `ifdef VIDEO_DOCK
   reg [10:0] hx = 11'd0;
@@ -268,10 +273,10 @@ module video (
 `else
   reg [9:0] hx = 10'd0;
   reg [9:0] vy = 10'd0;
-  wire hs = (hx >= 10'd96);
-  wire vs = (vy >= 10'd2);
-  wire active_x = (hx >= 10'd144) && (hx < 10'd784);
-  wire active_y = (vy >= 10'd35) && (vy < 10'd515);
+  wire hs = (hx >= 10'd62);
+  wire vs = (vy >= 10'd6);
+  wire active_x = (hx >= 10'd122) && (hx < 10'd842);
+  wire active_y = (vy >= 10'd36) && (vy < 10'd516);
 `endif
   wire de = active_x && active_y;
 
@@ -375,8 +380,8 @@ module video (
   localparam [9:0] TEXT_Y = 10'd48;
   localparam [9:0] TEXT_W = 10'd320;
   localparam [9:0] TEXT_H = 10'd120;
-  wire [9:0] ax = hx - 10'd144;
-  wire [9:0] ay = vy - 10'd35;
+  wire [9:0] ax = hx - 10'd122;
+  wire [9:0] ay = vy - 10'd36;
   wire [9:0] tx = ax - TEXT_X;
   wire [9:0] ty = ay - TEXT_Y;
 `endif
@@ -643,8 +648,11 @@ module video (
     end else if (de && (hx <= 11'd935) && (vy <= 10'd514)) begin
       if (hx == 11'd935) begin
 `else
-    end else if (de) begin
-      if (hx == 10'd783) begin
+    // The 640-wide grid sits at the top left of the 720×480 picture.
+    // hx 122..761 and vy 36..515. Past hx 761 the counters hold, so
+    // block (15, 11) is not drawn again.
+    end else if (de && (hx <= 10'd761) && (vy <= 10'd515)) begin
+      if (hx == 10'd761) begin
 `endif
         bx <= 5'd0;
         sx <= 5'd0;
@@ -692,7 +700,7 @@ module video (
       hx <= hx + 11'd1;
     end
 `else
-    if (hx == 10'd799) begin
+    if (hx == 10'd857) begin
       hx <= 10'd0;
       if (vy == 10'd524)
         vy <= 10'd0;

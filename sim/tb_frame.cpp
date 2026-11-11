@@ -25,14 +25,14 @@ static const int V1 = 803;
 static const int DOCK_CPU = 215;
 static const int DOCK_PIX = 576;
 #else
-static const int H = 800;
+static const int H = 858;
 static const int V = 525;
-static const int AW = 640;
+static const int AW = 720;
 static const int AH = 480;
-static const int H0 = 144;
-static const int H1 = 784;
-static const int V0 = 35;
-static const int V1 = 515;
+static const int H0 = 122;
+static const int H1 = 842;
+static const int V0 = 36;
+static const int V1 = 516;
 static const int DOCK_CPU = 43;
 static const int DOCK_PIX = 48;
 #endif
@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
     pix_per = 2;
   } else if (!strcmp(board, "dock")) {
 #ifndef VIDEO_DOCK
-    fprintf(stderr, "this binary is the Nano 640x480 timing\n");
+    fprintf(stderr, "this binary is the Nano 720x480 timing\n");
     return 2;
 #endif
     // 24.1875 MHz CPU. The Dock pixel clock is 64.8 MHz, 215/576.

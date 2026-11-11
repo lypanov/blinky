@@ -77,7 +77,7 @@ def main() -> None:
     p.add_argument("--flash-white", action="store_true")
     p.add_argument("--blank", action="store_true")
     p.add_argument("--must-differ", action="store_true")
-    p.add_argument("--width", type=int, default=640)
+    p.add_argument("--width", type=int, default=720)
     p.add_argument("--height", type=int, default=480)
     args = p.parse_args()
     got = load_p5(args.got, args.width, args.height)

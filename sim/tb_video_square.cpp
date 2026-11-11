@@ -7,8 +7,10 @@
 #include <cstdint>
 #include <cstdio>
 
-static const int H = 800;
+static const int H = 858;
 static const int V = 525;
+static const int AW = 720;
+static const int AH = 480;
 static const int FRAME = H * V;
 static const uint16_t BLACK = 0b0111110000;
 static const uint16_t WHITE = 0b1011110000;
@@ -34,9 +36,9 @@ static uint16_t ctrl(int vs, int hs) {
 }
 
 static int in_square(int x, int y) {
-  if (x < 144 || x >= 784 || y < 35 || y >= 515) return 0;
-  int ax = x - 144;
-  int ay = y - 35;
+  if (x < 122 || x >= 842 || y < 36 || y >= 516) return 0;
+  int ax = x - 122;
+  int ay = y - 36;
   return (ax / 20) == 15 && (ay / 20) == 11;
 }
 
@@ -67,9 +69,9 @@ static void frame(Vvideo* top, int want_square, const char* name) {
     posedge(top);
     int x = top->x_q;
     int y = top->y_q;
-    int hs = x >= 96;
-    int vs = y >= 2;
-    int de = (x >= 144 && x < 784 && y >= 35 && y < 515);
+    int hs = x >= 62;
+    int vs = y >= 6;
+    int de = (x >= 122 && x < 842 && y >= 36 && y < 516);
     int sq = de && in_square(x, y);
     int on = sq && want_square;
     uint16_t want0 = de ? (on ? WHITE : BLACK) : ctrl(vs, hs);
@@ -89,7 +91,7 @@ static void frame(Vvideo* top, int want_square, const char* name) {
     if (on && top->word0 == WHITE) white++;
     if (de && !sq && top->word0 != BLACK) outside++;
   }
-  if (active != 640 * 480) {
+  if (active != AW * AH) {
     fprintf(stderr, "FAIL %s active %d\n", name, active);
     fails++;
   }

@@ -8,7 +8,7 @@
 #include <cstdio>
 #include <cstring>
 
-static const int H = 800;
+static const int H = 858;
 static const int V = 525;
 static const int FRAME = H * V;
 static const int TEXT_X = 160;
@@ -126,9 +126,9 @@ static uint16_t ctrl(int vs, int hs) {
 }
 
 static int glyph_on(int x, int y) {
-  if (x < 144 || x >= 784 || y < 35 || y >= 515) return 0;
-  int ax = x - 144;
-  int ay = y - 35;
+  if (x < 122 || x >= 842 || y < 36 || y >= 516) return 0;
+  int ax = x - 122;
+  int ay = y - 36;
   if (ax < TEXT_X || ax >= TEXT_X + 320 || ay < TEXT_Y || ay >= TEXT_Y + 120)
     return 0;
   int col = (ax - TEXT_X) / 8;
@@ -141,9 +141,9 @@ static int glyph_on(int x, int y) {
 
 static int square_on(int x, int y, int square) {
   if (!square) return 0;
-  if (x < 144 || x >= 784 || y < 35 || y >= 515) return 0;
-  int ax = x - 144;
-  int ay = y - 35;
+  if (x < 122 || x >= 842 || y < 36 || y >= 516) return 0;
+  int ax = x - 122;
+  int ay = y - 36;
   return ax >= 300 && ax < 320 && ay >= 220 && ay < 240;
 }
 
@@ -181,9 +181,9 @@ static void frame(Vvideo* top, int show, int square, const char* name) {
     posedge(top);
     int x = top->x_q;
     int y = top->y_q;
-    int hs = x >= 96;
-    int vs = y >= 2;
-    int de = (x >= 144 && x < 784 && y >= 35 && y < 515);
+    int hs = x >= 62;
+    int vs = y >= 6;
+    int de = (x >= 122 && x < 842 && y >= 36 && y < 516);
     int on = show && de && (glyph_on(x, y) || square_on(x, y, square));
     uint16_t want0 = de ? (on ? WHITE : BLACK) : ctrl(vs, hs);
     uint16_t want1 = de ? want0 : CTRL00;

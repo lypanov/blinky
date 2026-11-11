@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One frame at a chosen CPU cycle, compared with a host-drawn picture.
 # Flash and square on both boards, and the Dock counter. The digits
-# are the four registers. The Nano is 640×480, 1 CPU clock per 2
+# are the four registers. The Nano is 720×480, 1 CPU clock per 2
 # pixel clocks. The Dock is 1024×768, 215 CPU clocks per 576 pixel
 # clocks (24.1875 MHz and 64.8 MHz).
 set -euo pipefail
@@ -47,6 +47,7 @@ FLASH_DOCK="$ROOT/sim/obj_dir_frame_flash_dock/frame_flash_dock"
 SQ_DOCK="$ROOT/sim/obj_dir_frame_sq_dock/frame_sq_dock"
 TX="$ROOT/sim/obj_dir_frame_tx/frame_tx"
 PY=(python3 "$ROOT/tools/frame_expect.py")
+NANO_SIZE=(--width 720 --height 480)
 DOCK_SIZE=(--width 1024 --height 768)
 
 grab "$FLASH" nano 32 "$OUT/nano-flash-off.ppm"
@@ -74,17 +75,17 @@ check() {
   "${PY[@]}" --got "$1" --kind "$2" "${@:3}"
 }
 
-check "$OUT/nano-flash-off.ppm" flash
-check "$OUT/nano-flash-on.ppm" flash --flash-white
-check "$OUT/nano-square-off.ppm" square
-check "$OUT/nano-square-on.ppm" square --square
-check "$OUT/nano-square-blank.ppm" square --square --blank
+check "$OUT/nano-flash-off.ppm" flash "${NANO_SIZE[@]}"
+check "$OUT/nano-flash-on.ppm" flash --flash-white "${NANO_SIZE[@]}"
+check "$OUT/nano-square-off.ppm" square "${NANO_SIZE[@]}"
+check "$OUT/nano-square-on.ppm" square --square "${NANO_SIZE[@]}"
+check "$OUT/nano-square-blank.ppm" square --square --blank "${NANO_SIZE[@]}"
 check "$OUT/dock-flash-off.ppm" flash "${DOCK_SIZE[@]}"
 check "$OUT/dock-flash-on.ppm" flash --flash-white "${DOCK_SIZE[@]}"
 check "$OUT/dock-square-off.ppm" square "${DOCK_SIZE[@]}"
 check "$OUT/dock-square-on.ppm" square --square "${DOCK_SIZE[@]}"
 check "$OUT/dock-square-blank.ppm" square --square --blank "${DOCK_SIZE[@]}"
-check "$OUT/nano-counter.ppm" square --square
+check "$OUT/nano-counter.ppm" square --square "${NANO_SIZE[@]}"
 check "$OUT/dock-counter-off.ppm" text --count 0 "${DOCK_SIZE[@]}"
 check "$OUT/dock-counter-on.ppm" text --count 1 --square "${DOCK_SIZE[@]}"
 check "$OUT/dock-counter-blank.ppm" text --count 1 --square --blank "${DOCK_SIZE[@]}"
@@ -92,6 +93,6 @@ check "$OUT/dock-counter-blank.ppm" text --count 1 --square --blank "${DOCK_SIZE
 # A wrong expected picture must fail. The digits are one count high,
 # and the flash field is black where the capture is white.
 check "$OUT/dock-counter-on.ppm" text --count 2 --square --must-differ "${DOCK_SIZE[@]}"
-check "$OUT/nano-flash-on.ppm" flash --must-differ
+check "$OUT/nano-flash-on.ppm" flash --must-differ "${NANO_SIZE[@]}"
 
 echo "ok frame check"
