@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Send disk.bin to the Dock on FTDI channel B, without resetting the chip.
 
-Bus 3 address 78, interface B, 115200 8N1. ftdi_usb_open calls
-ftdi_usb_reset, and that reset drops a trained DDR3. This opens the
+Bus 3, interface B, 115200 8N1. The device address changes; pass --addr.
+ftdi_usb_open calls ftdi_usb_reset, and that reset drops a trained DDR3. This opens the
 device with libusb and does not call ftdi_usb_reset.
 
 A listen prints the training line. A send writes the file on the same
@@ -21,7 +21,7 @@ def _lib(name: str):
     return ctypes.CDLL(name)
 
 
-def open_channel():
+def open_channel(addr: int):
     usb = _lib("libusb-1.0.so.0")
     ftdi = _lib("libftdi1.so.2")
     usb.libusb_init.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
@@ -72,11 +72,11 @@ def open_channel():
     found = None
     for i in range(n):
         dev = devs[i]
-        if usb.libusb_get_bus_number(dev) == 3 and usb.libusb_get_device_address(dev) == 78:
+        if usb.libusb_get_bus_number(dev) == 3 and usb.libusb_get_device_address(dev) == addr:
             found = dev
             break
     if found is None:
-        sys.exit("FTDI bus 3 address 78 is not open")
+        sys.exit(f"FTDI bus 3 address {addr} is not open")
     handle = ctypes.c_void_p()
     if usb.libusb_open(found, ctypes.byref(handle)) != 0:
         sys.exit("libusb_open failed")
@@ -161,6 +161,7 @@ def read_some(ftdi, ctx, buf) -> bytes:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--addr", type=int, default=78, help="USB device address on bus 3")
     parser.add_argument("--listen", type=float, default=0, help="seconds to print RX")
     parser.add_argument("--send", help="file to write after --listen, on the same open")
     parser.add_argument(
@@ -172,7 +173,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.listen <= 0 and not args.send:
         parser.error("pass --listen, --send, or both")
-    ftdi, ctx = open_channel()
+    ftdi, ctx = open_channel(args.addr)
     buf = ctypes.create_string_buffer(4096)
     if args.listen > 0:
         end = time.time() + args.listen
