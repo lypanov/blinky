@@ -46,7 +46,7 @@ Ledger items are not to-dos. If a later item cannot fit on the Nano 4K without a
 32. Nano 4K: standard 720×480 at 60 Hz, so the capture card records it pixel for pixel. [`docs/screen-and-boot.md`](screen-and-boot.md), item 32. Done. The measured result is in that file. Three Dock SRAM loads agree. The Nano S1 pause was confirmed by hand. The Dock button was not tested.
 33. The 9-bit status register: eight big status blocks, and one bit for the screen mode. Same file, item 33. Done. The measured result is in that file.
 34. Boot stage codes from the bootstrap in the status blocks. Same file, item 34. The Nano capture is recorded there. The Dock image does not train, so this is not done.
-35. The trap code in the status blocks. Same file, item 35. The Nano capture and three Dock trains of the good disk are recorded there. The Dock did not take the broken disk, so this is not done.
+35. The trap code in the status blocks. Same file, item 35. Done. The Dock took the broken disk, stopped at PC `3C30`, and the LED stayed dark. Next stays 35.
 36. The bitmap in block RAM: 180×120 on the 4K, 512×384 on the Dock. Same file, item 36.
 37. More heap: measure the address reach, raise `MemLim`. Same file, item 37.
 38. Floating point, trapped to Oberon on both boards. Same file, item 38.
