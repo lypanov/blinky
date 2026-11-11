@@ -138,3 +138,49 @@ GRP_LOC spi_grp R[2:22]C[20:40];
 // sees the test byte. Keep the ROM on the site that still trains.
 INS_LOC "u_cpu/cpu/instructionRom/mem_mem_0_0_s" BSRAM_R46[4];
 INS_LOC "u_cpu/cpu/hwMul/n136_s0" DSP_R19[1];
+// The image that trains (route_option 1, ROM at BSRAM_R46[4]) has no
+// registers on rows 48 or 49. An unconstrained place put dq_out,
+// dq_oen, dqs_oen, dm_out_1, and dm_out_7 there, beside the DQS
+// sites, and the eye never saw the test byte. One box from row 38
+// packs every write flop onto that row. The trained image spreads
+// the same flops over rows 38, 39, 40, 43, 45, and 47, columns
+// 33-41, and dm_out_3 at R54C32 beside dqs_hold. Do not use these
+// rows for the sampler or the sector word, and do not move the ROM
+// off BSRAM_R46[4].
+GROUP wr38 = {"*dm_out_0_s0*" "*dm_out_2_s0*" "*dq_out[2]_0_s0*" "*dq_out[2]_5_s0*" "*dq_out[2]_7_s0*" "*dq_out[7]_0_s0*" "*dq_out[7]_5_s0*" "*dq_out[7]_7_s0*"};
+GRP_LOC wr38 R38C[33:35];
+GROUP wr39 = {"*dq_out[2]_1_s0*" "*dq_out[2]_3_s0*" "*dq_out[2]_4_s0*" "*dq_out[2]_6_s0*" "*dq_out[7]_1_s0*" "*dq_out[7]_3_s0*" "*dq_out[7]_4_s0*" "*dq_out[7]_6_s0*"};
+GRP_LOC wr39 R39C[33:35];
+GROUP wr40 = {"*dq_out[2]_2_s0*" "*dq_out[2]_13_s0*" "*dq_out[7]_2_s0*" "*dq_out[7]_13_s0*"};
+GRP_LOC wr40 R40C[33:35];
+GROUP wr43 = {"*dm_out_1_s0*" "*dm_out_7_s0*"};
+GRP_LOC wr43 R43C[34:36];
+GROUP wr45 = {"*dq_oen_3_s1*" "*dqs_oen_0_s0*" "*dqs_oen_3_s0*"};
+GRP_LOC wr45 R45C[33:39];
+GROUP wr47 = {"*dq_oen_0_s1*" "*dqs_oen_2_s0*" "*dq_out[2]_8_s0*" "*dq_out[2]_9_s0*" "*dq_out[2]_10_s0*" "*dq_out[2]_11_s0*" "*dq_out[2]_12_s0*" "*dq_out[2]_14_s0*" "*dq_out[2]_15_s0*" "*dq_out[7]_8_s0*" "*dq_out[7]_9_s0*" "*dq_out[7]_10_s0*" "*dq_out[7]_11_s0*" "*dq_out[7]_12_s0*" "*dq_out[7]_14_s0*" "*dq_out[7]_15_s0*"};
+GRP_LOC wr47 R47C[33:41];
+GROUP w5432 = {"*dm_out_3_s1*"};
+GRP_LOC w5432 R54C32;
+// The millisecond counter sat on row 8 in the image that trains.
+// This place put all 16 flops on rows 43-44, column 31, one column
+// from the DQ flops. The bridge's got flag was at R4C17.
+GROUP ms_grp = {"*msPhase*"};
+GRP_LOC ms_grp R8C[20:30];
+GROUP got_grp = {"*got_s0*" "*got_s4*"};
+GRP_LOC got_grp R4C[16:18];
+// got_s4 landed at R4C16. got_s0 stayed at R45C24.
+// The same image keeps the PC on rows 38-44, columns 20-28, next
+// to the ROM. Left free, this netlist puts it on rows 23-29. The
+// columns stay clear of the write flops above.
+GROUP pc38 = {"*pc_26_s0*" "*pc_27_s0*" "*pc_28_s0*" "*pc_30_s0*" "*pc_31_s0*"};
+GRP_LOC pc38 R38C[20:30];
+GROUP pc40 = {"*pc_11_s0*" "*pc_12_s0*" "*pc_13_s0*" "*pc_16_s0*" "*pc_17_s0*" "*pc_23_s0*" "*pc_29_s0*"};
+GRP_LOC pc40 R40C[20:30];
+GROUP pc41 = {"*pc_8_s0*" "*pc_10_s0*" "*pc_15_s0*" "*pc_20_s0*" "*pc_21_s0*" "*pc_22_s0*"};
+GRP_LOC pc41 R41C[20:30];
+GROUP pc42 = {"*pc_9_s0*" "*pc_14_s0*"};
+GRP_LOC pc42 R42C[20:30];
+GROUP pc43 = {"*pc_6_s0*" "*pc_7_s0*" "*pc_18_s0*" "*pc_19_s0*" "*pc_24_s0*" "*pc_25_s0*" "*pc_30_s4*" "*pc_30_s7*"};
+GRP_LOC pc43 R43C[20:30];
+GROUP pc44 = {"*pc_2_s0*" "*pc_3_s0*" "*pc_4_s0*" "*pc_5_s0*"};
+GRP_LOC pc44 R44C[20:28];
