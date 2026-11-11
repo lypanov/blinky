@@ -180,9 +180,23 @@ One later SRAM load of the same file, again bus 003 device 013, took the broken 
 
 ## Item 36 — the bitmap in block RAM
 
-The bitmap replaces the 32×24 grid. 180×120 on the 4K (2 block RAMs, 4× pixels), 512×384 on the Dock (12 block RAMs, 2× pixels). The CPU writes it as ordinary words at a fixed address. Bit 8 of the status register shows it. Blink draws its 20×20-screen-pixel square by hand with plain stores (5×5 bitmap pixels on the 4K, 10×10 on the Dock) at the same place as today.
+The bitmap replaces the 32×24 grid. 180×120 on the 4K (2 block RAMs, 4× pixels), 512×384 on the Dock (12 block RAMs, 2× pixels). The CPU writes it as ordinary words at a fixed address. Blink draws its 20×20-screen-pixel square by hand with plain stores (5×5 bitmap pixels on the 4K, 10×10 on the Dock) at the same place as today. Digits stay off in bitmap mode.
 
-Proof: the square blinks with the LED at 0.500 Hz. The capture card finds exactly the predicted lit box and nothing else. Verilator frame check against a host-drawn picture. Record 4K CLS and block RAM; if the write port does not fit, stop and name the ledger item.
+The 4K write is the store, on `clk_cpu`. The Dock picture banks stay on the pixel clock. A store latches the word, and the write enable is the stretch of that store between two taps of a LUT chain, long enough for one pixel edge and short enough that the edge is not the first one of the cycle. That first edge still sees the latched word with its +4 bit clear, and would copy the ten-bit mask to screen x 44..63. The address flops stay at `R16C[42:48]`.
+
+The disk is 47124 bytes, checksum `9571b5b3`, arm word `346db856`, sha256 prefix `4f1401c6f842d3a9`. The rate pair is still `E8 03 00 00 18 FC FF FF`.
+
+Dock place, `ddr3modules_n1000`, text, `place_option` 0, `route_option` 1. Logic 5710/20736 (28%; 5183 LUT, 527 ALU), registers 2902, CLS 4024/10368 (39%). BSRAM 13/46 (12 SDPB, 1 pROM). The picture banks are `BSRAM_R10[4]` through `BSRAM_R10[15]`. The instruction ROM stays `BSRAM_R46[4]`. The multiplier stays `DSP_R19[1]`. Setup and hold violated endpoints 0. Worst setup slack +1.189 ns. Worst hold slack +0.307 ns. `pclk` Fmax is 109.331 MHz against 96.749. `cpu_clk` Fmax is 29.600 MHz against 24.187. The pixel clock Fmax is 117.464 MHz against 64.800. The bitstream is `gowin/primer20k/impl/pnr/ddr3modules_n1000.fs`, 7261998 bytes, sha256 `321ae004aedffb18dc87bb240b1a9d3b429213fb6d266cf0acc1044a92c3150d`.
+
+Three SRAM loads of that file, each `openFPGALoader -m` on port `3-3.1.1`, bus 003, each `write to ram`. Each waited at `C.0440`, took 47124 bytes, and the mask became `FFFFFFFFFF`. The PCs were `A290`, `A294`, and `3B20`, each with E0 `A55A`, G `A55A`, F `AB`. Nothing was written to the Dock flash.
+
+Capture card `/dev/video0`, 1024×768, 60 fps, 480 frames, luma above 200. 181 frames have exactly 400 white pixels at x 300..319, y 220..239 and zero outside. 299 frames have zero white pixels anywhere. No other frame. On a lit frame the darkest pixel inside the box is 239 and the brightest pixel outside is 19. Rise-to-rise gaps are 119 frames (1.983 s), then 60, 61, and 60 frames (1.000 s, 1.017 s, 1.000 s). The clip starts during the first long on, so the 1.983 s gap is the second 2 s interval. Clip `/home/lypanov/fpga/blink-measure/bitmap-bram-136a/dock-screen.mkv`.
+
+A later SRAM load of the same file, bus 003 device 013, waited at `C.0440` and armed at `3B28` with E0 `A55A`, G `A55A`, F `AB`. Webcam `/dev/video2`. The old box `244,30` 20×16 is dark. The lit core is x 320..337, y 25..45. The box is `320,25` 18×21. After that load the first two rise-to-rise gaps are 60 frames and 60 frames, 2.000 s and 2.000 s, at 30 fps. The clip ends during the following on. Clip `/home/lypanov/fpga/blink-measure/bitmap-bram-136a/dock-led.mkv`.
+
+The Nano LED, from the reload already on disk, box `126,177` 30×23, `/dev/video2`, 30.009 fps: after the dark stretch the first two rise-to-rise gaps are 60 frames and 60 frames, then the gaps are 30 frames (one of them 31). That is 2.000 s, 2.000 s, then 1.000 s. Clip `/home/lypanov/fpga/blink-measure/bitmap-bram-136a/nano-led-2/clip.mkv`.
+
+Next stays 36. Item 34 is not done.
 
 ## Item 37 — more heap
 

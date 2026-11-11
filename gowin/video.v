@@ -55,6 +55,10 @@ module video (
 `ifdef VIDEO_SQUARE
   input  screen_we,
   input  screen_bit,
+  // One ordinary word. bmp_word is the word index inside this board's
+  // bitmap. Bit 0 of the word is the leftmost pixel of that group of 32.
+  input  [31:0] bmp_data,
+  input  [12:0] bmp_word,
   input  armed,
   // -84. Bits 0-7 are the status byte. Bit 8 is 0 for the status
   // blocks and 1 for today's square picture. The nine flops sit on
@@ -303,74 +307,160 @@ module video (
   reg [9:0] y_r = 10'd0;
 
 `ifdef VIDEO_SQUARE
-  // 32×24 blocks, 20×20 pixels. Blink5 writes only block (15, 11),
-  // which is 11*32+15. The other 767 bits stay 0, so the rest of
-  // the screen stays black. The read is one pixel behind the scan
-  // counters; bx_d/by_d are the same pixel the bit belongs to.
-  localparam [9:0] BLOCK = 10'd367;
-  reg [4:0] bx = 5'd0;
-  reg [4:0] by = 5'd0;
-  reg [4:0] sx = 5'd0;
-  reg [4:0] sy = 5'd0;
-  reg [4:0] bx_d = 5'd0;
-  reg [4:0] by_d = 5'd0;
+  // The bitmap replaces the 32×24 grid. Bit 0 of a word is the left
+  // pixel of that group of 32. The 4K picture is 180×120, stored on a
+  // 256-bit stride so a row is eight words and each block RAM holds 64
+  // whole rows: two SDPB, 32-bit write and 1-bit read. The Dock picture
+  // is 512×384, sixteen words a row, twelve SDPB. Each bitmap pixel is
+  // 4×4 screen pixels on the 4K and 2×2 on the Dock, so the bitmap fills
+  // the active picture. The read is one pixel behind the scan.
   reg armed_s1 = 1'b0;
   reg armed_s2 = 1'b0;
   // The status register resets to 0: status mode, every block dark.
-  // status_q is the pixel-clock sample. in_grid_d is the same pixel
-  // the block counters belong to, so the right-hand margin stays dark.
+  // status_q is the pixel-clock sample. px_r/py_r are the same pixel.
   reg [8:0] status = 9'd0;
   reg [8:0] status_q = 9'd0;
-  reg in_grid_d = 1'b0;
-  wire [9:0] rad = {by, bx};
+`ifdef VIDEO_DOCK
+  wire [10:0] px = hx - 11'd296;
+  wire [9:0] py = vy - 10'd35;
+  wire [8:0] bmx = px[9:1];
+  wire [8:0] bmy = py[9:1];
+  wire [17:0] bitad = {bmy, bmx};
+`else
+  wire [10:0] px = {1'b0, hx} - 11'd122;
+  wire [9:0] py = vy - 10'd36;
+  wire [7:0] bmx = px[9:2];
+  wire [6:0] bmy = py[8:2];
+  wire [17:0] bitad = {3'b0, bmy, bmx};
+`endif
+  wire [3:0] rram = bitad[17:14];
+  wire [13:0] rbitad = bitad[13:0];
+  wire [12:0] rword = bitad[17:5];
+  wire [4:0] rbitn = bitad[4:0];
+  // Write address. ADA[13:5] is the word in this block. ADA[3:0] are
+  // the four byte enables, all set. ADA[4] stays 0.
+  wire [3:0] wram = bmp_word[12:9];
+  wire [13:0] wada = {bmp_word[8:0], 5'b01111};
+  // Twelve write clocks on clk_cpu drag that clock off the DDR3
+  // write, and the CPU leaves the boot ROM. Every picture bank stays
+  // on the pixel clock. The enable is high only between two taps of a
+  // LUT chain: after the latched word's +4 bit has arrived, and for
+  // longer than one pixel period, before the data starts to fall.
+  // The 4K writes on clk_cpu.
+  wire [31:0] wr_data = bmp_data;
+  wire [3:0] wram_w = wram;
+  wire [13:0] wada_w = wada;
+  wire fire;
+`ifdef VIDEO_DOCK
+`ifndef VIDEO_SIM
+  wire [24:0] fire_d;
+  assign fire_d[0] = screen_we;
+  genvar fdi;
+  generate
+    for (fdi = 0; fdi < 24; fdi = fdi + 1) begin : g_fire
+      KeepBit u_dly (
+        .i(fire_d[fdi]),
+        .o(fire_d[fdi + 1])
+      );
+    end
+  endgenerate
+  LUT2 u_fire_and (
+    .I0(fire_d[4]),
+    .I1(fire_d[24]),
+    .F(fire)
+  );
+  defparam u_fire_and.INIT = 4'h2;
+`else
+  assign fire = screen_we;
+`endif
+`else
+  assign fire = screen_we;
+`ifndef VIDEO_SIM
+  wire wr_clk = clk_cpu;
+`endif
+`endif
+  reg [10:0] px_r = 11'd0;
+  reg [9:0] py_r = 10'd0;
+  reg [3:0] rram_q = 4'd0;
   wire rbit;
 `ifdef VIDEO_SIM
-  reg mem [0:767];
-  integer mi;
-  initial for (mi = 0; mi < 768; mi = mi + 1) mem[mi] = 1'b0;
+`ifdef VIDEO_DOCK
+  localparam BMP_WORDS = 6144;
+`else
+  localparam BMP_WORDS = 1024;
+`endif
+  reg [31:0] bmem [0:BMP_WORDS-1];
+  integer bmi;
+  initial for (bmi = 0; bmi < BMP_WORDS; bmi = bmi + 1) bmem[bmi] = 32'd0;
   reg rbit_r = 1'b0;
+  wire bhit = (rword < BMP_WORDS);
+  wire [12:0] rword_s = bhit ? rword : 13'd0;
 `ifdef FRAME_CHECK
   // Write on the CPU clock, read on the pixel clock. Same split as
-  // the SDPB on the board. The only stored bit is block (15, 11).
+  // the SDPB on the board.
   always @(posedge clk_cpu) begin
-    if (screen_we)
-      mem[BLOCK] <= screen_bit;
+    if (screen_we && (bmp_word < BMP_WORDS))
+      bmem[bmp_word] <= bmp_data;
   end
   always @(posedge pix) begin
-    rbit_r <= mem[rad];
+    rbit_r <= bhit && bmem[rword_s][rbitn];
   end
 `else
   always @(posedge pix) begin
-    if (screen_we)
-      mem[BLOCK] <= screen_bit;
-    rbit_r <= mem[rad];
+    if (screen_we && (bmp_word < BMP_WORDS))
+      bmem[bmp_word] <= bmp_data;
+    rbit_r <= bhit && bmem[rword_s][rbitn];
   end
 `endif
   assign rbit = rbit_r;
 `else
-  wire [31:0] ram_do;
-  SDPB u_screen (
-    .DO(ram_do),
-    .DI({31'b0, screen_bit}),
-    .BLKSELA(3'b000),
-    .BLKSELB(3'b000),
-    .ADA({4'b0, BLOCK}),
-    .ADB({4'b0, rad}),
-    .CLKA(clk_cpu),
-    .CLKB(pix),
-    .CEA(screen_we),
-    .CEB(1'b1),
-    .OCE(1'b1),
-    .RESETA(1'b0),
-    .RESETB(1'b0)
-  );
-  defparam u_screen.READ_MODE = 1'b0;
-  defparam u_screen.BIT_WIDTH_0 = 1;
-  defparam u_screen.BIT_WIDTH_1 = 1;
-  defparam u_screen.BLK_SEL_0 = 3'b000;
-  defparam u_screen.BLK_SEL_1 = 3'b000;
-  defparam u_screen.RESET_MODE = "SYNC";
-  assign rbit = ram_do[0];
+`ifdef VIDEO_DOCK
+  localparam NRAM = 12;
+`else
+  localparam NRAM = 2;
+`endif
+  wire [31:0] ram_do [0:NRAM-1];
+  genvar bri;
+  generate
+    for (bri = 0; bri < NRAM; bri = bri + 1) begin : g_bmp
+`ifdef VIDEO_DOCK
+      wire clka_i = pix;
+`else
+      wire clka_i = wr_clk;
+`endif
+      wire cea_i = fire && (wram_w == bri);
+      SDPB u_bmp (
+        .DO(ram_do[bri]),
+        .DI(wr_data),
+        .BLKSELA(3'b000),
+        .BLKSELB(3'b000),
+        .ADA(wada_w),
+        .ADB(rbitad),
+        .CLKA(clka_i),
+        .CLKB(pix),
+        .CEA(cea_i),
+        .CEB(1'b1),
+        .OCE(1'b1),
+        .RESETA(1'b0),
+        .RESETB(1'b0)
+      );
+      defparam u_bmp.READ_MODE = 1'b0;
+      defparam u_bmp.BIT_WIDTH_0 = 32;
+      defparam u_bmp.BIT_WIDTH_1 = 1;
+      defparam u_bmp.BLK_SEL_0 = 3'b000;
+      defparam u_bmp.BLK_SEL_1 = 3'b000;
+      defparam u_bmp.RESET_MODE = "SYNC";
+    end
+  endgenerate
+  reg rbit_mux = 1'b0;
+  integer rmi;
+  always @* begin
+    rbit_mux = 1'b0;
+    for (rmi = 0; rmi < NRAM; rmi = rmi + 1)
+      if (rram_q == rmi[3:0])
+        rbit_mux = ram_do[rmi][0];
+  end
+  assign rbit = rbit_mux;
 `endif
   // The write is one CPU cycle, the same pulse as the square bit.
   // On the Dock the pixel clock is not an integer multiple of the
@@ -393,15 +483,6 @@ module video (
     if (status_we)
       status <= status_in;
   end
-`endif
-`ifdef VIDEO_DOCK
-  // 640-wide grid at the top left: hx 296..935, vy 35..514.
-  wire grid_x = (hx <= 11'd935);
-  wire grid_y = (vy <= 10'd514);
-`else
-  // 640-wide grid at the top left of 720×480: hx 122..761, vy 36..515.
-  wire grid_x = (hx <= 10'd761);
-  wire grid_y = (vy <= 10'd515);
 `endif
 `ifdef VIDEO_TEXT
   // 40×15 characters, 8×8, origin (160, 48) of the active picture.
@@ -639,7 +720,8 @@ module video (
   // FONT8 END
   wire [7:0] grow = font8(char_q, suby_d);
   wire gbit = grow[3'd7 - subx_d];
-  wire text_on = de_r && in_text_d && armed_s2 && status_q[8] && gbit;
+  // The bitmap is the whole picture. The digit glyphs stay out of it.
+  wire text_on = 1'b0 && gbit;
 `else
   wire text_on = 1'b0;
 `endif
@@ -647,19 +729,28 @@ module video (
       ({vs_r, hs_r} == 2'b00) ? CTRL00 :
       ({vs_r, hs_r} == 2'b01) ? CTRL01 :
       ({vs_r, hs_r} == 2'b10) ? CTRL10 : CTRL11;
-  // armed gates the block the way it gates the LED. The store itself
-  // is not thrown away: the bit is remembered, and it stays dark
-  // until the arm word. Bit 8 of the status register selects it.
-  // Bit 8 = 0 shows the status byte instead: eight blocks across
-  // the middle, bit 7 on the left. Each block is four by eight of
-  // the 20×20 grid cells, 80×160, active x 0..639 and y 160..319.
-  // A set bit is white. The blocks are not armed: they show during
-  // the boot, before the arm word.
-  // Bits 0-7 only. The zero extension keeps the select off bit 8.
-  wire [3:0] status_idx = {1'b0, ~bx_d[4:2]};
-  wire status_bit = status_q[status_idx];
-  wire status_on = de_r && in_grid_d && (by_d[4:3] == 2'b01) && !status_q[8] && status_bit;
-  wire square_on = de_r && rbit && armed_s2 && status_q[8] && (bx_d == 5'd15) && (by_d == 5'd11);
+  // The bitmap stays dark until the arm word. Bit 8 selects it.
+  // Bit 8 = 0 shows the status byte instead: eight 80×160 blocks,
+  // active x 0..639 and y 160..319, bit 7 on the left. A set bit is
+  // white. The blocks are not armed: they show during the boot.
+  function [2:0] stat_col;
+    input [9:0] x;
+    begin
+      if (x < 10'd80) stat_col = 3'd0;
+      else if (x < 10'd160) stat_col = 3'd1;
+      else if (x < 10'd240) stat_col = 3'd2;
+      else if (x < 10'd320) stat_col = 3'd3;
+      else if (x < 10'd400) stat_col = 3'd4;
+      else if (x < 10'd480) stat_col = 3'd5;
+      else if (x < 10'd560) stat_col = 3'd6;
+      else stat_col = 3'd7;
+    end
+  endfunction
+  wire in_stat = (px_r < 11'd640) && (py_r >= 10'd160) && (py_r < 10'd320);
+  wire [2:0] status_col = stat_col(px_r[9:0]);
+  wire status_bit = status_q[3'd7 - status_col];
+  wire status_on = de_r && in_stat && !status_q[8] && status_bit;
+  wire square_on = de_r && rbit && armed_s2 && status_q[8];
   wire lit = (status_on || square_on || text_on) && !blank_s2;
   wire [9:0] word0_o = !de_r ? ctrl0 : (lit ? WHITE : BLACK);
   wire [9:0] word1_o = !de_r ? CTRL00 : (lit ? WHITE : BLACK);
@@ -680,48 +771,15 @@ module video (
 `ifdef VIDEO_SQUARE
     armed_s1 <= armed;
     armed_s2 <= armed_s1;
-    bx_d <= bx;
-    by_d <= by;
+    px_r <= px;
+    py_r <= py;
+    rram_q <= rram;
     status_q <= status;
-    in_grid_d <= de && grid_x && grid_y;
 `ifdef VIDEO_TEXT
     in_text_d <= in_text;
     subx_d <= tx[2:0];
     suby_d <= ty[2:0];
 `endif
-    if ((hx == 0) && (vy == 0)) begin
-      bx <= 5'd0;
-      by <= 5'd0;
-      sx <= 5'd0;
-      sy <= 5'd0;
-`ifdef VIDEO_DOCK
-    // The 640×480 grid sits at the top left. hx 296..935 and
-    // vy 35..514. Past that the counters hold, so block (15, 11)
-    // is not drawn again.
-    end else if (de && grid_x && grid_y) begin
-      if (hx == 11'd935) begin
-`else
-    // The 640-wide grid sits at the top left of the 720×480 picture.
-    // hx 122..761 and vy 36..515. Past hx 761 the counters hold, so
-    // block (15, 11) is not drawn again.
-    end else if (de && grid_x && grid_y) begin
-      if (hx == 10'd761) begin
-`endif
-        bx <= 5'd0;
-        sx <= 5'd0;
-        if (sy == 5'd19) begin
-          sy <= 5'd0;
-          by <= by + 5'd1;
-        end else begin
-          sy <= sy + 5'd1;
-        end
-      end else if (sx == 5'd19) begin
-        sx <= 5'd0;
-        bx <= bx + 5'd1;
-      end else begin
-        sx <= sx + 5'd1;
-      end
-    end
 `else
     if (!de) begin
       case ({vs, hs})

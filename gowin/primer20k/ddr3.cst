@@ -138,6 +138,45 @@ GRP_LOC spi_grp R[2:22]C[20:40];
 // sees the test byte. Keep the ROM on the site that still trains.
 INS_LOC "u_cpu/cpu/instructionRom/mem_mem_0_0_s" BSRAM_R46[4];
 INS_LOC "u_cpu/cpu/hwMul/n136_s0" DSP_R19[1];
+// Row 28 sits on the DDR3 write flops. Twelve picture blocks there
+// make the eye marginal (one load reaches the ROM, the next stays at
+// F 4B). Keep them on row 10, clear of the sampler columns.
+INS_LOC "u_video/g_bmp[0].u_bmp" BSRAM_R10[4];
+INS_LOC "u_video/g_bmp[1].u_bmp" BSRAM_R10[5];
+INS_LOC "u_video/g_bmp[2].u_bmp" BSRAM_R10[6];
+INS_LOC "u_video/g_bmp[3].u_bmp" BSRAM_R10[7];
+INS_LOC "u_video/g_bmp[4].u_bmp" BSRAM_R10[8];
+INS_LOC "u_video/g_bmp[5].u_bmp" BSRAM_R10[9];
+INS_LOC "u_video/g_bmp[6].u_bmp" BSRAM_R10[10];
+INS_LOC "u_video/g_bmp[7].u_bmp" BSRAM_R10[11];
+INS_LOC "u_video/g_bmp[8].u_bmp" BSRAM_R10[12];
+INS_LOC "u_video/g_bmp[9].u_bmp" BSRAM_R10[13];
+INS_LOC "u_video/g_bmp[10].u_bmp" BSRAM_R10[14];
+INS_LOC "u_video/g_bmp[11].u_bmp" BSRAM_R10[15];
+// The latched picture address. Left on the DDR3 rows, these flops
+// keep the eye from starting (PC 0080, F 00). The sampler corner and
+// the write rows are already taken. This pocket is below the sampler
+// and left of the DQS.
+GROUP bmp_addr = {"*bmpWordR*"};
+GRP_LOC bmp_addr R16C[42:48];
+// Rise tap and the gate, together. The rest of the chain sits two
+// rows away so the fall path is longer than one pixel period.
+GROUP fire_rise = {"*g_fire[0].u_dly*" "*g_fire[1].u_dly*" "*g_fire[2].u_dly*" "*g_fire[3].u_dly*" "*g_fire[4].u_dly*" "*u_fire_and*"};
+GRP_LOC fire_rise R12C[42:48];
+// The fall path has to cross the pocket four times. A packed chain is
+// shorter than one pixel period, so a row of the square is skipped.
+GROUP fire_a = {"*g_fire[5].u_dly*"};
+GRP_LOC fire_a R14C36;
+GROUP fire_b = {"*g_fire[6].u_dly*"};
+GRP_LOC fire_b R22C48;
+GROUP fire_c = {"*g_fire[7].u_dly*"};
+GRP_LOC fire_c R14C48;
+GROUP fire_d = {"*g_fire[8].u_dly*"};
+GRP_LOC fire_d R22C36;
+GROUP fire_e = {"*g_fire[9].u_dly*"};
+GRP_LOC fire_e R12C36;
+GROUP fire_fall = {"*g_fire[10].u_dly*" "*g_fire[11].u_dly*" "*g_fire[12].u_dly*" "*g_fire[13].u_dly*" "*g_fire[14].u_dly*" "*g_fire[15].u_dly*" "*g_fire[16].u_dly*" "*g_fire[17].u_dly*" "*g_fire[18].u_dly*" "*g_fire[19].u_dly*" "*g_fire[20].u_dly*" "*g_fire[21].u_dly*" "*g_fire[22].u_dly*" "*g_fire[23].u_dly*"};
+GRP_LOC fire_fall R22C[40:46];
 // The image that trains (route_option 1, ROM at BSRAM_R46[4]) has no
 // registers on rows 48 or 49. An unconstrained place put dq_out,
 // dq_oen, dqs_oen, dm_out_1, and dm_out_7 there, beside the DQS
@@ -180,8 +219,9 @@ GROUP pc41 = {"*pc_8_s0*" "*pc_10_s0*" "*pc_15_s0*" "*pc_20_s0*" "*pc_21_s0*" "*
 GRP_LOC pc41 R41C[20:30];
 GROUP pc42 = {"*pc_9_s0*" "*pc_14_s0*"};
 GRP_LOC pc42 R42C[20:30];
-// pc_30_s4 is not in this netlist. pc_30_s7 stays on this row.
-GROUP pc43 = {"*pc_6_s0*" "*pc_7_s0*" "*pc_18_s0*" "*pc_19_s0*" "*pc_24_s0*" "*pc_25_s0*" "*pc_30_s7*"};
+// pc_30_s7 is not in this netlist. pc_30_s4 is a LUT, not a flop.
+// pc_30_s0 stays on row 38.
+GROUP pc43 = {"*pc_6_s0*" "*pc_7_s0*" "*pc_18_s0*" "*pc_19_s0*" "*pc_24_s0*" "*pc_25_s0*"};
 GRP_LOC pc43 R43C[20:30];
 GROUP pc44 = {"*pc_2_s0*" "*pc_3_s0*" "*pc_4_s0*" "*pc_5_s0*"};
 GRP_LOC pc44 R44C[20:28];

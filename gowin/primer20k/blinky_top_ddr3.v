@@ -73,6 +73,8 @@ module blinky_top_ddr3 (
   wire        status_we;
   wire [8:0]  status_word;
   wire        screen_bit;
+  wire [31:0] bmp_data;
+  wire [12:0] bmp_word;
   wire        cpu_armed;
   wire [31:0] cpu_pc;
   wire [31:0] cpu_r0, cpu_r4, cpu_r5, cpu_r7, cpu_r8, cpu_r9;
@@ -555,6 +557,8 @@ module blinky_top_ddr3 (
     .io_ddr_calib     (read_calib_done),
     .io_screen_we     (screen_we),
     .io_screen_bit    (screen_bit),
+    .io_bmp_data      (bmp_data),
+    .io_bmp_word      (bmp_word),
     .io_armed         (cpu_armed),
     .io_status_we     (status_we),
     .io_status_word   (status_word),
@@ -740,6 +744,8 @@ module blinky_top_ddr3 (
 `ifdef VIDEO_SQUARE
     .screen_we  (screen_we),
     .screen_bit (screen_bit),
+    .bmp_data   (bmp_data),
+    .bmp_word   (bmp_word),
     .armed      (cpu_armed),
     .status_we  (status_we),
     .status_in  (status_word),

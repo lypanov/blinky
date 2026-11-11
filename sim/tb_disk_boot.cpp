@@ -11,6 +11,14 @@
 static vluint64_t main_time = 0;
 double sc_time_stamp() { return static_cast<double>(main_time); }
 
+static int fell_through(uint32_t addr) {
+  if (addr == 0xFFFFFFACu || addr == 0xFFFFFFB0u || addr == 0xFFFFFFB8u ||
+      addr == 0xFFFFFFBCu || addr == 0xFFFFFFC0u || addr == 0xFFFFFFC4u)
+    return 1;
+  // Both bitmap windows, 0xFFFE0000..0xFFFEFFFF.
+  return (addr & 0xFFFF0000u) == 0xFFFE0000u;
+}
+
 int main(int argc, char** argv) {
   Verilated::commandArgs(argc, argv);
   // The boot file is about 40 KB behind a 20-byte header. Each NOR
@@ -114,12 +122,7 @@ int main(int argc, char** argv) {
   std::vector<int> status_seq;
   for (; cycle < max_cycles; cycle++) {
     step();
-    if (top->mem_write && (top->mem_addr == 0xFFFFFFACu ||
-                           top->mem_addr == 0xFFFFFFB0u ||
-                           top->mem_addr == 0xFFFFFFB8u ||
-                           top->mem_addr == 0xFFFFFFBCu ||
-                           top->mem_addr == 0xFFFFFFC0u ||
-                           top->mem_addr == 0xFFFFFFC4u)) {
+    if (top->mem_write && fell_through(top->mem_addr)) {
       fprintf(stderr, "FAIL store to %08x fell through at cycle %llu\n",
               (unsigned)top->mem_addr, (unsigned long long)cycle);
       failed = 1;
@@ -315,12 +318,7 @@ int main(int argc, char** argv) {
       for (uint64_t n = 0; n < hold_cycles; n++) {
         cycle++;
         step();
-        if (top->mem_write && (top->mem_addr == 0xFFFFFFACu ||
-                               top->mem_addr == 0xFFFFFFB0u ||
-                               top->mem_addr == 0xFFFFFFB8u ||
-                               top->mem_addr == 0xFFFFFFBCu ||
-                               top->mem_addr == 0xFFFFFFC0u ||
-                               top->mem_addr == 0xFFFFFFC4u)) {
+        if (top->mem_write && fell_through(top->mem_addr)) {
           fprintf(stderr, "FAIL store to %08x during hold\n", (unsigned)top->mem_addr);
           failed = 1;
           break;

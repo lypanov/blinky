@@ -20,9 +20,11 @@ class CpuWrapHyper extends CpuWrapBase {
   val spi_clk = Output(Bool())
   val spi_mosi = Output(Bool())
   val spi_miso = Input(Bool())
-  // -80. The top ties these to the screen only in square mode.
+  // Bitmap word write. The top ties these to the screen in square mode.
   val screen_we = Output(Bool())
   val screen_bit = Output(Bool())
+  val bmp_data = Output(UInt(32.W))
+  val bmp_word = Output(UInt(13.W))
   val armed = Output(Bool())
   // -84. The video module keeps the nine flops. Bit 8 is the mode.
   val status_we = Output(Bool())
@@ -42,9 +44,11 @@ class CpuWrapDdr3 extends CpuWrapBase {
   val r8 = Output(UInt(32.W))
   val r9 = Output(UInt(32.W))
   val dbgMask = Output(UInt(40.W))
-  // -80. The Dock top ties these to the screen only in square mode.
+  // Bitmap word write. The Dock top ties these to the screen in square mode.
   val screen_we = Output(Bool())
   val screen_bit = Output(Bool())
+  val bmp_data = Output(UInt(32.W))
+  val bmp_word = Output(UInt(13.W))
   val armed = Output(Bool())
   // -84. The video module keeps the nine flops. Bit 8 is the mode.
   val status_we = Output(Bool())
@@ -131,6 +135,8 @@ class CPUMinimalWrapper(
     cpu.io.spiMiso := pins.spi_miso
     pins.screen_we := cpu.io.screenWe
     pins.screen_bit := cpu.io.screenBit
+    pins.bmp_data := cpu.io.bmpData
+    pins.bmp_word := cpu.io.bmpWord
     pins.armed := cpu.io.armed
     pins.status_we := cpu.io.statusWe
     pins.status_word := cpu.io.statusWord
@@ -227,6 +233,8 @@ class CPUMinimalWrapper(
       wrap.dbgMask := cpu.io.dbgMask
       wrap.screen_we := cpu.io.screenWe
       wrap.screen_bit := cpu.io.screenBit
+      wrap.bmp_data := cpu.io.bmpData
+      wrap.bmp_word := cpu.io.bmpWord
       wrap.armed := cpu.io.armed
       wrap.status_we := cpu.io.statusWe
       wrap.status_word := cpu.io.statusWord

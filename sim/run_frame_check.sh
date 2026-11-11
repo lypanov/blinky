@@ -110,9 +110,10 @@ check "$OUT/nano-status-81.ppm" status --byte 0x81 "${NANO_SIZE[@]}"
 check "$OUT/dock-status-81.ppm" status --byte 0x81 "${DOCK_SIZE[@]}"
 check "$OUT/nano-status-81.ppm" status --byte 0xA5 --must-differ "${NANO_SIZE[@]}"
 check "$OUT/nano-counter.ppm" square --square "${NANO_SIZE[@]}"
-check "$OUT/dock-counter-off.ppm" text --count 0 "${DOCK_SIZE[@]}"
-check "$OUT/dock-counter-on.ppm" text --count 1 --square "${DOCK_SIZE[@]}"
-check "$OUT/dock-counter-blank.ppm" text --count 1 --square --blank "${DOCK_SIZE[@]}"
+# The bitmap is the whole picture. The digit glyphs stay off it.
+check "$OUT/dock-counter-off.ppm" square "${DOCK_SIZE[@]}"
+check "$OUT/dock-counter-on.ppm" square --square "${DOCK_SIZE[@]}"
+check "$OUT/dock-counter-blank.ppm" square --square --blank "${DOCK_SIZE[@]}"
 
 # A wrong expected picture must fail. The digits are one count high,
 # and the flash field is black where the capture is white.

@@ -9,14 +9,19 @@ MODULE Blink5;
     matches the word stored at address 28. Modules loads Oberon, and
     Oberon loads this module. The LED pin stays dark otherwise.
 
-    The loop stores the new light at -80 (0FFFFFFB0H). That is the one
-    screen block: bit 0 of the word sets block (15, 11) and clears it.
+    The loop draws the square, then stores the new light. The square is
+    ordinary words in the bitmap. Bit 0 of a word is the left pixel.
+    The 4K bitmap is at 0FFFE0000H, 256 bits a row, and the square is
+    five rows of bits 11..15 at word 442 (0FFFE06E8H). The Dock bitmap
+    is at 0FFFE8000H, 512 bits a row, and the square is ten rows of
+    bits 22..31 at word 1764 (0FFFE9B90H). Both stores run on both
+    boards. Each board keeps its own window and drops the other, so
+    the lit box is the same 20 screen pixels at (300, 220).
     -84 (0FFFFFFACH) is the status register. Bit 8 selects the picture.
-    This body stores 10BH once, before the file is opened, so the square
+    This body stores 10BH once, before the file is opened, so the bitmap
     replaces the status blocks and the byte stays the inner core's 0BH.
     Until that store the blocks show the boot stage, bit 7 on the left.
-    A board without that device decodes the store and drops it. The Dock
-    counts the stores whose bit is 1.
+    A board without that device decodes the store and drops it.
 
     Kernel.Time reads the counter at -64. The wait is the integer at the
     start of Blink.Rate, read once through Files.Old. One thousand is a
@@ -77,11 +82,28 @@ MODULE Blink5;
     Kernel.Scan
   END Collect;
 
+  PROCEDURE Square(on: INTEGER);
+    VAR y, a: INTEGER;
+  BEGIN
+    (* 4K: five rows, stride 32, mask 0F800H at -129304. *)
+    y := 0; a := -129304;
+    WHILE y < 5 DO
+      IF on = 1 THEN SYSTEM.PUT(a, 63488) ELSE SYSTEM.PUT(a, 0) END;
+      a := a + 32; INC(y)
+    END;
+    (* Dock: ten rows, stride 64, mask 0FFC00000H at -91248. *)
+    y := 0; a := -91248;
+    WHILE y < 10 DO
+      IF on = 1 THEN SYSTEM.PUT(a, -4194304) ELSE SYSTEM.PUT(a, 0) END;
+      a := a + 64; INC(y)
+    END
+  END Square;
+
   PROCEDURE Dark;
   BEGIN
     (* An imported variable cannot be assigned. The store still hits the light. *)
+    Square(0);
     SYSTEM.PUT(SYSTEM.ADR(MMT.light), 0);
-    SYSTEM.PUT(-80, 0);
     REPEAT UNTIL FALSE
   END Dark;
 
@@ -105,8 +127,8 @@ BEGIN
     IF ODD(keys) THEN
       IF now - last >= wait THEN last := last + wait END
     ELSIF now - last >= wait THEN
+      IF MMT.light = 0 THEN Square(1) ELSE Square(0) END;
       MMT.Toggle;
-      SYSTEM.PUT(-80, MMT.light);
       last := last + wait;
       IF MMT.light = 1 THEN
         NEW(node);

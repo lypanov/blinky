@@ -52,10 +52,15 @@ static void status_pulse(Vvideo* top, int word) {
 }
 
 static void pulse(Vvideo* top, int bit) {
-  top->screen_bit = bit;
-  top->screen_we = 1;
-  posedge(top);
-  top->screen_we = 0;
+  // Five rows of the 4K bitmap. Bits 11..15, word 442, stride 8.
+  uint32_t data = bit ? 0x0000F800u : 0;
+  for (int i = 0; i < 5; i++) {
+    top->bmp_word = 442 + i * 8;
+    top->bmp_data = data;
+    top->screen_we = 1;
+    posedge(top);
+    top->screen_we = 0;
+  }
   posedge(top);
   posedge(top);
 }
@@ -121,6 +126,8 @@ int main(int argc, char** argv) {
   top->pix_sim = 0;
   top->screen_we = 0;
   top->screen_bit = 0;
+  top->bmp_data = 0;
+  top->bmp_word = 0;
   top->armed = 0;
   top->status_we = 0;
   top->status_in = 0;

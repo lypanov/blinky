@@ -163,11 +163,15 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val spiMosi = Output(Bool())
     val spiMiso = Input(Bool())
 
-    // -80 (0xFFFFFFB0). Bit 0 is one screen block. The store is always
-    // decoded here, and it never becomes a HyperRAM or DDR3 write.
-    // The screen, when the build has one, takes the pulse.
+    // The bitmap is ordinary words in two windows, both dropped here.
+    // Bit 15 of the address picks the board: 0 is the 4K at 0xFFFE0000,
+    // 1 is the Dock at 0xFFFE8000. This image writes one of them. The
+    // screen, when the build has one, takes the pulse. -80 stays decoded
+    // and dropped; the bitmap replaced that one block.
     val screenWe = Output(Bool())
     val screenBit = Output(Bool())
+    val bmpData = Output(UInt(32.W))
+    val bmpWord = Output(UInt(13.W))
     val armed = Output(Bool())
     // -84 (0xFFFFFFAC). Nine bits: the status byte, and bit 8 for the
     // screen mode. The store is dropped. The video module keeps the
@@ -392,6 +396,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   io.memByte := false.B
   io.screenWe := false.B
   io.screenBit := false.B
+  io.bmpData := 0.U
+  io.bmpWord := 0.U
   io.armed := armed
   io.statusWe := false.B
   io.statusWord := 0.U
@@ -444,6 +450,13 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     spi.get.io.sectorBase := sectorBase
   }
   val uartPending = if (uartDisk) RegInit(false.B) else false.B
+  // Dock picture RAM is written by the pixel clock. The store address is
+  // a sum, so the arrival cycle's early pixel edge stores word 0.
+  // Phase 0 latches the word after that sum has settled. Phase 1 writes
+  // the latch. Phase 2 keeps the latch on the pins while the enable is
+  // low, then the PC moves.
+  val bmpPhase = if (uartDisk) RegInit(0.U(2.W)) else 0.U(2.W)
+  val bmpWordR = if (uartDisk) Reg(UInt(13.W)) else 0.U(13.W)
   val spiLoad = if (bodyFetch) RegInit(false.B) else false.B
   val spiLoadCtrl = if (bodyFetch) RegInit(false.B) else false.B
   if (bodyFetch) {
@@ -829,8 +842,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val norPtrHit = if (flashBoot) effectiveAddr === "hFFFFFFB8".U else false.B
     val uartHit = if (uartDisk) effectiveAddr === "hFFFFFFB8".U else false.B
     val norBaseHit = if (diskBoot) effectiveAddr === "hFFFFFFBC".U else false.B
-    // -80. One word, bit 0. Dropped on every image, including this one
-    // when the video module is left out of the build.
+    // 0xFFFE0000, 64 KB. The low half is the 4K bitmap and the high
+    // half is the Dock bitmap. Blink stores both. This image keeps one.
+    val bmpRegion = !isByte && effectiveAddr(31, 16) === "hFFFE".U
+    val bmpLive = if (uartDisk) effectiveAddr(15) else !effectiveAddr(15)
+    // -80. Dropped. The bitmap replaced the one block.
     val screenHit = !isByte && effectiveAddr === "hFFFFFFB0".U
     // -84. Bits 0-7 are the status byte. Bit 8 is the screen mode.
     // Dropped on every image. The video module holds the nine flops.
@@ -919,13 +935,36 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       } .elsewhen (statusHit) {
         io.statusWe := true.B
         io.statusWord := rdX(8, 0)
-      } .elsewhen (screenHit) {
-        io.screenWe := true.B
-        io.screenBit := rdX(0)
-      } .elsewhen (timerAddr || btnAddr) {
-        // -64's write is blank in the book. -60's write is the LED
-        // bank. This board's blink pin is the armed light, not that
-        // bank, so neither store goes to memory.
+      } .elsewhen (bmpRegion) {
+        when (bmpLive) {
+          if (uartDisk) {
+            when (bmpPhase === 0.U) {
+              bmpWordR := effectiveAddr(14, 2)
+              bmpPhase := 1.U
+            } .elsewhen (bmpPhase === 1.U) {
+              io.screenWe := true.B
+              io.screenBit := rdX(0)
+              io.bmpData := rdX
+              io.bmpWord := bmpWordR
+              bmpPhase := 2.U
+            } .otherwise {
+              io.screenBit := rdX(0)
+              io.bmpData := rdX
+              io.bmpWord := bmpWordR
+              bmpPhase := 0.U
+            }
+          } else {
+            io.screenWe := true.B
+            io.screenBit := rdX(0)
+            io.bmpData := rdX
+            io.bmpWord := effectiveAddr(14, 2)
+          }
+        }
+      } .elsewhen (screenHit || timerAddr || btnAddr) {
+        // -80 is the old one-block screen. -64's write is blank in
+        // the book. -60's write is the LED bank. This board's blink
+        // pin is the armed light, not that bank, so none of these
+        // stores goes to memory.
       } .elsewhen (if (diskBoot) norPtrHit || uartHit || norBaseHit else false.B) {
         if (flashBoot) {
           when (norPtrHit) {
@@ -993,7 +1032,16 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     // For memory operations, we only advance PC after completing the operation.
     // A code-window ROM read holds the PC so the data word is not executed.
     when (!memoryAccessPending) {
-      pcNext := nextPC
+      // Phase 2 is the cycle after the write. The PC stays through the
+      // write so the address the pixel clock samples cannot change.
+      val bmpStall = if (uartDisk) {
+        bmpRegion && bmpLive && bmpPhase =/= 2.U
+      } else {
+        false.B
+      }
+      when (!bmpStall) {
+        pcNext := nextPC
+      }
     }
   } .elsewhen (isF1Format || (format(3, 2) === "b00".U)) {
     // Unified handling for immediate (F1) and register (F0) operations

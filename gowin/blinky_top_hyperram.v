@@ -80,6 +80,8 @@ module blinky_top (
   wire cpu_clk;
   wire screen_we;
   wire screen_bit;
+  wire [31:0] bmp_data;
+  wire [12:0] bmp_word;
   wire status_we;
   wire [8:0] status_word;
   wire cpu_armed;
@@ -118,6 +120,8 @@ module blinky_top (
     .io_spi_miso       (spi_miso),
     .io_screen_we      (screen_we),
     .io_screen_bit     (screen_bit),
+    .io_bmp_data       (bmp_data),
+    .io_bmp_word       (bmp_word),
     .io_armed          (cpu_armed),
     .io_status_we      (status_we),
     .io_status_word    (status_word),
@@ -174,6 +178,8 @@ module blinky_top (
 `ifdef VIDEO_SQUARE
     .screen_we  (screen_we),
     .screen_bit (screen_bit),
+    .bmp_data   (bmp_data),
+    .bmp_word   (bmp_word),
     .armed      (cpu_armed),
     .status_we  (status_we),
     .status_in  (status_word),

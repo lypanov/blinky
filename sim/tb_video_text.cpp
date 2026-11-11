@@ -184,7 +184,9 @@ static void frame(Vvideo* top, int show, int square, const char* name) {
     int hs = x >= 62;
     int vs = y >= 6;
     int de = (x >= 122 && x < 842 && y >= 36 && y < 516);
-    int on = show && de && (glyph_on(x, y) || square_on(x, y, square));
+    // The bitmap replaced the glyphs. A lit pixel is the square only.
+    int on = show && de && square_on(x, y, square);
+    (void)glyph_on;
     uint16_t want0 = de ? (on ? WHITE : BLACK) : ctrl(vs, hs);
     uint16_t want1 = de ? want0 : CTRL00;
     if ((int)top->de_q != de || (int)top->hs_q != hs || (int)top->vs_q != vs ||
@@ -219,6 +221,8 @@ int main(int argc, char** argv) {
   top->pix_sim = 0;
   top->screen_we = 0;
   top->screen_bit = 0;
+  top->bmp_data = 0;
+  top->bmp_word = 0;
   top->armed = 0;
   top->status_we = 0;
   top->status_in = 0;
@@ -241,10 +245,13 @@ int main(int argc, char** argv) {
   for (int i = 0; i < 8; i++) posedge(top);
   frame(top, 1, 0, "0001");
 
-  top->screen_bit = 1;
-  top->screen_we = 1;
-  posedge(top);
-  top->screen_we = 0;
+  for (int i = 0; i < 5; i++) {
+    top->bmp_word = 442 + i * 8;
+    top->bmp_data = 0x0000F800u;
+    top->screen_we = 1;
+    posedge(top);
+    top->screen_we = 0;
+  }
   posedge(top);
   posedge(top);
   frame(top, 1, 1, "0001+square");
@@ -270,6 +277,6 @@ int main(int argc, char** argv) {
     fprintf(stderr, "FAIL %d\n", fails);
     return 1;
   }
-  printf("ok text 0001, 0002, 0010, then 10000 as 0000\n");
+  printf("ok bitmap square, digits stay off the picture\n");
   return 0;
 }

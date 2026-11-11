@@ -39,6 +39,19 @@ static const int DOCK_PIX = 48;
 static const int FRAME = H * V;
 static const uint16_t BLACK = 0b0111110000;
 static const uint16_t WHITE = 0b1011110000;
+#ifdef VIDEO_DOCK
+// Ten bitmap rows, word 1764 then +16, bits 22..31.
+static const int SQ_N = 10;
+static const int SQ_WORD0 = 1764;
+static const int SQ_STEP = 16;
+static const uint32_t SQ_DATA = 0xFFC00000u;
+#else
+// Five bitmap rows, word 442 then +8, bits 11..15.
+static const int SQ_N = 5;
+static const int SQ_WORD0 = 442;
+static const int SQ_STEP = 8;
+static const uint32_t SQ_DATA = 0x0000F800u;
+#endif
 
 static void fail(const char* msg) {
   fprintf(stderr, "FAIL %s\n", msg);
@@ -109,7 +122,8 @@ int main(int argc, char** argv) {
   auto past = [&](int edge) {
     return edge >= 0 && edge > target;
   };
-  if (past(led_cycle) || past(arm_cycle) || past(store_cycle) || past(blank_cycle) ||
+  int store_last = store_cycle < 0 ? -1 : store_cycle + SQ_N - 1;
+  if (past(led_cycle) || past(arm_cycle) || past(store_last) || past(blank_cycle) ||
       past(status_cycle)) {
     fprintf(stderr, "stimulus cycle is after the capture cycle\n");
     return 2;
@@ -122,7 +136,9 @@ int main(int argc, char** argv) {
   top->pix_sim = 0;
 #ifdef FRAME_SQUARE
   top->screen_we = 0;
-  top->screen_bit = 1;
+  top->screen_bit = 0;
+  top->bmp_data = 0;
+  top->bmp_word = 0;
   top->armed = 0;
   top->status_we = 0;
   top->status_in = 0;
@@ -142,8 +158,12 @@ int main(int argc, char** argv) {
     top->blank = (blank_cycle >= 0 && c >= blank_cycle) ? 1 : 0;
 #ifdef FRAME_SQUARE
     top->armed = (arm_cycle >= 0 && c >= arm_cycle) ? 1 : 0;
-    top->screen_bit = 1;
-    top->screen_we = (store_cycle >= 0 && c == store_cycle) ? 1 : 0;
+    int k = store_cycle < 0 ? -1 : c - store_cycle;
+    int writing = k >= 0 && k < SQ_N;
+    top->screen_bit = 0;
+    top->screen_we = writing ? 1 : 0;
+    top->bmp_word = writing ? (SQ_WORD0 + k * SQ_STEP) : 0;
+    top->bmp_data = writing ? SQ_DATA : 0;
     top->status_in = status_word & 0x1FF;
     top->status_we = (status_cycle >= 0 && c == status_cycle) ? 1 : 0;
     top->clk_cpu = 0;
@@ -151,6 +171,7 @@ int main(int argc, char** argv) {
     top->clk_cpu = 1;
     top->eval();
     top->screen_we = 0;
+    top->bmp_data = 0;
     top->status_we = 0;
 #endif
     cpu_cycle = c;

@@ -48,6 +48,7 @@ if {$vmode eq "flash" || $vmode eq "square" || $vmode eq "text"} {
   }
   puts $vh "`endif"
   add_file -type verilog [file join $GOWIN video.v]
+  add_file -type verilog [file join $GOWIN KeepBit.v]
   # A second add_file cst replaces the first. One file has to carry
   # the DDR3 balls and the HDMI balls.
   set combo [file join $HERE ddr3_hdmi.cst]
