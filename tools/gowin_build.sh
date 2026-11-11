@@ -250,10 +250,9 @@ case "$BOARD" in
     mkdir -p "$ROOT/gowin/primer20k/impl"
     cd "$ROOT/gowin/primer20k"
     printf '%s\n' '// Modules image. The write delay is the trained eye.' '`define DDR3_MODULES' > "$ROOT/gowin/primer20k/ddr3_eye.vh"
-    # The 1-port register-file modules netlist blinks with route_option 2.
-    # route_option 1 leaves the user LED dark and the training line at
-    # ..0080 with F=4B.
-    DDR3_ROUTE_OPTION="${DDR3_ROUTE_OPTION:-2}" gw_sh "$ROOT/gowin/primer20k/gowin_ddr3.tcl"
+    # This netlist trains at route_option 1 (place_option 0). route_option 2
+    # stays at PC 0080 with E0 FFFF and F 4B. The floorplan is ddr3.cst.
+    DDR3_ROUTE_OPTION="${DDR3_ROUTE_OPTION:-1}" gw_sh "$ROOT/gowin/primer20k/gowin_ddr3.tcl"
     FS="$ROOT/gowin/primer20k/impl/pnr/${GOWIN_OUT_NAME}.fs"
     SEARCH="$ROOT/gowin/primer20k/impl"
     LOAD_HINT="tools/sram_load.sh -b tangprimer20k $FS"$'\n'"  openFPGALoader -b tangprimer20k -m $FS"
