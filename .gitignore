@@ -372,3 +372,6 @@ docs/blink-measure/**/clip.mkv
 docs/blink-measure/**/capture.log
 docs/blink-measure/**/result.json.stdout
 docs/blink-measure/**/*.fs
+
+# ESP32-C6 overnight logger runtime files
+esp32c6/logs/
