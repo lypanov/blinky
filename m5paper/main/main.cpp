@@ -2,8 +2,8 @@
 
 static M5GFX display;
 
-// One refresh paints both squares. IT8951 auto-display runs on the outer endWrite.
-static void draw_squares(M5GFX &lcd, bool black_on_left)
+// One refresh paints one still frame. IT8951 auto-display runs on the outer endWrite.
+static void draw_still(M5GFX &lcd)
 {
   const int32_t panel_w = lcd.width();
   const int32_t panel_h = lcd.height();
@@ -20,13 +20,11 @@ static void draw_squares(M5GFX &lcd, bool black_on_left)
   const int32_t y0 = landscape ? across : along0;
   const int32_t x1 = landscape ? along1 : across;
   const int32_t y1 = landscape ? across : along1;
-  const uint32_t first = black_on_left ? 0x000000u : 0xFFFFFFu;
-  const uint32_t second = black_on_left ? 0xFFFFFFu : 0x000000u;
 
   lcd.startWrite();
   lcd.fillScreen(0x808080u);
-  lcd.fillRect(x0, y0, side, side, first);
-  lcd.fillRect(x1, y1, side, side, second);
+  lcd.fillRect(x0, y0, side, side, 0x000000u);
+  lcd.fillRect(x1, y1, side, side, 0xFFFFFFu);
   lcd.endWrite();
 }
 
@@ -36,14 +34,12 @@ void setup()
   display.setRotation(1);
   display.setBrightness(128);
   display.setColorDepth(24);
+  draw_still(display);
 }
 
 void loop(void)
 {
-  draw_squares(display, true);
-  lgfx::delay(2000);
-  draw_squares(display, false);
-  lgfx::delay(2000);
+  lgfx::delay(1000);
 }
 
 #if !defined(ARDUINO)
