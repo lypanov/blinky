@@ -106,6 +106,68 @@ class HwMul extends BlackBox {
   mulWriter.close()
 }
 
+// Sixteen register words, saved and restored one per cycle. The Nano 4K
+// has no logic left for a second register file. gowin/FpSnap.v is one SP
+// block; this file is the same port with a one-cycle read, for Verilator.
+// A write leaves the output register alone, matching SP write mode 00.
+class FpSnap extends BlackBox {
+  override def desiredName = "FpSnap"
+  val io = IO(new Bundle {
+    val clk = Input(Clock())
+    val addr = Input(UInt(4.W))
+    val we = Input(Bool())
+    val wdata = Input(UInt(32.W))
+    val rdata = Output(UInt(32.W))
+  })
+  private val snapFile = new File("generated/FpSnap.v")
+  snapFile.getParentFile.mkdirs()
+  val snapWriter = new PrintWriter(snapFile)
+  snapWriter.write(
+    """module FpSnap(
+      |  input clk,
+      |  input [3:0] addr,
+      |  input we,
+      |  input [31:0] wdata,
+      |  output reg [31:0] rdata
+      |);
+      |  reg [31:0] mem [0:15];
+      |  integer i;
+      |  initial begin
+      |    for (i = 0; i < 16; i = i + 1)
+      |      mem[i] = 32'h0;
+      |    rdata = 32'h0;
+      |  end
+      |  always @(posedge clk) begin
+      |    if (we)
+      |      mem[addr] <= wdata;
+      |    else
+      |      rdata <= mem[addr];
+      |  end
+      |endmodule
+      |""".stripMargin)
+  snapWriter.close()
+}
+
+// Same timing as FpSnap, for the treadle unit tests. The FPGA image
+// uses the SP block instead.
+class ChiselFpSnap extends Module {
+  val io = IO(new Bundle {
+    val addr = Input(UInt(4.W))
+    val we = Input(Bool())
+    val wdata = Input(UInt(32.W))
+    val rdata = Output(UInt(32.W))
+  })
+  val mem = Reg(Vec(16, UInt(32.W)))
+  when (io.we) {
+    mem(io.addr) := io.wdata
+  }
+  val held = Reg(UInt(32.W))
+  when (!io.we) {
+    held := mem(io.addr)
+  }
+  io.rdata := held
+}
+
 class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
                  customMemoryImage: Option[Seq[String]] = None,
                  waitForStores: Boolean = false,
@@ -368,6 +430,31 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val readsB = isMemory || (isF0 && op =/= 0.U) || (isF1Format && op =/= 0.U)
   val readsX = isStore || isBranchToReg || (isF0 && !((format === "b0010".U) && (op === 0.U)))
   val twoRead = readsB && readsX
+  // Phases 1..16 copy the register file into the snapshot block, through
+  // the one read port. 17 plants the link and branches to 0x20. 18
+  // presents snapshot word 0. 19..34 write the registers back, Ra
+  // replaced by the result. The handler runs with phase 0.
+  val fpPhase = RegInit(0.U(6.W))
+  val fpSaving = fpPhase >= 1.U && fpPhase <= 16.U
+  val fpSnapAddr = WireDefault(0.U(4.W))
+  val fpSnapWe = WireDefault(false.B)
+  val fpSnapWdata = WireDefault(0.U(32.W))
+  val fpSnapRdata = Wire(UInt(32.W))
+  val fpFinish = WireDefault(false.B)
+  if (chiselRom) {
+    val snap = Module(new ChiselFpSnap)
+    snap.io.addr := fpSnapAddr
+    snap.io.we := fpSnapWe
+    snap.io.wdata := fpSnapWdata
+    fpSnapRdata := snap.io.rdata
+  } else {
+    val snap = Module(new FpSnap)
+    snap.io.clk := clock
+    snap.io.addr := fpSnapAddr
+    snap.io.we := fpSnapWe
+    snap.io.wdata := fpSnapWdata
+    fpSnapRdata := snap.io.rdata
+  }
   val readAddr = WireDefault(regB)
   when (regLatched) {
     readAddr := Mux(isStore, regA, regC)
@@ -375,6 +462,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     readAddr := regB
   } .otherwise {
     readAddr := Mux(isStore, regA, regC)
+  }
+  when (fpSaving) {
+    readAddr := (fpPhase - 1.U)(3, 0)
   }
   val rdPort = regs(readAddr)
   val rdB = Mux(regLatched, regCaptured, rdPort)
@@ -429,6 +519,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // its word index to. Both sit under the book's window, which starts at
   // -64, and above the screen word at -80. -84 is the status register,
   // the next word under -80. -76 stays reserved and is not decoded.
+  // -96 is the trapped Rb, -92 is the trapped Rc, and a store to -88
+  // writes the floating-point result and returns from the trap.
   // -64 is the millisecond counter. The SD window stays -48/-44.
   val norPtr = if (flashBoot) RegInit(0.U(24.W)) else 0.U(24.W)
   val sectorBase = if (diskBoot) RegInit(0.U(24.W)) else 0.U(24.W)
@@ -516,11 +608,30 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val divDiff = divSum(31, 0)
   val divGe = divSum(32)
 
+  // FAD, FSB, FML and FDV copy the registers into the snapshot block
+  // and branch to MT[0]. The Oberon trap reads Rb and Rc from -96 and
+  // -92. A store of the result to -88 writes the snapshot back, one
+  // register a cycle, with Ra replaced and H restored. N and Z follow
+  // the result. C and V stay. The phase counter is next to the read port.
+  val fpRa = Reg(UInt(4.W))
+  val fpRbVal = Reg(UInt(32.W))
+  val fpRcVal = Reg(UInt(32.W))
+  val fpResult = Reg(UInt(32.W))
+  val fpReturn = Reg(UInt(32.W))
+  val fpSavedH = Reg(UInt(32.W))
+  val fpSavedC = RegInit(false.B)
+  val fpSavedV = RegInit(false.B)
+  val fpRbLoad = RegInit(false.B)
+  val fpRcLoad = RegInit(false.B)
+  val fpHold = WireDefault(false.B)
+  fpRbLoad := false.B
+  fpRcLoad := false.B
+
   // Extra cycle of a two-read. PC stays on this instruction until the
   // second read commits. A stall owns the cycle instead.
   val regHold = twoRead && !regLatched && !stallFetch &&
     !memoryAccessPending && divPhase === 0.U && mulPhase === 0.U &&
-    !reset.asBool && !halted
+    fpPhase === 0.U && !reset.asBool && !halted
 
   // Proof 5. Page 0x22 is the placed Blink5 body. A fetch of that page
   // reads external memory. Every other PC, including reset and the
@@ -547,7 +658,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // Steal the memory port for one sector word before the next fetch.
   val secSteal = if (uartDisk) {
     secPhase === 1.U && bodyPhase === 0.U && !memoryAccessPending &&
-      divPhase === 0.U && mulPhase === 0.U && !haveBody
+      divPhase === 0.U && mulPhase === 0.U && fpPhase === 0.U && !haveBody
   } else false.B
   val secHold = if (uartDisk) {
     secPhase =/= 0.U && !haveBody && !memoryAccessPending &&
@@ -555,7 +666,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   } else false.B
   val wantBody = if (bodyFetch) {
     inBody && !haveBody && !memoryAccessPending && divPhase === 0.U &&
-      mulPhase === 0.U && !secHold
+      mulPhase === 0.U && fpPhase === 0.U && !secHold
   } else false.B
   if (bodyFetch) {
     when (wantBody) {
@@ -664,6 +775,22 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         printf(p"Keys R${memoryTargetReg} ${Hexadecimal(btnWord)}\n")
       }
       memoryAccessPending := false.B
+    } .elsewhen (fpRbLoad) {
+      when (memoryIsLoad) {
+        regWrite := true.B
+        regWriteAddr := memoryTargetReg
+        regWriteData := fpRbVal
+        printf(p"FP Rb R${memoryTargetReg} ${Hexadecimal(fpRbVal)}\n")
+      }
+      memoryAccessPending := false.B
+    } .elsewhen (fpRcLoad) {
+      when (memoryIsLoad) {
+        regWrite := true.B
+        regWriteAddr := memoryTargetReg
+        regWriteData := fpRcVal
+        printf(p"FP Rc R${memoryTargetReg} ${Hexadecimal(fpRcVal)}\n")
+      }
+      memoryAccessPending := false.B
     } .elsewhen (!norHold && !uartHold && !io.memStall) {
       when (memoryIsLoad) {
         // RISC5 inbus1: LDB zero-extends the lane adr[1:0] selects.
@@ -761,6 +888,43 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     mulPhase := 0.U
     pcNext := nextPC
     printf(p"MUL done R${mulDest}=${hwMul.io.p(31, 0)} H=${hwMul.io.p(63, 32)}\n")
+  } .elsewhen (fpPhase =/= 0.U) {
+    when (fpSaving) {
+      // The read port is this register. The block captures it on the clock.
+      fpSnapWe := true.B
+      fpSnapAddr := (fpPhase - 1.U)(3, 0)
+      fpSnapWdata := rdPort
+      fpPhase := fpPhase + 1.U
+      pcNext := pc
+    } .elsewhen (fpPhase === 17.U) {
+      // The block already holds the pre-trap R15. The handler reads the link.
+      regs(15) := fpReturn
+      pcNext := 0x20.U
+      fpPhase := 0.U
+      printf(p"FP trap enter R15=${Hexadecimal(fpReturn)} -> 20\n")
+    } .elsewhen (fpPhase === 18.U) {
+      // The word is on the output after this clock.
+      fpSnapAddr := 0.U
+      fpPhase := 19.U
+      pcNext := pc
+    } .otherwise {
+      val idx = (fpPhase - 19.U)(3, 0)
+      regWrite := true.B
+      regWriteAddr := idx
+      regWriteData := Mux(idx === fpRa, fpResult, fpSnapRdata)
+      when (fpPhase =/= 34.U) {
+        fpSnapAddr := (idx + 1.U)(3, 0)
+      }
+      when (fpPhase === 34.U) {
+        fpFinish := true.B
+        pcNext := fpReturn
+        fpPhase := 0.U
+        printf(p"FP done R${fpRa}=${Hexadecimal(fpResult)} pc ${Hexadecimal(fpReturn)}\n")
+      } .otherwise {
+        fpPhase := fpPhase + 1.U
+        pcNext := pc
+      }
+    }
   } .elsewhen (regHold) {
     // Rb is on the read port. The second read commits next cycle.
     pcNext := pc
@@ -855,6 +1019,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val timerAddr = effectiveAddr === "hFFFFFFC0".U
     // -60 (0xFFFFFFC4). The book's switches. Bit 0 is the button.
     val btnAddr = effectiveAddr === "hFFFFFFC4".U
+    // -96 Rb, -92 Rc, -88 the result store that returns from the trap.
+    val fpRbAddr = !isByte && effectiveAddr === "hFFFFFFA0".U
+    val fpRcAddr = !isByte && effectiveAddr === "hFFFFFFA4".U
+    val fpWrAddr = !isByte && effectiveAddr === "hFFFFFFA8".U
 
     when (isLoad) {  // LDW and LDB. The byte extract is on the completion cycle.
         val useHyper = WireDefault(true.B)
@@ -874,6 +1042,24 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
           memoryIsLoad := true.B
           memoryIsByte := isByte
           memoryLane := effectiveAddr(1, 0)
+          memoryTargetReg := regA
+        }
+        when (fpRbAddr) {
+          useHyper := false.B
+          fpRbLoad := true.B
+          memoryAccessPending := true.B
+          memoryIsLoad := true.B
+          memoryIsByte := false.B
+          memoryLane := 0.U
+          memoryTargetReg := regA
+        }
+        when (fpRcAddr) {
+          useHyper := false.B
+          fpRcLoad := true.B
+          memoryAccessPending := true.B
+          memoryIsLoad := true.B
+          memoryIsByte := false.B
+          memoryLane := 0.U
           memoryTargetReg := regA
         }
         if (bodyFetch) {
@@ -960,6 +1146,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
             io.bmpWord := effectiveAddr(14, 2)
           }
         }
+      } .elsewhen (fpWrAddr) {
+        fpResult := rdX
+        fpPhase := 18.U
+        fpHold := true.B
+        printf(p"FP result ${Hexadecimal(rdX)} -> R${fpRa}\n")
       } .elsewhen (screenHit || timerAddr || btnAddr) {
         // -80 is the old one-block screen. -64's write is blank in
         // the book. -60's write is the LED bank. This board's blink
@@ -1043,6 +1234,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         pcNext := nextPC
       }
     }
+    when (fpHold) {
+      pcNext := pc
+    }
   } .elsewhen (isF1Format || (format(3, 2) === "b00".U)) {
     // Unified handling for immediate (F1) and register (F0) operations
     // Determine if we are using the immediate operand (F1) or register operand (F0).
@@ -1067,6 +1261,21 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       Mux(shamt(i), Mux(shiftRight, righted, lefted), cur)
     }
 
+    when (!useImmediate && (op >= 12.U)) {
+      // F0 FAD, FSB, FML, FDV. The block copies the registers while PC
+      // stays here. The link is planted when that copy finishes, then
+      // MT[0] runs the branch Kernel.Init planted at 0x20.
+      fpRa := regA
+      fpRbVal := rdB
+      fpRcVal := rdX
+      fpReturn := pc + 4.U
+      fpSavedH := hReg
+      fpSavedC := c
+      fpSavedV := v
+      fpPhase := 1.U
+      pcNext := pc
+      printf(p"FP trap op ${op} R${regA} := R${regB} op R${regC} -> 20\n")
+    } .otherwise {
     switch(op) {
       is(0.U) { // MOV - Move immediate value to register / MHI special-case
         when(useImmediate && ((format === "b0110".U) || (format === "b0111".U))) {
@@ -1239,6 +1448,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         printf(p"DIV: R$regB=${bval} / ${operand} -> R$regA\n")
       }
     }
+    }
   } .otherwise {
     // For any other format (not implemented), just increment PC
     pcNext := nextPC
@@ -1306,7 +1516,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     heldInsn := instruction
     regLatched := true.B
   } .elsewhen (!stallFetch && !memoryAccessPending && divPhase === 0.U &&
-      mulPhase === 0.U && !reset.asBool) {
+      mulPhase === 0.U && fpPhase === 0.U && !reset.asBool) {
     regLatched := false.B
   }
   when (regHold || (regLatched && stallFetch)) {
@@ -1324,6 +1534,15 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     
     // Debug output
     printf(p"Writing ${regWriteData} to register ${regWriteAddr} (R${regWriteAddr} = ${regWriteData})\n")
+  }
+  // The restore writes a register every cycle, and that write also
+  // drives N and Z. The trapped result is what N and Z keep.
+  when (fpFinish) {
+    n := fpResult(31)
+    z := fpResult === 0.U
+    c := fpSavedC
+    v := fpSavedV
+    hReg := fpSavedH
   }
   
   // Halt when the PC runs off the ROM. A disk-boot fetch from outside

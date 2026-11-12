@@ -2,7 +2,7 @@
 
 One item at a time, from the top. This file is an index. The write-up is in the file each item names.
 
-Next: 38.
+Next: 39.
 
 1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay. Done. The measured result is in the ledger.
 
@@ -49,7 +49,7 @@ Ledger items are not to-dos. If a later item cannot fit on the Nano 4K without a
 35. The trap code in the status blocks. Same file, item 35. Done. The Dock took the broken disk, stopped at PC `3C30`, and the LED stayed dark. Next stays 35.
 36. The bitmap in block RAM: 180×120 on the 4K, 512×384 on the Dock. Same file, item 36. Done. The Dock square is 400 white pixels inside the box and none outside, on three trained SRAM loads. Next stays 36.
 37. More heap: measure the address reach, raise `MemLim`. Same file, item 37. Done. The measured result is in that file. Next stays 38.
-38. Floating point, trapped to Oberon on both boards. Same file, item 38.
+38. Floating point, trapped to Oberon on both boards. Same file, item 38. Done. The measured result is in that file. Next stays 39.
 39. The book's `Display` draws the square. Same file, item 39.
 40. The book's `Fonts`: the 4×6 font on the 4K, `Oberon10` on the Dock. Same file, item 40.
 41. The book's `Texts` writes the count; the Dock's digit hardware retires. Same file, item 41.

@@ -11,6 +11,7 @@ set_device -name GW2A-18C GW2A-LV18PG256C8/I7
 add_file -type verilog [file join $GOWIN src CPUMinimalWrapper.v]
 add_file -type verilog [file join $ROOT generated InstrRom.v]
 add_file -type verilog [file join $ROOT generated HwMul.v]
+add_file -type verilog [file join $GOWIN FpSnap.v]
 if {[info exists ::env(SECTOR_ROM)] && $::env(SECTOR_ROM) ne ""} {
   add_file -type verilog $::env(SECTOR_ROM)
 }

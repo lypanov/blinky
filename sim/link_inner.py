@@ -36,6 +36,7 @@ from sector_image import (  # noqa: E402
     BLINK_SEC,
     DIR_ROOT,
     HEADER_SIZE,
+    PAYLOAD_LIMIT,
     RATE_NAME,
     RATE_SEC,
     SECTOR,
@@ -211,10 +212,10 @@ cd "{PAYLOAD}"
         parsed["raw"] = open(path, "rb").read()
         if parsed["version"] != 1:
             raise SystemExit(f"{name} version {parsed['version']}")
-        if len(parsed["raw"]) > SECTOR - HEADER_SIZE + SECTOR:
+        if len(parsed["raw"]) > PAYLOAD_LIMIT:
             raise SystemExit(
                 f"{name}.rsc is {len(parsed['raw'])} bytes; "
-                f"a header and one continuation hold {SECTOR - HEADER_SIZE + SECTOR}"
+                f"a header and two continuations hold {PAYLOAD_LIMIT}"
             )
         mods[name] = parsed
     print(text, end="")
@@ -422,6 +423,32 @@ def _arm_prologue(with_disk: bool = False, memlim: int | None = None,
     a.word(0x20000000)
     a.word(f1(8, 0, 0, 1))
     a.word(f0(6, 8, 8, 0))
+    # FAD, FSB, FML, FDV, FLOOR and FLT. A wrong bit leaves R8 nonzero
+    # and the stored word is not the one the CPU compares. 1000 is built
+    # with an add so this sequence has no MOV of the wait.
+    def fp_check(op: int, lhs: int, rhs: int, expect: int, u: int = 0, v: int = 0) -> None:
+        for word in load_const(0, lhs):
+            a.word(word)
+        for word in load_const(1, rhs):
+            a.word(word)
+        a.word(f0(op, 2, 0, 1) | ((u & 1) << 29) | ((v & 1) << 28))
+        if expect == 1000:
+            a.word(f1(0, 1, 0, 500))
+            a.word(f1(8, 1, 1, 500))
+        else:
+            for word in load_const(1, expect):
+                a.word(word)
+        a.word(f0(9, 2, 2, 1))
+        a.word(f0(6, 8, 8, 2))
+
+    magic = 0x4B000000
+    fp_check(12, 0x3FC00000, 0x40200000, 0x40800000)  # 1.5 + 2.5 = 4
+    fp_check(13, 0x41100000, 0x40000000, 0x40E00000)  # 9 - 2 = 7
+    fp_check(14, 0x3F000000, 0x41000000, 0x40800000)  # 0.5 * 8 = 4
+    fp_check(15, 0x41700000, 0x40400000, 0x40A00000)  # 15 / 3 = 5
+    fp_check(14, 0x3F000000, 0x44FA0000, 0x447A0000)  # 0.5 * 2000 = 1000
+    fp_check(12, 0x447A0000, magic, 1000, v=1)  # FLOOR(1000)
+    fp_check(12, 7, magic, 0x40E00000, u=1)  # FLT(7) = 7.0
     for word in load_const(0, blink_mt):
         a.word(word)
     a.word(ldw(0, 0, 0))
@@ -568,10 +595,10 @@ def _append_arm(raw: bytes, prologue: list[int]) -> bytes:
         raise SystemExit(f"Blink5 entry moved from {body:#x} to {entry:#x}")
     size = struct.unpack_from("<I", buf, spot["size_at"])[0]
     struct.pack_into("<I", buf, spot["size_at"], size + 4 * len(extra))
-    if len(buf) > SECTOR - HEADER_SIZE + SECTOR:
+    if len(buf) > PAYLOAD_LIMIT:
         raise SystemExit(
             f"Blink5.rsc is {len(buf)} bytes; "
-            f"a header and one continuation hold {SECTOR - HEADER_SIZE + SECTOR}"
+            f"a header and two continuations hold {PAYLOAD_LIMIT}"
         )
     return bytes(buf)
 

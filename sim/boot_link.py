@@ -39,6 +39,7 @@ from rsc_parser import parse_rsc  # noqa: E402
 from sector_image import (  # noqa: E402
     DIR_MARK,
     HEADER_SIZE,
+    PAYLOAD_LIMIT,
     SECTOR,
     _dir_page,
     _file_pages,
@@ -498,7 +499,7 @@ def _with_index_trap(text: str) -> str:
     condition CC. The arm prologue is left off this disk, and the entry
     stays on this body, so the store at 0x7C0 never runs.
     """
-    var = "  VAR last, now, wait, old, keys, n, due: INTEGER;\n"
+    var = "  VAR last, now, wait, keys, n, due, half, thousand: INTEGER;\n"
     body = "BEGIN\n  SYSTEM.PUT(-84, 10BH);\n"
     if text.count(var) != 1 or text.count(body) != 1:
         raise SystemExit("Blink5.Mod has no single place for the index trap")
@@ -578,8 +579,11 @@ def _compile_files(env: dict[str, str], index_trap: bool = False) -> dict[str, b
     for name in ("AMemoryMappedToggle", "Blink5", "Oberon"):
         path = os.path.join(work, f"{name}.rsc")
         raw = open(path, "rb").read()
-        if len(raw) > SECTOR - HEADER_SIZE + SECTOR:
-            raise SystemExit(f"{name}.rsc is {len(raw)} bytes and needs a third sector")
+        if len(raw) > PAYLOAD_LIMIT:
+            raise SystemExit(
+                f"{name}.rsc is {len(raw)} bytes; "
+                f"a header and two continuations hold {PAYLOAD_LIMIT}"
+            )
         out[name] = raw
     return out
 
@@ -699,10 +703,10 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
             entries.append((filename, sector))
             which += 1
             continue
-        cont = None
-        if len(raw) > SECTOR - HEADER_SIZE:
-            cont = (which + 2) * 29
-        built = _file_pages(filename, raw, sector, cont)
+        room = SECTOR - HEADER_SIZE
+        cont = (which + 2) * 29 if len(raw) > room else None
+        cont2 = (which + 3) * 29 if len(raw) > room + SECTOR else None
+        built = _file_pages(filename, raw, sector, cont, cont2)
         for sec, page in built:
             page_bytes[sec] = page
         entries.append((filename, sector))

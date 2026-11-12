@@ -26,13 +26,18 @@ MODULE Blink5;
     A board without that device decodes the store and drops it.
 
     Kernel.Time reads the counter at -64. The wait is the integer at the
-    start of Blink.Rate, read once through Files.Old. One thousand is a
-    toggle every second and a full blink of 0.500 Hz. The next four bytes
-    are the negation of that integer, so a second delay keeps the same
-    disk checksum and the same arm word. A missing file, or a delay that
-    is not positive, stores the light off and stops. The clock starts
-    after that read. Opening the file takes longer than the delay, and
-    a clock started earlier would queue a burst of toggles.
+    start of Blink.Rate, read once through Files.Old, then multiplied by
+    FLOOR(0.5 * 2.0). That floor is 1, so the file still sets the rate.
+    One thousand is a toggle every second and a full blink of 0.500 Hz.
+    FLOOR(0.5 * 2000.0) is 1000. The four real operations are checked
+    too: 1.5 + 2.5 is 4, 9.0 - 2.0 is 7, 0.5 * 8.0 is 4, and 15.0 / 3.0
+    is 5. A miss stores the light off and stops before the arm word.
+    The next four bytes of the file are the negation of the integer, so
+    a second delay keeps the same disk checksum and the same arm word.
+    A missing file, or a delay that is not positive, stores the light
+    off and stops. The clock starts after that read. Opening the file
+    takes longer than the delay, and a clock started earlier would
+    queue a burst of toggles.
 
     The third time the light turns on, this loop halves the delay. The
     next edge is one half-delay later, and every edge after that stays
@@ -64,11 +69,12 @@ MODULE Blink5;
   TYPE Node = POINTER TO Rec;
     Rec = RECORD n: INTEGER; next: Node END;
 
-  VAR last, now, wait, keys, n, due: INTEGER;
+  VAR last, now, wait, keys, n, due, half, thousand: INTEGER;
     node, head: Node;
     kept*: INTEGER;
     rate: Files.File;
     R: Files.Rider;
+    sum, diff, prod, quot: REAL;
 
   PROCEDURE Collect;
     VAR m: Modules.Module;
@@ -128,6 +134,19 @@ BEGIN
   Files.Set(R, rate, 0);
   Files.ReadInt(R, wait);
   IF wait <= 0 THEN Dark END;
+  half := FLOOR(0.5 * 2.0);
+  IF half # 1 THEN Dark END;
+  thousand := FLOOR(0.5 * 2000.0);
+  IF thousand # 1000 THEN Dark END;
+  sum := 1.5 + 2.5;
+  IF sum # 4.0 THEN Dark END;
+  diff := 9.0 - 2.0;
+  IF diff # 7.0 THEN Dark END;
+  prod := 0.5 * 8.0;
+  IF prod # 4.0 THEN Dark END;
+  quot := 15.0 / 3.0;
+  IF quot # 5.0 THEN Dark END;
+  wait := wait * half;
   n := 0;
   due := 4;
   kept := 0; head := NIL;

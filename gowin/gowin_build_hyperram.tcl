@@ -48,6 +48,7 @@ add_file -type verilog [file join $OUT src CPUMinimalWrapper.v]
 add_file -type verilog [file join $OUT KeepBit.v]
 add_file -type verilog [file join $ROOT generated InstrRom.v]
 add_file -type verilog [file join $ROOT generated HwMul.v]
+add_file -type verilog [file join $OUT FpSnap.v]
 if {[info exists ::env(SECTOR_ROM)] && $::env(SECTOR_ROM) ne ""} {
   add_file -type verilog $::env(SECTOR_ROM)
 }

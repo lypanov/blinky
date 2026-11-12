@@ -268,12 +268,152 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
   BEGIN SYSTEM.PUT(at, 0E7000000H + (Padr - at) DIV 4 -1)
   END Install;
 
+  PROCEDURE BitAnd(x, y: INTEGER): INTEGER;
+  BEGIN RETURN SYSTEM.VAL(INTEGER, SYSTEM.VAL(SET, x) * SYSTEM.VAL(SET, y))
+  END BitAnd;
+
+  PROCEDURE BitOr(x, y: INTEGER): INTEGER;
+  BEGIN RETURN SYSTEM.VAL(INTEGER, SYSTEM.VAL(SET, x) + SYSTEM.VAL(SET, y))
+  END BitOr;
+
+  PROCEDURE BitXor(x, y: INTEGER): INTEGER;
+  BEGIN RETURN SYSTEM.VAL(INTEGER, SYSTEM.VAL(SET, x) / SYSTEM.VAL(SET, y))
+  END BitXor;
+
+  (* Book FPAdder / FPMultiplier / FPDivider. FAD with u is FLT and FAD
+     with v is FLOOR; the constant in Rc is 4B000000H. The CPU traps
+     FAD, FSB, FML and FDV here. -96 is Rb, -92 is Rc, and a store to
+     -88 writes Ra and returns. *)
+
+  PROCEDURE FAdd(x, y: INTEGER; u, v: BOOLEAN): INTEGER;
+    VAR xs, ys, xn, yn: BOOLEAN;
+      xe, ye, e0, e1, shift, xm, ym, x0, y0, x3, y3, xterm, yterm, sum, s, t3, res: INTEGER;
+  BEGIN
+    xs := BitAnd(x, 80000000H) # 0;
+    IF ~u THEN
+      xe := BitAnd(ASR(x, 23), 0FFH);
+      xm := BitOr(LSL(BitAnd(x, 7FFFFFH), 1), 1000000H);
+      IF xs THEN x0 := -xm ELSE x0 := xm END
+    ELSE
+      xe := 150; x0 := ASR(LSL(BitAnd(x, 0FFFFFFH), 8), 7)
+    END;
+    ys := BitAnd(y, 80000000H) # 0;
+    ye := BitAnd(ASR(y, 23), 0FFH);
+    ym := LSL(BitAnd(y, 7FFFFFH), 1);
+    IF ~u & ~v THEN ym := BitOr(ym, 1000000H) END;
+    IF ys THEN y0 := -ym ELSE y0 := ym END;
+    IF ye > xe THEN
+      shift := ye - xe; e0 := ye; y3 := y0;
+      IF shift > 31 THEN x3 := ASR(x0, 31) ELSE x3 := ASR(x0, shift) END
+    ELSE
+      shift := xe - ye; e0 := xe; x3 := x0;
+      IF shift > 31 THEN y3 := ASR(y0, 31) ELSE y3 := ASR(y0, shift) END
+    END;
+    IF xs THEN xterm := BitOr(6000000H, BitAnd(x3, 1FFFFFFH))
+    ELSE xterm := BitAnd(x3, 1FFFFFFH) END;
+    IF ys THEN yterm := BitOr(6000000H, BitAnd(y3, 1FFFFFFH))
+    ELSE yterm := BitAnd(y3, 1FFFFFFH) END;
+    sum := xterm + yterm;
+    IF BitAnd(sum, 4000000H) # 0 THEN s := -sum ELSE s := sum END;
+    s := BitAnd(s + 1, 7FFFFFFH);
+    e1 := e0 + 1; t3 := ASR(s, 1);
+    IF BitAnd(s, 3FFFFFCH) # 0 THEN
+      WHILE BitAnd(t3, 1000000H) = 0 DO t3 := LSL(t3, 1); DEC(e1) END
+    ELSE
+      t3 := LSL(t3, 24); e1 := e1 - 24
+    END;
+    xn := BitAnd(x, 7FFFFFFFH) = 0; yn := BitAnd(y, 7FFFFFFFH) = 0;
+    IF v THEN res := ASR(LSL(sum, 5), 6)
+    ELSIF xn THEN
+      IF u OR yn THEN res := 0 ELSE res := y END
+    ELSIF yn THEN res := x
+    ELSIF (BitAnd(t3, 1FFFFFFH) = 0) OR (BitAnd(e1, 100H) # 0) THEN res := 0
+    ELSE
+      res := BitOr(BitOr(LSL(BitAnd(sum, 4000000H), 5), LSL(e1, 23)),
+        BitAnd(ASR(t3, 1), 7FFFFFH))
+    END
+  RETURN res
+  END FAdd;
+
+  PROCEDURE FMul(x, y: INTEGER): INTEGER;
+    VAR xe, ye, e1, xm, ym, lo, hi, shifted, z0, sign, res: INTEGER;
+  BEGIN
+    sign := BitAnd(BitXor(x, y), 80000000H);
+    xe := BitAnd(ASR(x, 23), 0FFH); ye := BitAnd(ASR(y, 23), 0FFH);
+    xm := BitOr(BitAnd(x, 7FFFFFH), 800000H);
+    ym := BitOr(BitAnd(y, 7FFFFFH), 800000H);
+    lo := xm * ym; hi := SYSTEM.H(0);
+    IF hi DIV 8000H # 0 THEN
+      e1 := xe + ye - 126;
+      shifted := LSL(hi, 9) + BitAnd(ROR(lo, 23), 1FFH)
+    ELSE
+      e1 := xe + ye - 127;
+      shifted := LSL(hi, 10) + BitAnd(ROR(lo, 22), 3FFH)
+    END;
+    z0 := BitAnd(shifted + 1, 0FFFFFFH);
+    IF (xe = 0) OR (ye = 0) THEN res := 0
+    ELSIF BitAnd(e1, 100H) = 0 THEN
+      res := BitOr(BitOr(sign, LSL(BitAnd(e1, 0FFH), 23)), ASR(z0, 1))
+    ELSIF BitAnd(e1, 80H) = 0 THEN
+      res := BitOr(BitOr(sign, 7F800000H), ASR(z0, 1))
+    ELSE res := 0 END
+  RETURN res
+  END FMul;
+
+  PROCEDURE FDiv(x, y: INTEGER): INTEGER;
+    VAR xe, ye, e1, xm, ym, rem, q1, q2, q3, i, bit, sign, res: INTEGER;
+  BEGIN
+    sign := BitAnd(BitXor(x, y), 80000000H);
+    xe := BitAnd(ASR(x, 23), 0FFH); ye := BitAnd(ASR(y, 23), 0FFH);
+    xm := BitOr(BitAnd(x, 7FFFFFH), 800000H);
+    ym := BitOr(BitAnd(y, 7FFFFFH), 800000H);
+    rem := 0; q1 := 0; i := 48;
+    WHILE i >= 0 DO
+      bit := 0;
+      IF i >= 25 THEN bit := BitAnd(ASR(xm, i - 25), 1) END;
+      rem := LSL(rem, 1) + bit; q1 := LSL(q1, 1);
+      IF rem >= ym THEN rem := rem - ym; q1 := q1 + 1 END;
+      DEC(i)
+    END;
+    e1 := xe - ye + 126;
+    IF BitAnd(q1, 2000000H) # 0 THEN
+      e1 := e1 + 1; q2 := BitAnd(ASR(q1, 1), 0FFFFFFH)
+    ELSE q2 := BitAnd(q1, 0FFFFFFH) END;
+    q3 := q2 + 1;
+    IF xe = 0 THEN res := 0
+    ELSIF ye = 0 THEN res := BitOr(sign, 7F800000H)
+    ELSIF BitAnd(e1, 100H) = 0 THEN
+      res := BitOr(BitOr(sign, LSL(BitAnd(e1, 0FFH), 23)), ASR(q3, 1))
+    ELSIF BitAnd(e1, 80H) = 0 THEN
+      res := BitOr(BitOr(sign, 7F800000H), ASR(q2, 1))
+    ELSE res := 0 END
+  RETURN res
+  END FDiv;
+
+  PROCEDURE FExec(op, x, y: INTEGER; u, v: BOOLEAN): INTEGER;
+    VAR res: INTEGER;
+  BEGIN
+    IF op = 13 THEN y := BitXor(y, 80000000H); op := 12 END;
+    IF op = 12 THEN res := FAdd(x, y, u, v)
+    ELSIF op = 14 THEN res := FMul(x, y)
+    ELSE res := FDiv(x, y) END
+  RETURN res
+  END FExec;
+
   PROCEDURE Trap(VAR a: INTEGER; b: INTEGER);
-    VAR u, v, w: INTEGER;
-  BEGIN u := SYSTEM.REG(15); SYSTEM.GET(u - 4, v); w := v DIV 10H MOD 10H; (*trap number*)
-    IF w = 0 THEN New(a, b)
-    ELSE (*status mode: bit 7, then the trap number*)
-      SYSTEM.PUT(-84, 80H + w); LED(w + 192); REPEAT UNTIL FALSE
+    VAR u, v, w, op, xv, yv, res: INTEGER; fu, fv: BOOLEAN;
+  BEGIN u := SYSTEM.REG(15); SYSTEM.GET(u - 4, v);
+    op := v DIV 10000H MOD 10H;
+    IF (v >= 0) & (v DIV 40000000H = 0) & (op >= 12) THEN
+      fu := ODD(v DIV 20000000H); fv := ODD(v DIV 10000000H);
+      SYSTEM.GET(-96, xv); SYSTEM.GET(-92, yv);
+      res := FExec(op, xv, yv, fu, fv); SYSTEM.PUT(-88, res)
+    ELSE
+      w := v DIV 10H MOD 10H; (*trap number*)
+      IF w = 0 THEN New(a, b)
+      ELSE (*status mode: bit 7, then the trap number*)
+        SYSTEM.PUT(-84, 80H + w); LED(w + 192); REPEAT UNTIL FALSE
+      END
     END
   END Trap;
 

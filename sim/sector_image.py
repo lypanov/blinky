@@ -19,6 +19,8 @@ DIR_MARK = 0x9B1EA38D
 HEADER_MARK = 0x9BA71D86
 HEADER_SIZE = 352
 SECTOR = 1024
+# Header data plus two continuation sectors. FileDir.SecTabSize is 64.
+PAYLOAD_LIMIT = (SECTOR - HEADER_SIZE) + 2 * SECTOR
 DIR_ROOT = 29
 AMMT_SEC = 58
 BLINK_SEC = 87
@@ -51,12 +53,13 @@ def _header(name: bytes, payload: bytes, sector: int) -> bytes:
     return pages[0][1]
 
 
-def _file_pages(name: bytes, payload: bytes, sector: int, cont: int | None) -> list[tuple[int, bytes]]:
-    """Header page, and a second page when the object file passes byte 672.
+def _file_pages(name: bytes, payload: bytes, sector: int, cont: int | None,
+                cont2: int | None = None) -> list[tuple[int, bytes]]:
+    """Header page, and continuation pages when the object file passes byte 672.
 
     File length includes the 352-byte header. aleng * 1024 + bleng is that
-    length. sec[0] is the header. sec[1] is the continuation. A file this
-    short has no index page.
+    length. sec[0] is the header. sec[1] and sec[2] are continuations.
+    The header table holds 64 sectors, so these files have no index page.
     """
     if sector % 29:
         raise SystemExit(f"sector {sector} is not a multiple of 29")
@@ -74,8 +77,16 @@ def _file_pages(name: bytes, payload: bytes, sector: int, cont: int | None) -> l
     if cont % 29:
         raise SystemExit(f"continuation sector {cont} is not a multiple of 29")
     rest = payload[room:]
+    tail = b""
     if len(rest) > SECTOR:
-        raise SystemExit(f"{name!r} needs more than one continuation sector")
+        if cont2 is None:
+            raise SystemExit(f"{name!r} needs a second continuation sector")
+        if cont2 % 29:
+            raise SystemExit(f"continuation sector {cont2} is not a multiple of 29")
+        tail = rest[SECTOR:]
+        rest = rest[:SECTOR]
+        if len(tail) > SECTOR:
+            raise SystemExit(f"{name!r} needs more than two continuation sectors")
     total = HEADER_SIZE + len(payload)
     aleng, bleng = divmod(total, SECTOR)
     if bleng == 0:
@@ -87,10 +98,17 @@ def _file_pages(name: bytes, payload: bytes, sector: int, cont: int | None) -> l
     struct.pack_into("<III", buf, 36, aleng, bleng, 0)
     struct.pack_into("<I", buf, 96, sector)
     struct.pack_into("<I", buf, 100, cont)
+    if tail:
+        struct.pack_into("<I", buf, 104, cont2)
     buf[HEADER_SIZE:] = payload[:room]
     page = bytearray(SECTOR)
     page[: len(rest)] = rest
-    return [(sector, bytes(buf)), (cont, bytes(page))]
+    built = [(sector, bytes(buf)), (cont, bytes(page))]
+    if tail:
+        page2 = bytearray(SECTOR)
+        page2[: len(tail)] = tail
+        built.append((cont2, bytes(page2)))
+    return built
 
 
 def rate_page(delay_ms: int, sector: int) -> bytes:

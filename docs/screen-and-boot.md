@@ -240,6 +240,26 @@ The book's `FAD`, `FSB`, `FML` and `FDV` instructions. Neither chip has a floati
 
 Proof: Blink computes its wait as a `REAL` (for example `FLOOR(0.5 * 2000.0)`), and the arm word includes checks of all four operations against known results. A wrong result is a wrong rate or a dark LED. Published rate 0.500 Hz.
 
+Ops 12..15 trap. `FAD` with `u` is `FLT` and `FAD` with `v` is `FLOOR`; `Rc` holds `4B000000H`. The CPU copies the sixteen registers, one word per cycle, into one SP block, plants the return in R15, and branches to `0x20`. `Kernel.Trap` reads the faulting instruction, takes Rb from −96 and Rc from −92, and stores the result at −88. That store writes the result into Ra, restores the other registers and C, V and H, and returns to the instruction after the trapped operation. A flop snapshot of the sixteen registers, plus a second write port, was 5056 logic cells (4711 LUT, 345 ALU), past the 4608 of the Nano 4K.
+
+Blink requires `FLOOR(0.5 * 2.0) = 1`, `FLOOR(0.5 * 2000.0) = 1000`, `1.5 + 2.5 = 4`, `9.0 - 2.0 = 7`, `0.5 * 8.0 = 4` and `15.0 / 3.0 = 5`. `wait` is multiplied by that 1, so the file still sets the rate. The arm prologue checks those four operations, `FLOOR(1000)` and `FLT(7)`. The rate file is still 1000 ms, `E8 03 00 00 18 FC FF FF`. The third time the light turns on, `wait` is halved in memory. The file is left as it was.
+
+The disk is 50196 bytes, checksum `8d9b083d`, arm word `2c8705d8`, sha256 `51eb42a6e51970df0da55bee13a2cef6e3661629f43b58cdc56c09278fe26b9f`. Blink's code is 474 words at `0xab6c`, sum `9bd08232`. The boot ROM is 430 of 512 words. Blink5's object is 1592 bytes, so it uses one continuation sector. A file may use a second continuation sector.
+
+Verilator, `tools/run_verilator_sim.sh`, N=2, so the file stands in at 2 ms. The NOR disk's first three edges are cycles 331816766, 331869416, and 331924162, period 54000, mask `FFFFFFFFFF`, R5 and R9 zero. The button hold pauses. The 24-edge run is still blinking after `Collect` walked the list, last edge cycle 374926406. The 100 ms disk halves after the third rise. The 4 ms image, same bytes apart from the rate, has period 108000. The UART disk matches those bytes. Its period is 96750, first edge cycle 53903740, and its 24-edge run ends at cycle 97237860 with the same mask. The UART 100 ms disk halves after the third rise. The index-trap image is `81H` and the LED stays dark, on the NOR disk and on the UART disk. `MemLim` `0x27FE0` halts with the LED dark on both.
+
+4K place, `modules_n1000`, square, `place_option` 0. Built Thu 12 Nov 2026 04:17:25. Logic 4512/4608 (98%; 4143 LUT, 369 ALU), registers 2204/3612 (62%), CLS 2299/2304 (100%). BSRAM 7/10 (2 SP, 3 SDPB, 1 SDPX9B, 1 pROM). DSP 2/8, one `MULT36X36`. Setup and hold violated endpoints 0. Worst setup slack +0.355 ns. Worst hold slack +0.570 ns. The 27 MHz port's Fmax is 71.049 MHz. `cpu_clk` Fmax is 13.704 MHz against 13.500. The HyperRAM `clkdiv` Fmax is 71.416 MHz against 27.000. The bitstream is `gowin/impl/pnr/modules_n1000.fs`, 1772222 bytes, sha256 `9967bd3650db977c25c8778bcccfc58c98aa4db9567480d7a690d92ef5d5db16`.
+
+The Nano is USB port `3-3.3`, bus 003 device 012. The NOR write is the data file at `0x200000`. The read-back matches, and the 256 bytes at `0x1FFF00` are unchanged. One SRAM load, `openFPGALoader -m`, `write to ram`, Load SRAM 100%. Nothing else was written to flash.
+
+Webcam `/dev/video2`, box `200,218` 40×24, 30 fps. Clip `/home/lypanov/fpga/blink-measure/fp-trap-6c45/nano/clip.mkv`, 1112 frames analyzed of 1352, 37.02 s, after an 8 s warmup. The first rise in that window is at 4.699 s. The rise-to-rise gaps are 60 frames, 60 frames, then 30 frames: 1.999 s, 1.999 s, then 1.000 s. One later gap is 31 frames, 1.033 s. The HDMI cable stayed on the Dock.
+
+Dock place, `ddr3modules_n1000`, text, `place_option` 0, `route_option` 1. Built Thu 12 Nov 2026 04:21:09. Logic 6071/20736 (30%; 5543 LUT, 528 ALU), registers 3083, CLS 4311/10368 (42%). BSRAM 14/46 (1 SP, 12 SDPB, 1 pROM). Setup and hold violated endpoints 0. Worst setup slack +0.771 ns. Worst hold slack +0.274 ns. `pclk` Fmax is 104.549 MHz against 96.749. `cpu_clk` Fmax is 27.687 MHz against 24.187. The pixel clock Fmax is 114.240 MHz against 64.800. The bitstream is `gowin/primer20k/impl/pnr/ddr3modules_n1000.fs`, 7261998 bytes, sha256 `d3efbfd5bca4456f6ba8c79dd8c9ccf388123bffb03e2f3312a6a6fe163b544c`.
+
+The Dock is USB port `3-3.1.1`, bus 003 device 013. Three SRAM loads of that file, each `openFPGALoader -m`, each `write to ram` and Load SRAM 100%. Each waited at `C.0440`, lanes `000C` `000A`, E0 `A55A`, G `A55A`, F `AB`, took 50196 bytes, and the mask became `FFFFFFFFFF` with R5 and R9 zero. The armed PCs were `3B34`, `3B28`, and `3B18`, in the wait at `0x3B20`. Nothing was written to the Dock flash.
+
+Next stays 39. Item 34 is not done.
+
 ## Item 39 — the book's `Display`
 
 The book's `Display` module, with this board's width, height and bitmap address as its constants. Blink draws the square with `Display.ReplConst` instead of its own stores.

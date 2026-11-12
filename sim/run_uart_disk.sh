@@ -61,6 +61,7 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/generated/CPUSimTopHyper.v" \
   "$ROOT/generated/InstrRom.v" \
   "$ROOT/generated/HwMul.v" \
+  "$ROOT/generated/FpSnap.v" \
   "$ROOT/sim/HyperRamUserModel.v" \
   "$ROOT/sim/CpuClock2.v" \
   "$ROOT/gowin/KeepBit.v" \
@@ -197,6 +198,7 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/generated/CPUSimTopHyper.v" \
   "$ROOT/generated/InstrRom.v" \
   "$ROOT/generated/HwMul.v" \
+  "$ROOT/generated/FpSnap.v" \
   "$ROOT/sim/HyperRamUserModel.v" \
   "$ROOT/sim/CpuClock2.v" \
   "$ROOT/gowin/KeepBit.v" \
