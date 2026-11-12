@@ -54,3 +54,11 @@ IO_LOC "tmds_d_p[1]" 32,31;
 IO_PORT "tmds_d_p[1]" PULL_MODE=NONE DRIVE=3.5;
 IO_LOC "tmds_d_p[2]" 35,34;
 IO_PORT "tmds_d_p[2]" PULL_MODE=NONE DRIVE=3.5;
+
+# The fonts place used all 8 long wires. bodyFor is the smallest of
+# those nets, so it takes general routing. The instruction bit that
+# would move onto the freed long wire stays on a primary clock.
+# pll_lock stays on a long wire, which is where the lockable bitmap
+# place put it. One long wire stays unused.
+CLOCK_LOC "u_cpu/cpu/bodyFor_31_8" LOCAL_CLOCK;
+CLOCK_LOC "u_cpu/cpu/_instructionRom_data_0_3" BUFG = LOGIC;
