@@ -19,8 +19,10 @@ DIR_MARK = 0x9B1EA38D
 HEADER_MARK = 0x9BA71D86
 HEADER_SIZE = 352
 SECTOR = 1024
-# Header data plus two continuation sectors. FileDir.SecTabSize is 64.
-PAYLOAD_LIMIT = (SECTOR - HEADER_SIZE) + 2 * SECTOR
+# Header data plus continuation sectors. FileDir.SecTabSize is 64.
+# Display.rsc is the book's module and does not fit in two continuations.
+MAX_CONT = 8
+PAYLOAD_LIMIT = (SECTOR - HEADER_SIZE) + MAX_CONT * SECTOR
 DIR_ROOT = 29
 AMMT_SEC = 58
 BLINK_SEC = 87
@@ -54,39 +56,41 @@ def _header(name: bytes, payload: bytes, sector: int) -> bytes:
 
 
 def _file_pages(name: bytes, payload: bytes, sector: int, cont: int | None,
-                cont2: int | None = None) -> list[tuple[int, bytes]]:
+                cont2: int | None = None,
+                extra: list[int] | None = None) -> list[tuple[int, bytes]]:
     """Header page, and continuation pages when the object file passes byte 672.
 
     File length includes the 352-byte header. aleng * 1024 + bleng is that
-    length. sec[0] is the header. sec[1] and sec[2] are continuations.
+    length. sec[0] is the header. sec[1] onward are continuations, in order.
     The header table holds 64 sectors, so these files have no index page.
     """
-    if sector % 29:
-        raise SystemExit(f"sector {sector} is not a multiple of 29")
+    conts: list[int] = []
+    if cont is not None:
+        conts.append(cont)
+    if cont2 is not None:
+        if cont is None:
+            raise SystemExit(f"{name!r} has a second continuation and no first")
+        conts.append(cont2)
+    if extra:
+        conts.extend(extra)
+    if sector % 29 or any(sec % 29 for sec in conts):
+        raise SystemExit(f"sector {sector} {conts} is not a multiple of 29")
     room = SECTOR - HEADER_SIZE
-    if len(payload) <= room:
-        buf = bytearray(SECTOR)
-        struct.pack_into("<I", buf, 0, HEADER_MARK)
-        buf[4:36] = _name32(name)
-        struct.pack_into("<III", buf, 36, 0, HEADER_SIZE + len(payload), 0)
-        struct.pack_into("<I", buf, 96, sector)
-        buf[HEADER_SIZE : HEADER_SIZE + len(payload)] = payload
-        return [(sector, bytes(buf))]
-    if cont is None:
-        raise SystemExit(f"{name!r} is {len(payload)} bytes and has no continuation sector")
-    if cont % 29:
-        raise SystemExit(f"continuation sector {cont} is not a multiple of 29")
+    chunks = [payload[:room]]
     rest = payload[room:]
-    tail = b""
-    if len(rest) > SECTOR:
-        if cont2 is None:
-            raise SystemExit(f"{name!r} needs a second continuation sector")
-        if cont2 % 29:
-            raise SystemExit(f"continuation sector {cont2} is not a multiple of 29")
-        tail = rest[SECTOR:]
-        rest = rest[:SECTOR]
-        if len(tail) > SECTOR:
-            raise SystemExit(f"{name!r} needs more than two continuation sectors")
+    while rest:
+        chunks.append(rest[:SECTOR])
+        rest = rest[SECTOR:]
+    if len(chunks) == 1:
+        if conts:
+            raise SystemExit(f"{name!r} fits its header and was given continuations")
+    elif len(conts) != len(chunks) - 1:
+        raise SystemExit(
+            f"{name!r} is {len(payload)} bytes and needs {len(chunks) - 1} "
+            f"continuation sectors, got {len(conts)}"
+        )
+    if len(conts) > MAX_CONT:
+        raise SystemExit(f"{name!r} needs {len(conts)} continuations")
     total = HEADER_SIZE + len(payload)
     aleng, bleng = divmod(total, SECTOR)
     if bleng == 0:
@@ -97,17 +101,14 @@ def _file_pages(name: bytes, payload: bytes, sector: int, cont: int | None,
     buf[4:36] = _name32(name)
     struct.pack_into("<III", buf, 36, aleng, bleng, 0)
     struct.pack_into("<I", buf, 96, sector)
-    struct.pack_into("<I", buf, 100, cont)
-    if tail:
-        struct.pack_into("<I", buf, 104, cont2)
-    buf[HEADER_SIZE:] = payload[:room]
-    page = bytearray(SECTOR)
-    page[: len(rest)] = rest
-    built = [(sector, bytes(buf)), (cont, bytes(page))]
-    if tail:
-        page2 = bytearray(SECTOR)
-        page2[: len(tail)] = tail
-        built.append((cont2, bytes(page2)))
+    for i, sec in enumerate(conts):
+        struct.pack_into("<I", buf, 100 + 4 * i, sec)
+    buf[HEADER_SIZE : HEADER_SIZE + len(chunks[0])] = chunks[0]
+    built = [(sector, bytes(buf))]
+    for sec, chunk in zip(conts, chunks[1:]):
+        page = bytearray(SECTOR)
+        page[: len(chunk)] = chunk
+        built.append((sec, bytes(page)))
     return built
 
 

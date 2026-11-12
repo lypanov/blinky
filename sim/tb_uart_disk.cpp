@@ -7,7 +7,38 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <vector>
+
+// Ten bitmap rows, word 1764 then +16, bits 22..31. Display.ReplConst
+// on the Dock constants writes these words and no others.
+static const int SQ_N = 10;
+static const int SQ_WORD0 = 1764;
+static const int SQ_STEP = 16;
+static const uint32_t SQ_DATA = 0xFFC00000u;
+
+static int square_ok(const std::map<int, uint32_t>& bmp, int led_on) {
+  const uint32_t want = led_on ? SQ_DATA : 0u;
+  for (int i = 0; i < SQ_N; i++) {
+    int word = SQ_WORD0 + i * SQ_STEP;
+    auto it = bmp.find(word);
+    uint32_t got = it == bmp.end() ? 0u : it->second;
+    if (got != want) {
+      fprintf(stderr, "FAIL square word %d is %08x wanted %08x\n", word, got, want);
+      return 0;
+    }
+  }
+  for (const auto& kv : bmp) {
+    int rel = kv.first - SQ_WORD0;
+    int on_square = rel >= 0 && (rel % SQ_STEP) == 0 && (rel / SQ_STEP) < SQ_N;
+    if (!on_square && kv.second != 0u) {
+      fprintf(stderr, "FAIL bitmap word %d is %08x\n", kv.first, kv.second);
+      return 0;
+    }
+  }
+  printf("SQUARE led %d words %d data %08x\n", led_on, SQ_N, want);
+  return 1;
+}
 
 static vluint64_t main_time = 0;
 double sc_time_stamp() { return static_cast<double>(main_time); }
@@ -116,6 +147,7 @@ int main(int argc, char** argv) {
   int failed = 0;
   int screen_pulses = 0;
   int prev_screen = 0;
+  std::map<int, uint32_t> bmp;
   int status_writes = 0;
   int saw_mode = 0;
   int mem_before_status = 0;
@@ -157,7 +189,10 @@ int main(int argc, char** argv) {
              (unsigned long long)top->mask);
     }
     int screen = top->screen_we ? 1 : 0;
-    if (screen && !prev_screen) screen_pulses++;
+    if (screen && !prev_screen) {
+      screen_pulses++;
+      bmp[top->bmp_word] = top->bmp_data;
+    }
     prev_screen = screen;
     int led = top->led ? 1 : 0;
     if (led) saw_led = 1;
@@ -288,6 +323,9 @@ int main(int argc, char** argv) {
         fprintf(stderr, "FAIL pc %08x is still in the bootstrap\n", top->pc);
         failed = 1;
       }
+    }
+    if (!failed && !edges.empty() && !square_ok(bmp, top->led ? 1 : 0)) {
+      failed = 1;
     }
   }
   // 0x01 latches the same switch bit as the button. The LED stays on

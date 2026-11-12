@@ -54,18 +54,19 @@ ALLOC = 0x2000
 # The boot image occupies the low addresses. The stack sits above the
 # modules, and the heap is the gap from that origin up to MemLim.
 # Files.Old takes a 1280-byte buffer and a 512-byte descriptor.
-# Oberon, AMemoryMappedToggle, Blink5, and Blink.Rate each take that
-# pair (7168). Blink5's continuation reuses its one buffer. The rest of
-# this 64 KB heap is 1824 records of 32 bytes. The bitmap windows sit
+# Oberon, Display, AMemoryMappedToggle, Blink5, and Blink.Rate each
+# take that pair (8960). A continuation reuses its one buffer. The rest
+# of this 64 KB heap is 1768 records of 32 bytes. The bitmap windows sit
 # at 0FFFE0000H and 0FFFE8000H, outside the heap. One record less is
 # the ROM whose LED stays dark.
 STACK = 0x18000
 FILE_BYTES = 1280 + 512
-KEPT = (0x10000 - FILE_BYTES * 4) // 32
-HEAP_BYTES = FILE_BYTES * 4 + 32 * KEPT
+OPEN_FILES = 5
+KEPT = (0x10000 - FILE_BYTES * OPEN_FILES) // 32
+HEAP_BYTES = FILE_BYTES * OPEN_FILES + 32 * KEPT
 MEMLIM = STACK + HEAP_BYTES
 SHORT_MEMLIM = MEMLIM - 32
-if KEPT != 1824 or HEAP_BYTES != 0x10000 or MEMLIM != 0x28000 or SHORT_MEMLIM != 0x27FE0:
+if KEPT != 1768 or HEAP_BYTES != 0x10000 or MEMLIM != 0x28000 or SHORT_MEMLIM != 0x27FE0:
     raise SystemExit(
         f"heap {HEAP_BYTES:#x} kept {KEPT} memlim {MEMLIM:#x} short {SHORT_MEMLIM:#x}"
     )
@@ -1255,7 +1256,7 @@ def main() -> int:
     parser.add_argument("--flash-boot", action="store_true",
                         help="ROM is the disk bootstrap. Write sim/out/disk.bin")
     parser.add_argument("--uart-disk", action="store_true",
-                        help="ROM is the UART bootstrap. Same disk.bin, stored in DDR3")
+                        help="ROM is the UART bootstrap. The Dock disk, stored in DDR3")
     parser.add_argument("--no-collect", action="store_true",
                         help="Leave the collector call out, so the eighth on-edge stops")
     parser.add_argument("--index-trap", action="store_true",

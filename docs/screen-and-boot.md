@@ -262,9 +262,33 @@ Next stays 39. Item 34 is not done.
 
 ## Item 39 — the book's `Display`
 
-The book's `Display` module, with this board's width, height and bitmap address as its constants. Blink draws the square with `Display.ReplConst` instead of its own stores.
+The book's `Display` (NW 5.11.2013 / 17.1.2019). The procedures are the book's. The row stride is the named constant `span = width DIV 8`, and the address is `base + (x DIV 32)*4 + y*span`. Y=0 is the low address, the top of this bitmap. Bit 0 of a word is the left pixel. Blink draws the square with `Display.ReplConst` in replace mode.
 
-Proof: the same square, the same lit box on the capture card, the same frame check, 0.500 Hz.
+The source in git is the 4K set. The Dock link replaces one line in `Display` and one line in `Blink5`. The 4K constants are width 256, height 120, base -131072 (`FFFE0000H`), span 32. The square is x 75, y 55, 5 by 5. That is words 442, 450, 458, 466, and 474, data `0000F800H`. Width 256 is the storage stride. The visible picture is 180 wide, and x 75 sits inside it. The Dock constants are width 512, height 384, base -98304 (`FFFE8000H`), span 64. The square is x 150, y 110, 10 by 10: word 1764, then every 16th word, ten rows, data `FFC00000H`. Both are the same 20×20 screen box, x 300..319, y 220..239.
+
+Two disks. The cores match once the planted Blink5 sum at image offset 28 is zeroed, and the files differ. `Display.rsc` is 4548 bytes and takes the header plus four continuation sectors. A file may use eight. The page limit stays 80. Five files are open before the `NEW` loop, so `kept` is 1768. The heap is `10000H` bytes, `MemLim` is `28000H`.
+
+A word load of the live bitmap returns 0 in one cycle and does not touch HyperRAM or DDR3. The live half is address bit 15 set on the Dock image and clear on the 4K image. A load must not hold the PC. Holding it made the same `LDW` run again after R0 became 0, and the second read was address 0. Returning 0 is the black background `ReplConst` replaces into. An invert, or a `CopyPattern` that ORs with pixels already in the word, would be wrong. Item 40 needs a real read for that.
+
+The Dock bitstream is `VIDEO_MODE=text`. A square-only netlist does not train on this floorplan. The digit glyphs are forced off, so the bitmap is the whole picture. The bridge flag `got_s0` is at R2C[42:48]. The sampler box is full, and that pocket is the place whose pattern-0 window reads `A55A`. The disk receiver ignores start bits for 2^18 cpu clocks after reset, about 11 ms. A start bit while the FPGA is configuring was otherwise the bootstrap's first word, and the CPU had left `0440` before a status line could show the wait.
+
+Verilator, `tools/run_verilator_sim.sh`, exit 0. The NOR disk's first three edges are cycles 348364674, 348418306, and 348472334, period 54000, PC `0000BC70`, mask `FFFFFFFFFF`. The square is 5 words of `0000F800H`. The 24-edge run's last edge is cycle 390133836. The 100 ms disk's first three edges are 351010418, 353710930, and 356410702. The UART disk's first three edges are 68613016, 68709486, and 68806112, period 96750, PC `0000BC90`. The square is 10 words of `FFC00000H`. The 24-edge run's last edge is cycle 110703660. The UART 100 ms disk's first three edges are 73353544, 78191678, and 83028832. The index-trap image stays dark on both disks. `MemLim` `27FE0H` halts with the LED dark on both. The frame check matches the Dock square on, 400 white pixels, and the Dock square off, 0.
+
+The 4K disk is 55316 bytes, checksum `89efd81c`, sha256 `b300cfc7f338d57d249c6283ef7b5c8a12cc34440f1d4235fdd27accafa17249`. The Dock disk is 55316 bytes, checksum `922cdf94`, arm word `3330d271`, sha256 `a2a1ab1adda080054d52308eb64a3c735a30dc49280cb58141c3d0634481b12d`. The rate word is 1000 ms on both, `E8 03 00 00 18 FC FF FF`.
+
+4K place, `modules_n1000`, square, `place_option` 0. Built Thu 12 Nov 2026 05:56:45. Logic 4488/4608 (98%; 4119 LUT, 369 ALU), registers 2205/3612 (62%), CLS 2297/2304 (100%). BSRAM 7/10 (2 SP, 3 SDPB, 1 SDPX9B, 1 pROM). DSP 2/8, one `MULT36X36`. Setup and hold violated endpoints 0. Worst setup slack +2.592 ns. Worst hold slack +0.210 ns. The 27 MHz port's Fmax is 65.307 MHz. `cpu_clk` Fmax is 14.968 MHz against 13.500. The HyperRAM `clkdiv` Fmax is 49.968 MHz against 27.000. The bitstream is `gowin/impl/pnr/modules_n1000.fs`, 1772222 bytes, sha256 `dacafdd8be2b4d3c9926ca7d765c0da657e053b1e22a84eb2b01fd09dee005aa`.
+
+The Nano is USB port `3-3.3`, bus 003 device 012. The NOR write is the data file at `0x200000`. The read-back matches, and the 256 bytes at `0x1FFF00` are unchanged. SRAM loads were `openFPGALoader -m`, `write to ram`, Load SRAM 100%. Nothing else was written to flash. The HDMI cable stayed on the Dock.
+
+Webcam `/dev/video2`, 640×480, 30 fps, box `200,218` 40×24. Clip `/home/lypanov/fpga/blink-measure/display-square-nano-boot/clip.mkv`, 1142 frames. A 470-frame dark stretch, 15.667 s, is the SRAM reload. After it, the rise-to-rise gaps are 60 frames, 60 frames, then 30 frames: 2.000 s, 2.000 s, then 1.000 s. One later gap is 31 frames, 1.033 s.
+
+Dock place, `ddr3modules_n1000`, text, `place_option` 0, `route_option` 1. Built Thu 12 Nov 2026 07:43:48. Logic 6061/20736 (30%; 5513 LUT, 548 ALU), registers 3103/16173 (20%), CLS 4291/10368 (42%). BSRAM 14/46 (1 SP, 12 SDPB, 1 pROM). DSP 2/24, one `MULT36X36`. Setup and hold violated endpoints 0. Worst setup slack +0.479 ns. Worst hold slack +0.274 ns. `pclk` Fmax is 101.455 MHz against 96.749. `cpu_clk` Fmax is 27.041 MHz against 24.187. The pixel clock Fmax is 107.879 MHz against 64.800. The bitstream is `gowin/primer20k/impl/pnr/ddr3modules_n1000.fs`, 7261998 bytes, sha256 `eafbd6ef0930f6e6bdc4c94605002ea24e9de3ec1c3c10bc24a74a92ce8d660f`.
+
+The Dock is USB port `3-3.1.1`, bus 003 device 013. Three SRAM loads of that file, each `openFPGALoader -m`, each `write to ram` and Load SRAM 100%. Each waited at `C.0440` with the mask clear, lanes `000C` `000A`, G `A55A`, F `AB`, then took the 55316-byte disk. The mask became `FFFFFFFFFF` and the PC left `0440`. The backoff-0 sample E0 was `A558` on the first load and `A57A` on the second and third. The armed PCs in the wait at `0x3B20` were `3B28`, `3B30`, and `3B20`. Nothing was written to the Dock flash.
+
+Capture card `/dev/video0`, 1024×768, 60 fps, 2520 frames, luma above 200. Clip `/home/lypanov/fpga/blink-measure/display-square-dock/clip-boot.mkv`. Frame 550, in the first on-period, has exactly 400 pixels of luma 255 at x 300..319, y 220..239. The one-pixel ring is luma 0, and no pixel above 200 sits outside the box. The off-period is black. The rise-to-rise gaps are 121 frames (2.017 s), 119 frames (1.983 s), then 61 frames (1.017 s). After the rate has halved, white pixels accumulate outside the box. Frame 2000 still has the 400-pixel square at luma 255, and also 36 pixels elsewhere.
+
+Next is 40. Item 34 is not done.
 
 ## Item 40 — the book's `Fonts`
 

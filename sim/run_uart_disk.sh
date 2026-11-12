@@ -28,8 +28,29 @@ python3 "$ROOT/sim/link_inner.py" \
   --flash-boot \
   --max-iter "$N" \
   --out "$ROOT/sim/out/flash_boot.words"
-cmp "$DISK" "$ROOT/sim/out/disk_uart.bin"
-echo "[ok] UART disk bytes match the 4K flash disk"
+cp "$DISK" "$ROOT/sim/out/disk_flash.bin"
+python3 - "$ROOT/sim/out/disk_uart.bin" "$ROOT/sim/out/disk_flash.bin" << 'PY'
+import sys
+
+def core(path):
+    data = open(path, "rb").read()
+    image = bytearray(data[20 + 1024:])
+    alloc = int.from_bytes(image[16:20], "little")
+    if not 0 < alloc <= len(image):
+        raise SystemExit(f"{path} alloc {alloc:#x} past {len(image)} bytes")
+    # Address 28 is the sum of Blink5, which inlines this board's square.
+    image[28:32] = b"\0\0\0\0"
+    return data, bytes(image[:alloc])
+
+uart, flash = sys.argv[1:]
+du, cu = core(uart)
+df, cf = core(flash)
+if cu != cf:
+    raise SystemExit("the boot cores of the two disks differ")
+if du == df:
+    raise SystemExit("the 4K and Dock disks are the same file")
+print(f"[ok] disks differ, boot cores match ({len(cu)} bytes)")
+PY
 
 cp "$ROOT/sim/out/core_uart.map" "$MAP"
 cp "$ROOT/sim/out/disk_uart.bin" "$DISK"
@@ -166,8 +187,27 @@ python3 "$ROOT/sim/link_inner.py" \
   --index-trap \
   --max-iter "$N" \
   --out "$ROOT/sim/out/index-trap-flash.words"
-cmp "$DISK" "$ROOT/sim/out/disk-index-trap-uart.bin"
-echo "[ok] index-trap UART disk bytes match the 4K flash disk"
+python3 - "$DISK" "$ROOT/sim/out/disk-index-trap-uart.bin" << 'PY'
+import sys
+
+def core(path):
+    data = open(path, "rb").read()
+    image = bytearray(data[20 + 1024:])
+    alloc = int.from_bytes(image[16:20], "little")
+    if not 0 < alloc <= len(image):
+        raise SystemExit(f"{path} alloc {alloc:#x}")
+    image[28:32] = b"\0\0\0\0"
+    return data, bytes(image[:alloc])
+
+flash, uart = sys.argv[1:]
+df, cf = core(flash)
+du, cu = core(uart)
+if cf != cu:
+    raise SystemExit("index-trap boot cores differ")
+if df == du:
+    raise SystemExit("index-trap disks are the same file")
+print(f"[ok] index-trap disks differ, boot cores match ({len(cf)} bytes)")
+PY
 "$BIN" --expect-halt --expect-no-arm --expect-status 0x81 --min-pc 0x900 \
   --status-seq 1,3,4,5,6,7,8,9,10,11,0x81 \
   +disk="$ROOT/sim/out/disk-index-trap-uart.bin"
@@ -185,9 +225,9 @@ python3 "$ROOT/sim/link_inner.py" \
   --short-heap \
   --max-iter "$N" \
   --out "$ROOT/sim/out/flash_boot_neg.words"
-cmp "$DISK" "$ROOT/sim/out/disk_uart_neg.bin"
-cmp "$DISK" "$ROOT/sim/out/disk_uart.bin"
-echo "[ok] short-heap UART disk bytes match the 4K flash disk and the full disk"
+cmp "$ROOT/sim/out/disk_uart_neg.bin" "$ROOT/sim/out/disk_uart.bin"
+cmp "$DISK" "$ROOT/sim/out/disk_flash.bin"
+echo "[ok] short-heap ROM keeps each board's full disk"
 cp "$ROOT/sim/out/core_uart_neg.map" "$MAP"
 cp "$ROOT/sim/out/disk_uart_neg.bin" "$DISK"
 if ! SIM_IMAGE=modules mill chisel-blinky.runMain gcd.CPUSimTop; then

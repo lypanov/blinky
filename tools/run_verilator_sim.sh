@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Prove the two current images. Both boot the same disk.bin.
+# Prove the two current images. Each builds its own disk.bin.
+# Display's width, height and bitmap address differ. The boot core matches.
 # The 4K reads it from the NOR model. The Dock reads it from the UART,
 # with HyperRAM standing in for DDR3. The wait is 2 ms. A 100 ms disk
 # halves to 50 ms after the third rising edge: Blink writes the half

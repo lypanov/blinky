@@ -521,7 +521,12 @@ module blinky_top_ddr3 (
   wire disk_take;
   wire [31:0] disk_word;
   // cpu_clk is 24.1875 MHz. 24187500/115200 = 209.9609.
-  uart_word_rx #(.CLKS_PER_BIT(210)) u_disk_rx (
+  // QUIET_CLKS ignores start bits for 2^18 clocks after reset, about
+  // 11 ms. A start bit during configuration was the bootstrap's first
+  // word, so the CPU had left 0440 before a status line could show it.
+  // The counter is inside u_disk_rx, which the sampler group already
+  // places. The sim leaves QUIET_CLKS at 0.
+  uart_word_rx #(.CLKS_PER_BIT(210), .QUIET_CLKS(262144)) u_disk_rx (
     .clk    (cpu_clk),
     .resetn (~cpu_reset),
     .rx     (uart_rx),

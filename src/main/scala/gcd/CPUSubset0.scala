@@ -558,8 +558,13 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   // A load of -60 completes from the switch bit, on the same cycle.
   val timerLoad = RegInit(false.B)
   val btnLoad = RegInit(false.B)
+  // The picture RAM is written by the store and read by the video.
+  // A load of the live window returns black, which is what that RAM
+  // holds until the first store of a word. ReplConst replaces from it.
+  val bmpLoad = RegInit(false.B)
   timerLoad := false.B
   btnLoad := false.B
+  bmpLoad := false.B
   // Book's millisecond counter. Step 2, limit 27000: exactly 13500
   // clocks at 13.5 MHz. The Dock limit 48375 is 24187.5 clocks at
   // 24.1875 MHz, alternating 24188 and 24187, exact over every 2 ms.
@@ -773,6 +778,14 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         regWriteAddr := memoryTargetReg
         regWriteData := Mux(memoryIsByte, Cat(0.U(24.W), btnByte), btnWord)
         printf(p"Keys R${memoryTargetReg} ${Hexadecimal(btnWord)}\n")
+      }
+      memoryAccessPending := false.B
+    } .elsewhen (bmpLoad) {
+      when (memoryIsLoad) {
+        regWrite := true.B
+        regWriteAddr := memoryTargetReg
+        regWriteData := 0.U
+        printf(p"Bitmap R${memoryTargetReg} black\n")
       }
       memoryAccessPending := false.B
     } .elsewhen (fpRbLoad) {
@@ -1097,6 +1110,15 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
             memoryTargetReg := regA
           }
         }
+        when (bmpRegion && bmpLive) {
+          useHyper := false.B
+          bmpLoad := true.B
+          memoryAccessPending := true.B
+          memoryIsLoad := true.B
+          memoryIsByte := false.B
+          memoryLane := 0.U
+          memoryTargetReg := regA
+        }
         when (useHyper) {
           io.memAddr := effectiveAddr
           io.memRead := true.B
@@ -1225,8 +1247,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     when (!memoryAccessPending) {
       // Phase 2 is the cycle after the write. The PC stays through the
       // write so the address the pixel clock samples cannot change.
+      // A load is not a write. Holding its PC made the same LDW run
+      // again after R0 became 0, and the second read was address 0.
       val bmpStall = if (uartDisk) {
-        bmpRegion && bmpLive && bmpPhase =/= 2.U
+        !isLoad && bmpRegion && bmpLive && bmpPhase =/= 2.U
       } else {
         false.B
       }

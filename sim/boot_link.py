@@ -429,7 +429,7 @@ def _compile_boot(env: dict[str, str], uart: int, memlim: int | None = None) -> 
         raise SystemExit(
             f"BootLoad.Mod constants are not {mem_text}, stack 18000H, {disk_text}"
         )
-    if MEMLIM != 0x28000 or STACK != 0x18000 or DISK_DDR != 0x29000 or KEPT != 1824:
+    if MEMLIM != 0x28000 or STACK != 0x18000 or DISK_DDR != 0x29000 or KEPT != 1768:
         raise SystemExit(
             f"heap constants {STACK:#x}..{MEMLIM:#x} disk {DISK_DDR:#x} kept {KEPT} "
             "do not match BootLoad.Mod"
@@ -546,7 +546,26 @@ def _check_trap_status(code: list[int]) -> None:
     print(f"[ok] trap status store at Kernel word {ports[0]}")
 
 
-def _compile_files(env: dict[str, str], index_trap: bool = False) -> dict[str, bytes]:
+def _board_text(name: str, dock: bool) -> str:
+    """The 4K constants are the source. The Dock replaces that one line."""
+    text = open(os.path.join(ROOT, "tests", f"{name}.Mod"), "r", encoding="ascii").read()
+    if not dock:
+        return text
+    if name == "Display":
+        old = "width = 256; height = 120; base = -131072;"
+        new = "width = 512; height = 384; base = -98304;"
+    elif name == "Blink5":
+        old = "sqX = 75; sqY = 55; sqW = 5; sqH = 5;"
+        new = "sqX = 150; sqY = 110; sqW = 10; sqH = 10;"
+    else:
+        return text
+    if text.count(old) != 1:
+        raise SystemExit(f"{name}.Mod has no single 4K constant line")
+    return text.replace(old, new, 1)
+
+
+def _compile_files(env: dict[str, str], index_trap: bool = False,
+                   dock: bool = False) -> dict[str, bytes]:
     # Isolated from sim/payload. Norebo's inner core loads module Oberon
     # from the working directory before the command, so a leftover
     # Oberon.rsc here would run Blink5.Go and never reach the compiler.
@@ -559,9 +578,10 @@ def _compile_files(env: dict[str, str], index_trap: bool = False) -> dict[str, b
     for name in ORDER:
         src = os.path.join(cache, f"{name}.smb")
         open(os.path.join(work, f"{name}.smb"), "wb").write(open(src, "rb").read())
-    for name in ("AMemoryMappedToggle", "Blink5", "Oberon"):
-        src = os.path.join(ROOT, "tests", f"{name}.Mod")
-        open(os.path.join(work, f"{name}.Mod"), "wb").write(open(src, "rb").read())
+    for name in ("AMemoryMappedToggle", "Display", "Blink5", "Oberon"):
+        open(os.path.join(work, f"{name}.Mod"), "w", encoding="ascii").write(
+            _board_text(name, dock)
+        )
     if index_trap:
         path = os.path.join(work, "Blink5.Mod")
         patched = _with_index_trap(open(path, encoding="utf-8").read())
@@ -569,20 +589,20 @@ def _compile_files(env: dict[str, str], index_trap: bool = False) -> dict[str, b
     run_env = dict(os.environ)
     run_env.update(NOREBO_BIN=env["bin"], NOREBO_ROOT=env["root"], NOREBO_PATH=env["path"])
     text = ""
-    for name in ("AMemoryMappedToggle", "Blink5", "Oberon"):
+    for name in ("AMemoryMappedToggle", "Display", "Blink5", "Oberon"):
         stale = os.path.join(work, "Oberon.rsc")
         if os.path.exists(stale):
             os.remove(stale)
         text += _run([env["bin"], "ORP.Compile", f"{name}.Mod/s"], work, run_env)
     print(text, end="" if text.endswith("\n") else "\n")
     out = {}
-    for name in ("AMemoryMappedToggle", "Blink5", "Oberon"):
+    for name in ("AMemoryMappedToggle", "Display", "Blink5", "Oberon"):
         path = os.path.join(work, f"{name}.rsc")
         raw = open(path, "rb").read()
         if len(raw) > PAYLOAD_LIMIT:
             raise SystemExit(
                 f"{name}.rsc is {len(raw)} bytes; "
-                f"a header and two continuations hold {PAYLOAD_LIMIT}"
+                f"a header and {PAYLOAD_LIMIT} bytes of continuations are the limit"
             )
         out[name] = raw
     return out
@@ -628,11 +648,11 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         raise SystemExit(f"AllocPtr {alloc:#x} is not the image length {len(image):#x}")
     if int.from_bytes(image[28:32], "little") != 0:
         raise SystemExit("address 28 is already used")
-    files = _compile_files(env, index_trap=index_trap)
+    files = _compile_files(env, index_trap=index_trap, dock=uart_disk)
     blink = parse_rsc(os.path.join(ROOT, "sim", "out", "bootfiles", "Blink5.rsc"), output_format="quiet")
     blink["raw"] = files["Blink5"]
     names = [item[0] for item in blink["imports"]]
-    if names != ["AMemoryMappedToggle", "Kernel", "Modules", "Files"]:
+    if names != ["Display", "AMemoryMappedToggle", "Kernel", "Modules", "Files"]:
         raise SystemExit(f"Blink5 imports {names}")
     if no_collect:
         kernel = parse_rsc(os.path.join(ROOT, "sim", "inner-core", "Kernel.rsc"), output_format="quiet")
@@ -641,9 +661,9 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         files["Blink5"] = _drop_collect(
             files["Blink5"], blink["code"], kernel_mno, {mark[0], scan[0]}
         )
-    # Oberon is module 5, its import of nothing new leaves it as root, then
-    # Blink5's first import is AMemoryMappedToggle (6) and Blink5 is 7.
-    blink_mt = 0x20 + 7 * 4
+    # Oberon is module 5. Blink5 then loads Display (6) and
+    # AMemoryMappedToggle (7). Blink5 itself is module 8.
+    blink_mt = 0x20 + 8 * 4
     if index_trap:
         _check_index_trap(blink["code"], blink["entry_point"])
     else:
@@ -669,12 +689,15 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     if mem.get(root_now + NUM) != 5:
         raise SystemExit(f"Oberon is module {mem.get(root_now + NUM)}")
     root_now, alloc_now = _load(mem, root_now, alloc_now, "Blink5", files)
-    if mem.get(root_now + NUM) != 7 or _name_at(mem, root_now) != "Blink5":
+    if mem.get(root_now + NUM) != 8 or _name_at(mem, root_now) != "Blink5":
         raise SystemExit(f"root is {_name_at(mem, root_now)} num {mem.get(root_now + NUM)}")
     if alloc_now > LIMIT:
         raise SystemExit(f"allocation ends at {alloc_now:#x}, limit is {LIMIT:#x}")
+    display = _find(mem, root_now, "Display")
+    if mem.get(display + NUM) != 6:
+        raise SystemExit(f"Display is module {mem.get(display + NUM)}")
     ammt = _find(mem, root_now, "AMemoryMappedToggle")
-    if mem.get(ammt + NUM) != 6:
+    if mem.get(ammt + NUM) != 7:
         raise SystemExit(f"AMemoryMappedToggle is module {mem.get(ammt + NUM)}")
     # No type descriptor: the exported light is the first variable.
     if mem.get(ammt + DATA) != ammt + DESC:
@@ -692,6 +715,7 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         (b"AMemoryMappedToggle.rsc", files["AMemoryMappedToggle"]),
         (b"Blink.Rate", None),
         (b"Blink5.rsc", files["Blink5"]),
+        (b"Display.rsc", files["Display"]),
         (b"Oberon.rsc", files["Oberon"]),
     )
     if list(order) != sorted(order, key=lambda item: item[0]):
@@ -704,9 +728,14 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
             which += 1
             continue
         room = SECTOR - HEADER_SIZE
-        cont = (which + 2) * 29 if len(raw) > room else None
-        cont2 = (which + 3) * 29 if len(raw) > room + SECTOR else None
-        built = _file_pages(filename, raw, sector, cont, cont2)
+        extra = 0 if len(raw) <= room else (len(raw) - room + SECTOR - 1) // SECTOR
+        conts = [(which + 2 + i) * 29 for i in range(extra)]
+        built = _file_pages(
+            filename, raw, sector,
+            conts[0] if conts else None,
+            conts[1] if len(conts) > 1 else None,
+            conts[2:] if len(conts) > 2 else None,
+        )
         for sec, page in built:
             page_bytes[sec] = page
         entries.append((filename, sector))

@@ -103,8 +103,27 @@ echo "[ok] NOR disk one record short halts with the LED dark"
 link --uart-disk --out "$WORDS"
 cp "$DISK" "$ROOT/sim/out/disk-uart-full.bin"
 link --flash-boot --out "$ROOT/sim/out/flash-full.words"
-cmp "$DISK" "$ROOT/sim/out/disk-uart-full.bin"
-echo "[ok] UART disk bytes match the NOR disk"
+python3 - "$ROOT/sim/out/disk-uart-full.bin" "$DISK" << 'PY'
+import sys
+
+def core(path):
+    data = open(path, "rb").read()
+    image = bytearray(data[20 + 1024:])
+    alloc = int.from_bytes(image[16:20], "little")
+    if not 0 < alloc <= len(image):
+        raise SystemExit(f"{path} alloc {alloc:#x}")
+    image[28:32] = b"\0\0\0\0"
+    return data, bytes(image[:alloc])
+
+uart, flash = sys.argv[1:]
+du, cu = core(uart)
+df, cf = core(flash)
+if cu != cf:
+    raise SystemExit("the boot cores of the two disks differ")
+if du == df:
+    raise SystemExit("the 4K and Dock disks are the same file")
+print(f"[ok] disks differ, boot cores match ({len(cu)} bytes)")
+PY
 # The NOR link just overwrote the ROM words. Put the UART ROM back.
 link --uart-disk --out "$WORDS"
 cmp "$DISK" "$ROOT/sim/out/disk-uart-full.bin"
@@ -121,8 +140,8 @@ echo "[ok] UART disk still blinking after Collect walked the list"
 link --uart-disk --short-heap --out "$WORDS"
 cmp "$DISK" "$ROOT/sim/out/disk-uart-full.bin"
 link --flash-boot --short-heap --out "$ROOT/sim/out/flash-short.words"
-cmp "$DISK" "$ROOT/sim/out/disk-uart-full.bin"
-echo "[ok] short-heap UART disk matches the full disk and the NOR short ROM's disk"
+cmp "$DISK" "$ROOT/sim/out/disk-full.bin"
+echo "[ok] short-heap ROM keeps each board's full disk"
 link --uart-disk --short-heap --out "$WORDS"
 cmp "$DISK" "$ROOT/sim/out/disk-uart-full.bin"
 elaborate

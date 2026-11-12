@@ -5,7 +5,10 @@
 // buffering cover a DDR3 store between loads. take drops the oldest.
 
 module uart_word_rx #(
-  parameter integer CLKS_PER_BIT = 210
+  parameter integer CLKS_PER_BIT = 210,
+  // Clocks after reset during which a start bit is ignored. 0
+  // accepts a byte immediately. The Dock image passes 2^18.
+  parameter integer QUIET_CLKS = 0
 ) (
   input  wire        clk,
   input  wire        resetn,
@@ -45,6 +48,10 @@ module uart_word_rx #(
   reg [2:0] wr = 3'd0;
   reg [2:0] rd = 3'd0;
   reg [3:0] nwords = 4'd0;
+  // Wide enough for the Dock's 2^18 quiet window. A 0 parameter
+  // never counts, so the sim accepts the first start bit.
+  reg [18:0] quiet = 19'd0;
+  wire quiet_done = (QUIET_CLKS == 0) || (quiet >= QUIET_CLKS[18:0]);
 
   assign valid = nwords != 4'd0;
   assign word = (rd == 3'd0) ? fifo0 :
@@ -72,6 +79,7 @@ module uart_word_rx #(
       wr <= 3'd0;
       rd <= 3'd0;
       nwords <= 4'd0;
+      quiet <= 19'd0;
       do_push = 1'b0;
       push_word = 32'd0;
     end else begin
@@ -79,10 +87,12 @@ module uart_word_rx #(
       rx1 <= rx0;
       do_push = 1'b0;
       push_word = 32'd0;
+      if (!quiet_done)
+        quiet <= quiet + 19'd1;
       case (state)
         S_IDLE: begin
           cnt <= 9'd0;
-          if (rx_fall) state <= S_START;
+          if (rx_fall && quiet_done) state <= S_START;
         end
         S_START: begin
           if (cnt == HALF_LAST) begin

@@ -1,5 +1,9 @@
 MODULE Blink5;
-  IMPORT MMT := AMemoryMappedToggle, Kernel, Modules, Files, SYSTEM;
+  IMPORT Display, MMT := AMemoryMappedToggle, Kernel, Modules, Files, SYSTEM;
+  (* The 4K square is five bitmap pixels at (75, 55). The Dock build
+     replaces this line with 150, 110, 10, 10. Both are the 20-pixel
+     box at screen (300, 220). *)
+  CONST sqX = 75; sqY = 55; sqW = 5; sqH = 5;
   (*
     This body fills a list, checks every record, then calls ArmHook.
     That call's immediate is where the arm sequence is entered. The
@@ -8,17 +12,16 @@ MODULE Blink5;
     MemLim, AllocPtr, the boot root, and the stack origin, 58 DIV 29
     is 2 and the remainder in H is 0, the two products match, the sum
     of this placed code matches the word stored at address 28, and
-    kept is 1824. Modules loads Oberon, and Oberon loads this module.
+    kept is 1768. Modules loads Oberon, and Oberon loads this module.
     The LED pin stays dark otherwise.
 
-    The loop draws the square, then stores the new light. The square is
-    ordinary words in the bitmap. Bit 0 of a word is the left pixel.
-    The 4K bitmap is at 0FFFE0000H, 256 bits a row, and the square is
-    five rows of bits 11..15 at word 442 (0FFFE06E8H). The Dock bitmap
-    is at 0FFFE8000H, 512 bits a row, and the square is ten rows of
-    bits 22..31 at word 1764 (0FFFE9B90H). Both stores run on both
-    boards. Each board keeps its own window and drops the other, so
-    the lit box is the same 20 screen pixels at (300, 220).
+    The loop draws the square, then stores the new light. Display is
+    the book's module. ReplConst paints the rectangle; this board's
+    width, height and bitmap address are its constants. The 4K bitmap
+    is at 0FFFE0000H, 256 bits a row, and the square is five rows of
+    bits 11..15 at word 442 (0FFFE06E8H). The Dock bitmap is at
+    0FFFE8000H, 512 bits a row, and the square is ten rows of bits
+    22..31 at word 1764 (0FFFE9B90H). Each image keeps one window.
     -84 (0FFFFFFACH) is the status register. Bit 8 selects the picture.
     This body stores 10BH once, before the file is opened, so the bitmap
     replaces the status blocks and the byte stays the inner core's 0BH.
@@ -51,10 +54,10 @@ MODULE Blink5;
     hold does not queue a burst. Releasing it resumes the same wait.
 
     MemLim is 28000H. The heap is the 65536 bytes from the stack origin
-    18000H up to that limit. Files.Old of Oberon, AMemoryMappedToggle,
+    18000H up to that limit.     Files.Old of Oberon, Display, AMemoryMappedToggle,
     this module, and Blink.Rate each take a 1280-byte buffer and a
-    512-byte descriptor, 1792 bytes. Reading this module's second page
-    reuses its one buffer. Those four opens take 7168 bytes. 1824
+    512-byte descriptor, 1792 bytes. Reading a later page of a file
+    reuses its one buffer. Those five opens take 8960 bytes. 1768
     records of 32 bytes fill the rest. head and node are global, so the
     collector follows them. kept counts the records that were linked.
     The arm word depends on that count. A limit one record lower finds
@@ -88,19 +91,11 @@ MODULE Blink5;
   END Collect;
 
   PROCEDURE Square(on: INTEGER);
-    VAR y, a: INTEGER;
   BEGIN
-    (* 4K: five rows, stride 32, mask 0F800H at -129304. *)
-    y := 0; a := -129304;
-    WHILE y < 5 DO
-      IF on = 1 THEN SYSTEM.PUT(a, 63488) ELSE SYSTEM.PUT(a, 0) END;
-      a := a + 32; INC(y)
-    END;
-    (* Dock: ten rows, stride 64, mask 0FFC00000H at -91248. *)
-    y := 0; a := -91248;
-    WHILE y < 10 DO
-      IF on = 1 THEN SYSTEM.PUT(a, -4194304) ELSE SYSTEM.PUT(a, 0) END;
-      a := a + 64; INC(y)
+    IF on = 1 THEN
+      Display.ReplConst(Display.white, sqX, sqY, sqW, sqH, Display.replace)
+    ELSE
+      Display.ReplConst(Display.black, sqX, sqY, sqW, sqH, Display.replace)
     END
   END Square;
 
@@ -150,7 +145,7 @@ BEGIN
   n := 0;
   due := 4;
   kept := 0; head := NIL;
-  WHILE kept < 1824 DO
+  WHILE kept < 1768 DO
     NEW(node);
     IF node = NIL THEN Dark END;
     node.n := kept; node.next := head; head := node; INC(kept)

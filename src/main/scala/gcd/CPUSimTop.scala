@@ -46,6 +46,8 @@ class CPUSimTop(
     val spiMosi = Output(Bool())
     val spiMiso = Input(Bool())
     val screenWe = Output(Bool())
+    val bmpData = Output(UInt(32.W))
+    val bmpWord = Output(UInt(13.W))
     // -84. Bits 8:0 of the store. The bench checks the bootstrap's
     // first store and Blink's mode bit. The video module is not in
     // this top; it samples the same pulse on the board.
@@ -203,6 +205,8 @@ class CPUSimTop(
   io.memWrite := cpu.io.memWrite
   io.memRead := cpu.io.memRead
   io.screenWe := cpu.io.screenWe
+  io.bmpData := cpu.io.bmpData
+  io.bmpWord := cpu.io.bmpWord
   io.statusWe := cpu.io.statusWe
   io.statusWord := cpu.io.statusWord
 }
