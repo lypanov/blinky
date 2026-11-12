@@ -340,9 +340,11 @@ Next is 42. Item 34 is not done.
 
 ## Item 42 — commands by name
 
-The book's `Oberon.Call` and `Modules.ThisCommand`. The inner core starts Blink by the command string `Blink.Run` rather than by a fixed load, which also removes the `"Oberon"`→`"Blink5"` name patch if item 31 has not already.
+The book's `Oberon.Call` and `Modules.ThisCommand`. The inner core starts Blink by the command string `Blink.Run` rather than by a fixed load. Item 31 already left `Load("Oberon")` unpatched.
 
-Proof: the good string blinks at 0.500 Hz. A misspelt command name shows a known code in the status blocks and leaves the LED dark.
+`ThisCommand` returns 5 when the command name is absent. Oberon stores that byte at −84 and stops. Bit 8 stays clear, so the blocks stay up and the LED stays dark. `Blink.Run` stores `10BH` and blinks at 0.500 Hz.
+
+Proof: the good string blinks at 0.500 Hz. A misspelt command name shows code 5 in the status blocks and leaves the LED dark.
 
 ## Item 43 — the trap line on screen
 

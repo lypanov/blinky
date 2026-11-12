@@ -231,6 +231,17 @@ echo "[ok] UART disk damaged font is 81H, the arm word stays unstored, the LED s
 
 python3 "$ROOT/sim/link_inner.py" \
   --uart-disk \
+  --bad-command \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/bad-command-uart.words"
+cp "$DISK" "$ROOT/sim/out/disk-bad-command-uart.bin"
+"$BIN" --expect-halt --expect-no-arm --expect-status 0x05 --min-pc 0x900 \
+  --status-seq 1,3,4,5,6,7,8,9,10,11,0x05 \
+  +disk="$ROOT/sim/out/disk-bad-command-uart.bin"
+echo "[ok] UART disk misspelt command is code 5, the arm word stays unstored, the LED stays dark"
+
+python3 "$ROOT/sim/link_inner.py" \
+  --uart-disk \
   --short-heap \
   --max-iter "$N" \
   --out "$WORDS"

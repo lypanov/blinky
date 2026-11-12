@@ -170,6 +170,17 @@ cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-bad-font.bin"
 echo "[ok] NOR disk damaged font is 81H, the arm word stays unstored, the LED stays dark"
 cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
+python3 "$ROOT/sim/link_inner.py" \
+  --flash-boot \
+  --bad-command \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/bad-command.words"
+cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-bad-command.bin"
+"$BIN" --expect-halt --expect-no-arm --expect-status 0x05 \
+  --status-seq 1,2,5,6,7,8,9,10,11,0x05
+echo "[ok] NOR disk misspelt command is code 5, the arm word stays unstored, the LED stays dark"
+cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
+
 cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-full.bin"
 python3 "$ROOT/sim/link_inner.py" \
   --flash-boot \

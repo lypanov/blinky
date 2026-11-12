@@ -1,4 +1,4 @@
-MODULE Blink5;
+MODULE Blink;
   IMPORT Files, Fonts, Texts, Display, MMT := AMemoryMappedToggle, Kernel, Modules, SYSTEM;
   (* The 4K square is five bitmap pixels at (75, 55). The letter A is
      at (80, 55), in the same words. The Dock build replaces these two
@@ -16,8 +16,8 @@ MODULE Blink5;
     MemLim, AllocPtr, the boot root, and the stack origin, 58 DIV 29
     is 2 and the remainder in H is 0, the two products match, the sum
     of this placed code matches the word stored at address 28, and
-    kept is 1247. Modules loads Oberon, and Oberon loads this module.
-    The LED pin stays dark otherwise.
+    kept is 1247. Modules loads Oberon. Oberon.Call starts this
+    module by the command Blink.Run. The LED pin stays dark otherwise.
 
     The loop draws the square, the letter, and the count, then stores
     the new light. Texts.WriteInt writes the count into a text. The
@@ -33,7 +33,7 @@ MODULE Blink5;
     0FFFE8000H, 512 bits a row, and the square is ten rows of bits
     22..31 at word 1764 (0FFFE9B90H). Each image keeps one window.
     -84 (0FFFFFFACH) is the status register. Bit 8 selects the picture.
-    This body stores 10BH once, before the file is opened, so the bitmap
+    Run stores 10BH once, before the file is opened, so the bitmap
     replaces the status blocks and the byte stays the inner core's 0BH.
     Until that store the blocks show the boot stage, bit 7 on the left.
     A board without that device decodes the store and drops it.
@@ -209,7 +209,8 @@ MODULE Blink5;
   BEGIN
   END ArmHook;
 
-BEGIN
+  PROCEDURE Run*;
+  BEGIN
   SYSTEM.PUT(-84, 10BH);
   rate := Files.Old("Blink.Rate");
   IF rate = NIL THEN Dark END;
@@ -274,4 +275,7 @@ BEGIN
       END
     END
   END
-END Blink5.
+  END Run;
+
+BEGIN
+END Blink.

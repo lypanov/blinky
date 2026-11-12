@@ -493,16 +493,17 @@ def _compile_boot(env: dict[str, str], uart: int, memlim: int | None = None) -> 
 
 
 def _with_index_trap(text: str) -> str:
-    """The first statements of Blink5 index past an array of 4.
+    """The module body indexes past an array of 4.
 
     The index is a variable, so ORG emits the runtime check: trap 1,
-    condition CC. The arm prologue is left off this disk, and the entry
-    stays on this body, so the store at 0x7C0 never runs.
+    condition CC. Load calls this body before ThisCommand, so Blink.Run
+    is never entered. The arm prologue is left off this disk, and the
+    entry stays on this body, so the store at 0x7C0 never runs.
     """
     var = "  VAR last, now, wait, keys, n, due, half, thousand: INTEGER;\n"
-    body = "BEGIN\n  SYSTEM.PUT(-84, 10BH);\n"
+    body = "BEGIN\nEND Blink.\n"
     if text.count(var) != 1 or text.count(body) != 1:
-        raise SystemExit("Blink5.Mod has no single place for the index trap")
+        raise SystemExit("Blink.Mod has no single place for the index trap")
     text = text.replace(
         var,
         var + "    sample: ARRAY 4 OF INTEGER;\n    idx: INTEGER;\n",
@@ -512,8 +513,8 @@ def _with_index_trap(text: str) -> str:
         body,
         "BEGIN\n"
         "  idx := 4;\n"
-        "  sample[idx] := 0;\n"
-        "  SYSTEM.PUT(-84, 10BH);\n",
+        "  sample[idx] := 0\n"
+        "END Blink.\n",
         1,
     )
 
@@ -587,8 +588,20 @@ def _font_bytes(name: str, damage: bool) -> bytes:
     return bytes(data)
 
 
+# The source file is still tests/Blink5.Mod. The module name is Blink,
+# so the command string is Blink.Run and the object is Blink.rsc.
+_UNITS = (
+    ("AMemoryMappedToggle", "AMemoryMappedToggle"),
+    ("Display", "Display"),
+    ("Fonts", "Fonts"),
+    ("Texts", "Texts"),
+    ("Blink", "Blink5"),
+    ("Oberon", "Oberon"),
+)
+
+
 def _compile_files(env: dict[str, str], index_trap: bool = False,
-                   dock: bool = False) -> dict[str, bytes]:
+                   dock: bool = False, bad_command: bool = False) -> dict[str, bytes]:
     # Isolated from sim/payload. Norebo loads every module it imports from
     # the working directory before the command. Oberon.rsc would run
     # Blink5.Go. Texts imports Fonts, and a Fonts.rsc left here is loaded
@@ -603,44 +616,48 @@ def _compile_files(env: dict[str, str], index_trap: bool = False,
     for name in ORDER:
         src = os.path.join(cache, f"{name}.smb")
         open(os.path.join(work, f"{name}.smb"), "wb").write(open(src, "rb").read())
-    for name in ("AMemoryMappedToggle", "Display", "Fonts", "Texts", "Blink5", "Oberon"):
-        src = os.path.join(ROOT, "tests", f"{name}.Mod")
-        if name == "Texts":
-            open(os.path.join(work, f"{name}.Mod"), "w", encoding="ascii").write(
-                open(src, "r", encoding="ascii").read()
-            )
+    for dest, src_name in _UNITS:
+        src = os.path.join(ROOT, "tests", f"{src_name}.Mod")
+        if src_name == "Texts":
+            body = open(src, "r", encoding="ascii").read()
         else:
-            open(os.path.join(work, f"{name}.Mod"), "w", encoding="ascii").write(
-                _board_text(name, dock)
-            )
+            body = _board_text(src_name, dock)
+        open(os.path.join(work, f"{dest}.Mod"), "w", encoding="ascii").write(body)
     if index_trap:
-        path = os.path.join(work, "Blink5.Mod")
+        path = os.path.join(work, "Blink.Mod")
         patched = _with_index_trap(open(path, encoding="utf-8").read())
         open(path, "w", encoding="utf-8").write(patched)
+    if bad_command:
+        path = os.path.join(work, "Oberon.Mod")
+        body = open(path, encoding="utf-8").read()
+        old = 'Call("Blink.Run", r)'
+        if body.count(old) != 1:
+            raise SystemExit("Oberon.Mod has no single Blink.Run call")
+        open(path, "w", encoding="utf-8").write(body.replace(old, 'Call("Blink.Ran", r)', 1))
     run_env = dict(os.environ)
     run_env.update(NOREBO_BIN=env["bin"], NOREBO_ROOT=env["root"], NOREBO_PATH=env["path"])
     parked = os.path.join(work, "parked")
     os.makedirs(parked, exist_ok=True)
     text = ""
-    for name in ("AMemoryMappedToggle", "Display", "Fonts", "Texts", "Blink5", "Oberon"):
+    for dest, _src_name in _UNITS:
         for fn in list(os.listdir(work)):
             if fn.endswith(".rsc"):
                 os.replace(os.path.join(work, fn), os.path.join(parked, fn))
-        text += _run([env["bin"], "ORP.Compile", f"{name}.Mod/s"], work, run_env)
+        text += _run([env["bin"], "ORP.Compile", f"{dest}.Mod/s"], work, run_env)
     for fn in list(os.listdir(parked)):
         if fn.endswith(".rsc"):
             os.replace(os.path.join(parked, fn), os.path.join(work, fn))
     print(text, end="" if text.endswith("\n") else "\n")
     out = {}
-    for name in ("AMemoryMappedToggle", "Display", "Fonts", "Texts", "Blink5", "Oberon"):
-        path = os.path.join(work, f"{name}.rsc")
+    for dest, _src_name in _UNITS:
+        path = os.path.join(work, f"{dest}.rsc")
         raw = open(path, "rb").read()
         if len(raw) > PAYLOAD_LIMIT:
             raise SystemExit(
-                f"{name}.rsc is {len(raw)} bytes; "
+                f"{dest}.rsc is {len(raw)} bytes; "
                 f"the header's 64 sector slots hold {PAYLOAD_LIMIT}"
             )
-        out[name] = raw
+        out[dest] = raw
     return out
 
 
@@ -663,15 +680,17 @@ def _hyper_bytes() -> int:
 def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
          uart_disk: bool = False, no_collect: bool = False,
          index_trap: bool = False, short_heap: bool = False,
-         bad_font: bool = False) -> dict:
+         bad_font: bool = False, bad_command: bool = False) -> dict:
     if flash_boot == uart_disk:
         raise SystemExit("pass one of flash boot or the UART disk")
-    if index_trap and (no_collect or break_arm or bad_font):
+    if index_trap and (no_collect or break_arm or bad_font or bad_command):
         raise SystemExit("the index trap is its own disk")
-    if short_heap and (no_collect or break_arm or index_trap or bad_font):
+    if short_heap and (no_collect or break_arm or index_trap or bad_font or bad_command):
         raise SystemExit("the short heap is its own ROM, on the ordinary disk")
-    if bad_font and (no_collect or break_arm):
+    if bad_font and (no_collect or break_arm or bad_command):
         raise SystemExit("the damaged font is its own disk")
+    if bad_command and (no_collect or break_arm):
+        raise SystemExit("the misspelt command is its own disk")
     if max_iter % 2 or not 1 <= max_iter <= 0x7FFF:
         raise SystemExit(f"rate {max_iter} must be a positive even millisecond count")
     env = _norebo()
@@ -687,49 +706,60 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         raise SystemExit(f"AllocPtr {alloc:#x} is not the image length {len(image):#x}")
     if int.from_bytes(image[28:32], "little") != 0:
         raise SystemExit("address 28 is already used")
-    files = _compile_files(env, index_trap=index_trap, dock=uart_disk)
-    blink = parse_rsc(os.path.join(ROOT, "sim", "out", "bootfiles", "Blink5.rsc"), output_format="quiet")
-    blink["raw"] = files["Blink5"]
+    files = _compile_files(
+        env, index_trap=index_trap, dock=uart_disk, bad_command=bad_command,
+    )
+    blink = parse_rsc(os.path.join(ROOT, "sim", "out", "bootfiles", "Blink.rsc"), output_format="quiet")
+    blink["raw"] = files["Blink"]
     names = [item[0] for item in blink["imports"]]
     if names != ["Files", "Fonts", "Texts", "Display", "AMemoryMappedToggle", "Kernel", "Modules"]:
-        raise SystemExit(f"Blink5 imports {names}")
+        raise SystemExit(f"Blink imports {names}")
+    if files["Blink"].count(b"Run\x00") != 1:
+        raise SystemExit("Blink.rsc does not publish one command Run")
     if no_collect:
         kernel = parse_rsc(os.path.join(ROOT, "sim", "inner-core", "Kernel.rsc"), output_format="quiet")
         mark, scan = _mark_scan(kernel["code"], kernel["entries"])
         kernel_mno = names.index("Kernel") + 1
-        files["Blink5"] = _drop_collect(
-            files["Blink5"], blink["code"], kernel_mno, {mark[0], scan[0]}
+        files["Blink"] = _drop_collect(
+            files["Blink"], blink["code"], kernel_mno, {mark[0], scan[0]}
         )
-    # Oberon is module 5. Blink5 loads Texts, which loads Fonts first.
+    # Oberon is module 5. Blink loads Texts, which loads Fonts first.
     # Fonts is 6, Texts 7, Display 8, AMemoryMappedToggle 9.
-    # Blink5 itself is module 10.
+    # Blink itself is module 10.
     blink_mt = 0x20 + 10 * 4
     if index_trap:
         _check_index_trap(blink["code"], blink["entry_point"])
     else:
-        # nofent counts the entry-point word that precedes the exports.
-        # kept* is the only export, so it is the second word.
-        if len(blink["entries"]) != 2 or blink["entries"][0] != blink["entry_point"]:
+        # The entry table is the body, then kept*, then Run*.
+        # Run* is also the one command. Its file offset is the third entry.
+        run_at = files["Blink"].find(b"Run\x00")
+        run_off = int.from_bytes(files["Blink"][run_at + 4 : run_at + 8], "little")
+        if (
+            len(blink["entries"]) != 3
+            or blink["entries"][0] != blink["entry_point"]
+            or blink["entries"][2] != run_off
+        ):
             raise SystemExit(
-                f"Blink5 entries {blink['entries']} entry {blink['entry_point']}"
+                f"Blink entries {blink['entries']} entry {blink['entry_point']} "
+                f"command {run_off:#x}"
             )
         kept_off = blink["entries"][1]
         if not isinstance(kept_off, int) or kept_off < 0:
             raise SystemExit(f"kept offset {kept_off!r} is not a byte offset")
         blink_src = open(os.path.join(ROOT, "tests", "Blink5.Mod"), "r", encoding="ascii").read()
         if f"WHILE kept < {KEPT} DO" not in blink_src or "ArmHook(7E37H)" not in blink_src:
-            raise SystemExit("Blink5.Mod does not publish the kept loop and the hook")
+            raise SystemExit("Blink.Mod does not publish the kept loop and the hook")
         prologue = _arm_prologue(
             with_disk=True, memlim=MEMLIM, alloc=alloc, root=root, stack=STACK,
             blink_mt=blink_mt, kept_off=kept_off,
         )
-        files["Blink5"] = _append_arm(files["Blink5"], prologue)
+        files["Blink"] = _append_arm(files["Blink"], prologue)
     mem = Mem(bytes(image), LIMIT)
     root_now, alloc_now = _load(mem, root, alloc, "Oberon", files)
     if mem.get(root_now + NUM) != 5:
         raise SystemExit(f"Oberon is module {mem.get(root_now + NUM)}")
-    root_now, alloc_now = _load(mem, root_now, alloc_now, "Blink5", files)
-    if mem.get(root_now + NUM) != 10 or _name_at(mem, root_now) != "Blink5":
+    root_now, alloc_now = _load(mem, root_now, alloc_now, "Blink", files)
+    if mem.get(root_now + NUM) != 10 or _name_at(mem, root_now) != "Blink":
         raise SystemExit(f"root is {_name_at(mem, root_now)} num {mem.get(root_now + NUM)}")
     if alloc_now > LIMIT:
         raise SystemExit(f"allocation ends at {alloc_now:#x}, limit is {LIMIT:#x}")
@@ -762,7 +792,7 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     order = (
         (b"AMemoryMappedToggle.rsc", files["AMemoryMappedToggle"]),
         (b"Blink.Rate", None),
-        (b"Blink5.rsc", files["Blink5"]),
+        (b"Blink.rsc", files["Blink"]),
         (b"Display.rsc", files["Display"]),
         (b"Fonts.rsc", files["Fonts"]),
         (b"Oberon.rsc", files["Oberon"]),
