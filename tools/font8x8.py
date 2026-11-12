@@ -213,6 +213,11 @@ def _between(text: str, begin: str, end: str) -> str:
 
 def check() -> None:
     video = (ROOT / "gowin" / "video.v").read_text()
+    if "// FONT8 BEGIN" not in video:
+        if "function [7:0] font8" in video or "wire text_on = 1'b0;" not in video:
+            raise SystemExit("gowin/video.v digit ROM is neither present nor retired")
+        print("ok font8 retired; the bitmap draws the count")
+        return
     body = textwrap.dedent(
         _between(video, "// FONT8 BEGIN\n", "// FONT8 END\n")
     ).strip("\n")

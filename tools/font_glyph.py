@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Host drawing of the one letter Blink paints beside the square.
+"""Host drawing of the letter and the count Blink paints.
 
 The font file stores rows bottom-first. This bitmap's Y grows downward,
 and Display.CopyPattern draws the first raster byte at the given y, so
@@ -7,9 +7,10 @@ Blink reverses the rows before the call. The painter here does the same
 reversal. The letter shares the square's words: a load that returns 0
 drops the square bits on the way on, and lights the letter on the way off.
 
-The 4K letter is the generated 4x6 file tests/Tiny4x6.Fnt, character A,
-at bitmap (80, 55). The Dock letter is tests/Oberon10.Scn.Fnt, the same
-character, at bitmap (143, 110).
+Texts.WriteInt(W, n, 1) writes the decimal digits and no leading spaces.
+The 4K line is the generated 4x6 file, at bitmap (64, 40). The letter A
+is at (80, 55). The Dock line is Oberon10, at bitmap (96, 96). The letter
+is at (143, 110).
 """
 from __future__ import annotations
 
@@ -26,40 +27,45 @@ OBERON_SHA = "a3d7bba26c27d2a68a2f763ce1fd29968b15def744b1c62e4de9fd557fb49fd8"
 
 # 3x5 A, bottom-row first, bit 0 on the left. The cell is 4 wide and 6 tall.
 TINY_A = bytes((0x05, 0x05, 0x07, 0x05, 0x02))
+# Top row first. Packed bottom-first, the same way the A above is stored.
+TINY_DIGITS = (
+    ("###", "#.#", "#.#", "#.#", "###"),
+    (".#.", "##.", ".#.", ".#.", "###"),
+    ("###", "..#", "###", "#..", "###"),
+    ("###", "..#", "###", "..#", "###"),
+    ("#.#", "#.#", "###", "..#", "..#"),
+    ("###", "#..", "###", "..#", "###"),
+    ("###", "#..", "###", "#.#", "###"),
+    ("###", "..#", "..#", "..#", "..#"),
+    ("###", "#.#", "###", "#.#", "###"),
+    ("###", "#.#", "###", "..#", "###"),
+)
+COUNTS = range(1, 13)
+
+
+def _pack_rows(rows: tuple[str, ...]) -> bytes:
+    out = []
+    for row in reversed(rows):
+        value = 0
+        for i, ch in enumerate(row):
+            if ch == "#":
+                value |= 1 << i
+        out.append(value)
+    return bytes(out)
 
 
 def tiny_bytes() -> bytes:
-    """One run, character A. NofRuns is the low byte at file offset 14."""
+    """Digits 0..9 and A. NofRuns is the low byte at file offset 14."""
     parts = [
         bytes((0xDB, 0x00, ord("T"), ord("4"))),
-        struct.pack("<6H", 6, 0, 3, 0, 4, 1),
-        struct.pack("<2H", 65, 66),
-        struct.pack("<5H", 4, 0, 0, 3, 5),
-        TINY_A,
+        struct.pack("<6H", 6, 0, 3, 0, 4, 2),
+        struct.pack("<4H", 48, 58, 65, 66),
     ]
+    box = struct.pack("<5H", 4, 0, 0, 3, 5)
+    parts.extend(box for _ in range(11))
+    parts.extend(_pack_rows(rows) for rows in TINY_DIGITS)
+    parts.append(TINY_A)
     return b"".join(parts)
-
-
-# Hand-combined words. Square bits stay set under the letter.
-NANO_ON = (
-    (442, 0x0002F800),
-    (450, 0x0005F800),
-    (458, 0x0007F800),
-    (466, 0x0005F800),
-    (474, 0x0005F800),
-)
-DOCK_ON = (
-    (1764, 0xFFC40000),
-    (1780, 0xFFC40000),
-    (1796, 0xFFCA0000),
-    (1812, 0xFFCA0000),
-    (1828, 0xFFDF0000),
-    (1844, 0xFFD10000),
-    (1860, 0xFFE08000),
-    (1876, 0xFFE08000),
-    (1892, 0xFFC00000),
-    (1908, 0xFFC00000),
-)
 
 
 def _rd(data: bytes, i: int) -> tuple[int, int]:
@@ -171,33 +177,59 @@ def flipped_rows(raster: bytes, w: int, h: int) -> list[int]:
 
 
 class Board:
-    def __init__(self, name: str, width: int, sq, mk, scale: int):
+    def __init__(self, name: str, width: int, sq, mk, text, scale: int):
         self.name = name
         self.span = width // 8
         self.sq = sq
         self.mk = mk
+        self.text = text
         self.scale = scale
 
 
-NANO = Board("nano", 256, (75, 55, 5, 5), (80, 55), 4)
-DOCK = Board("dock", 512, (150, 110, 10, 10), (143, 110), 2)
+# Same origins as the constants in tests/Blink5.Mod.
+NANO = Board("nano", 256, (75, 55, 5, 5), (80, 55), (64, 40), 4)
+DOCK = Board("dock", 512, (150, 110, 10, 10), (143, 110), (96, 96), 2)
 
 
-def frame(board: Board, font: bytes, on: bool) -> dict[int, int]:
+def count_text(count: int) -> str:
+    """Texts.WriteInt of a positive count with field width 1."""
+    if count < 0:
+        raise SystemExit(f"count {count}")
+    return str(count)
+
+
+def draw_text(words: dict[int, int], font: bytes, text: str, origin, span: int, mode: str) -> None:
+    pen, origin_y = origin
+    for ch in text:
+        dx, x, y, w, h, raster = letter(font, ord(ch))
+        if w > 0 and h > 0:
+            rows = flipped_rows(raster, w, h)
+            copy_pattern(words, rows, pen + x, origin_y + y, w, span, mode)
+        pen += dx
+
+
+def _paint_picture(words: dict[int, int], board: Board, font: bytes, count: int, mode: str) -> None:
     dx, x, y, w, h, raster = letter(font, 65)
     del dx
     rows = flipped_rows(raster, w, h)
-    words: dict[int, int] = {}
     sx, sy, sw, sh = board.sq
     mx, my = board.mk
-    if on:
+    if mode == "paint":
         paint(words, sx, sy, sw, sh, board.span, "replace", False)
         copy_pattern(words, rows, mx + x, my + y, w, board.span, "paint")
+        draw_text(words, font, count_text(count), board.text, board.span, "paint")
     else:
-        paint(words, sx, sy, sw, sh, board.span, "replace", False)
-        copy_pattern(words, rows, mx + x, my + y, w, board.span, "paint")
         paint(words, sx, sy, sw, sh, board.span, "replace", True)
         copy_pattern(words, rows, mx + x, my + y, w, board.span, "invert")
+        draw_text(words, font, count_text(count), board.text, board.span, "invert")
+
+
+def frame(board: Board, font: bytes, on: bool, count: int = 1) -> dict[int, int]:
+    words: dict[int, int] = {}
+    # The off frame paints, then erases, the way Blink's two calls do.
+    _paint_picture(words, board, font, count, "paint")
+    if not on:
+        _paint_picture(words, board, font, count, "invert")
     return {k: v for k, v in words.items() if v}
 
 
@@ -224,7 +256,11 @@ def screen_pixels(board: Board, font: bytes) -> set[tuple[int, int]]:
     return out
 
 
-def _header(nano: tuple, dock: tuple) -> str:
+def _pictures(board: Board, font: bytes) -> list[tuple]:
+    return [tuple(sorted(frame(board, font, True, count).items())) for count in COUNTS]
+
+
+def _header(nano: list[tuple], dock: list[tuple]) -> str:
     def rows(name: str, items: tuple) -> str:
         body = ",\n".join(f"  {{{word}, 0x{data:08X}u}}" for word, data in items)
         return (
@@ -232,8 +268,18 @@ def _header(nano: tuple, dock: tuple) -> str:
             f"static const int PIC_{name}_N = {len(items)};\n"
         )
 
+    body = []
+    for count, items in enumerate(nano, start=1):
+        body.append(rows(f"NANO_{count}", items))
+    for count, items in enumerate(dock, start=1):
+        body.append(rows(f"DOCK_{count}", items))
+    nano_ptrs = ", ".join(f"PIC_NANO_{c}" for c in COUNTS)
+    nano_ns = ", ".join(f"PIC_NANO_{c}_N" for c in COUNTS)
+    dock_ptrs = ", ".join(f"PIC_DOCK_{c}" for c in COUNTS)
+    dock_ns = ", ".join(f"PIC_DOCK_{c}_N" for c in COUNTS)
+    last = COUNTS[-1]
     return (
-        "// Generated by tools/font_glyph.py. Letter A beside the square.\n"
+        "// Generated by tools/font_glyph.py. The count, one higher each on-edge.\n"
         "#pragma once\n"
         "#include <cstdint>\n"
         "#include <cstdio>\n"
@@ -244,19 +290,38 @@ def _header(nano: tuple, dock: tuple) -> str:
         "  uint32_t on;\n"
         "};\n"
         "\n"
-        + rows("NANO", nano)
+        + "\n".join(body)
         + "\n"
-        + rows("DOCK", dock)
-        + "\n"
+        f"static const PicWord* const PIC_NANO_AT[] = {{ {nano_ptrs} }};\n"
+        f"static const int PIC_NANO_AT_N[] = {{ {nano_ns} }};\n"
+        f"static const PicWord* const PIC_DOCK_AT[] = {{ {dock_ptrs} }};\n"
+        f"static const int PIC_DOCK_AT_N[] = {{ {dock_ns} }};\n"
+        f"static const int PIC_COUNTS = {last};\n"
+        "\n"
         "inline int picture_ok(const std::map<int, uint32_t>& bmp, int led_on,\n"
-        "                       const PicWord* rows, int n) {\n"
+        "                       int count, int dock) {\n"
+        "  if (!led_on) {\n"
+        "    for (const auto& kv : bmp) {\n"
+        "      if (kv.second != 0u) {\n"
+        "        fprintf(stderr, \"FAIL bitmap word %d is %08x\\n\", kv.first, kv.second);\n"
+        "        return 0;\n"
+        "      }\n"
+        "    }\n"
+        "    printf(\"GLYPH led 0\\n\");\n"
+        "    return 1;\n"
+        "  }\n"
+        "  if (count < 1 || count > PIC_COUNTS) {\n"
+        "    fprintf(stderr, \"FAIL count %d\\n\", count);\n"
+        "    return 0;\n"
+        "  }\n"
+        "  const PicWord* rows = dock ? PIC_DOCK_AT[count - 1] : PIC_NANO_AT[count - 1];\n"
+        "  int n = dock ? PIC_DOCK_AT_N[count - 1] : PIC_NANO_AT_N[count - 1];\n"
         "  for (int i = 0; i < n; i++) {\n"
         "    auto it = bmp.find(rows[i].word);\n"
         "    uint32_t got = it == bmp.end() ? 0u : it->second;\n"
-        "    uint32_t want = led_on ? rows[i].on : 0u;\n"
-        "    if (got != want) {\n"
-        "      fprintf(stderr, \"FAIL bitmap word %d is %08x wanted %08x\\n\",\n"
-        "              rows[i].word, got, want);\n"
+        "    if (got != rows[i].on) {\n"
+        "      fprintf(stderr, \"FAIL bitmap word %d is %08x wanted %08x count %d\\n\",\n"
+        "              rows[i].word, got, rows[i].on, count);\n"
         "      return 0;\n"
         "    }\n"
         "  }\n"
@@ -264,11 +329,12 @@ def _header(nano: tuple, dock: tuple) -> str:
         "    int known = 0;\n"
         "    for (int i = 0; i < n; i++) if (rows[i].word == kv.first) known = 1;\n"
         "    if (!known && kv.second != 0u) {\n"
-        "      fprintf(stderr, \"FAIL bitmap word %d is %08x\\n\", kv.first, kv.second);\n"
+        "      fprintf(stderr, \"FAIL bitmap word %d is %08x count %d\\n\",\n"
+        "              kv.first, kv.second, count);\n"
         "      return 0;\n"
         "    }\n"
         "  }\n"
-        "  printf(\"GLYPH led %d words %d\\n\", led_on, n);\n"
+        "  printf(\"GLYPH led 1 count %d words %d\\n\", count, n);\n"
         "  return 1;\n"
         "}\n"
     )
@@ -285,37 +351,36 @@ def _load_fonts() -> tuple[bytes, bytes]:
     return tiny, oberon
 
 
+def _built(tiny: bytes, oberon: bytes) -> tuple[list[tuple], list[tuple]]:
+    nano = _pictures(NANO, tiny)
+    dock = _pictures(DOCK, oberon)
+    for count, (npic, dpic) in enumerate(zip(nano, dock), start=1):
+        if not npic or not dpic:
+            raise SystemExit(f"count {count} painted nothing")
+        if frame(NANO, tiny, False, count) or frame(DOCK, oberon, False, count):
+            raise SystemExit(f"count {count} off frame is not black")
+        if count > 1 and (npic == nano[count - 2] or dpic == dock[count - 2]):
+            raise SystemExit(f"count {count} matches the previous picture")
+    return nano, dock
+
+
 def check() -> None:
     tiny, oberon = _load_fonts()
-    if tiny[14] != 1 or oberon[14] != 6:
-        raise SystemExit("NofRuns bytes are not 1 and 6")
-    nano = tuple(sorted(frame(NANO, tiny, True).items()))
-    dock = tuple(sorted(frame(DOCK, oberon, True).items()))
-    if nano != NANO_ON or dock != DOCK_ON:
-        raise SystemExit(f"painted words\n nano {nano}\n dock {dock}")
-    if frame(NANO, tiny, False) or frame(DOCK, oberon, False):
-        raise SystemExit("the off frame is not black")
-    nano_px = screen_pixels(NANO, tiny)
-    dock_px = screen_pixels(DOCK, oberon)
-    if len(nano_px) != 560 or len(dock_px) != 468:
-        raise SystemExit(f"screen pixels nano {len(nano_px)} dock {len(dock_px)}")
+    if tiny[14] != 2 or oberon[14] != 6:
+        raise SystemExit("NofRuns bytes are not 2 and 6")
+    nano, dock = _built(tiny, oberon)
     text = open(HEADER_PATH, "r", encoding="ascii").read()
     if text != _header(nano, dock):
         raise SystemExit(f"{HEADER_PATH} does not match the painter")
-    print(f"[ok] glyph nano {len(nano)} words, dock {len(dock)} words, "
-          f"screen pixels {len(nano_px)} and {len(dock_px)}")
+    print(f"[ok] glyph counts {len(nano)} nano {len(nano[0])} words, "
+          f"dock {len(dock[0])} words")
 
 
 def write() -> None:
     os.makedirs(os.path.dirname(HEADER_PATH), exist_ok=True)
     open(TINY_PATH, "wb").write(tiny_bytes())
     tiny, oberon = _load_fonts()
-    nano = tuple(sorted(frame(NANO, tiny, True).items()))
-    dock = tuple(sorted(frame(DOCK, oberon, True).items()))
-    if nano != NANO_ON or dock != DOCK_ON:
-        raise SystemExit(f"painted words\n nano {nano}\n dock {dock}")
-    if frame(NANO, tiny, False) or frame(DOCK, oberon, False):
-        raise SystemExit("the off frame is not black")
+    nano, dock = _built(tiny, oberon)
     open(HEADER_PATH, "w", encoding="ascii").write(_header(nano, dock))
     print(f"[ok] wrote {TINY_PATH} and {HEADER_PATH}")
 

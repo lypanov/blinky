@@ -180,7 +180,7 @@ int main(int argc, char** argv) {
              top->r9,
              top->halted ? 1 : 0,
              top->pc);
-      if (!picture_ok(bmp, led, PIC_DOCK, PIC_DOCK_N)) {
+      if (!picture_ok(bmp, led, rises, 1)) {
         failed = 1;
         break;
       }
@@ -299,7 +299,7 @@ int main(int argc, char** argv) {
         failed = 1;
       }
     }
-    if (!failed && !edges.empty() && !picture_ok(bmp, top->led ? 1 : 0, PIC_DOCK, PIC_DOCK_N)) {
+    if (!failed && !edges.empty() && !picture_ok(bmp, top->led ? 1 : 0, rises, 1)) {
       failed = 1;
     }
   }

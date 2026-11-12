@@ -217,7 +217,9 @@ MODULE Modules;  (*Link and load on RISC; NW 20.10.2013 / 8.1.2019*)
 
   PROCEDURE Init*;
   BEGIN Files.Init; MTOrg := SYSTEM.REG(MT);
-    SYSTEM.GET(16, AllocPtr); SYSTEM.GET(20, root); SYSTEM.GET(24, limit); DEC(limit, 8000H)
+    (* Texts needs the module area past 10000H. The deepest frame is
+       FileDir.Init, about 12KB, so 7000H still clears it. *)
+    SYSTEM.GET(16, AllocPtr); SYSTEM.GET(20, root); SYSTEM.GET(24, limit); DEC(limit, 7000H)
   END Init;
 
 BEGIN Init; Load("Oberon", M);

@@ -55,25 +55,38 @@ ALLOC = 0x2000
 # modules, and the heap is the gap from that origin up to MemLim.
 # Files.Old takes a 1280-byte buffer and a 512-byte descriptor.
 # Oberon, Fonts, the one font file, Display, AMemoryMappedToggle,
-# Blink5, and Blink.Rate each take that pair (12544). Fonts.This
-# allocates two 3072-byte blocks before the collector runs. The rest
-# of this 64 KB heap is 1464 records of 32 bytes. The bitmap windows sit
-# at 0FFFE0000H and 0FFFE8000H, outside the heap. One record less is
-# the ROM whose LED stays dark.
+# Blink5, Texts, and Blink.Rate, plus Texts' trailer and the writer,
+# are ten of those pairs. Fonts.This allocates two 3072-byte blocks
+# before the collector runs. The text, two buffers and three pieces
+# are 288 bytes. 1280 bytes are the type-size remainder. The allocator
+# has 33 records free on the full limit and 32 when MemLim is one
+# record lower. Blink holds the 33 while it builds the list, then
+# Collect releases them for WriteInt. The rest of this 64 KB heap is
+# 1247 records of 32 bytes. The bitmap windows sit at 0FFFE0000H and
+# 0FFFE8000H, outside the heap. One record less is the ROM whose list
+# finds no block, so the LED stays dark.
 STACK = 0x18000
 FILE_BYTES = 1280 + 512
-OPEN_FILES = 7
+OPEN_FILES = 10
 FONT_BLOCK = 3072
 FONT_BLOCKS = 2
-KEPT = (0x10000 - FILE_BYTES * OPEN_FILES - FONT_BLOCK * FONT_BLOCKS) // 32
-HEAP_BYTES = FILE_BYTES * OPEN_FILES + FONT_BLOCK * FONT_BLOCKS + 32 * KEPT
+TEXT_BYTES = 288
+WRITE_SLACK = 1280
+KEPT = (0x10000 - FILE_BYTES * OPEN_FILES - FONT_BLOCK * FONT_BLOCKS
+        - TEXT_BYTES - WRITE_SLACK) // 32
+HEAP_BYTES = (FILE_BYTES * OPEN_FILES + FONT_BLOCK * FONT_BLOCKS
+              + TEXT_BYTES + WRITE_SLACK + 32 * KEPT)
 MEMLIM = STACK + HEAP_BYTES
 SHORT_MEMLIM = MEMLIM - 32
-if KEPT != 1464 or HEAP_BYTES != 0x10000 or MEMLIM != 0x28000 or SHORT_MEMLIM != 0x27FE0:
+if KEPT != 1247 or HEAP_BYTES != 0x10000 or MEMLIM != 0x28000 or SHORT_MEMLIM != 0x27FE0:
     raise SystemExit(
         f"heap {HEAP_BYTES:#x} kept {KEPT} memlim {MEMLIM:#x} short {SHORT_MEMLIM:#x}"
     )
-LIMIT = STACK - 0x8000
+# Modules.Init subtracts this from the stack origin. Texts' module
+# block ends near 0x10600, past the old 32KB ceiling at 0x10000.
+# FileDir.Init's frame is about 12KB, so 28KB still clears it.
+RESERVE = 0x7000
+LIMIT = STACK - RESERVE
 BODY_LO = ALLOC
 BODY_HI = LIMIT
 ROM_WORDS = 4096
@@ -219,7 +232,7 @@ cd "{PAYLOAD}"
         if len(parsed["raw"]) > PAYLOAD_LIMIT:
             raise SystemExit(
                 f"{name}.rsc is {len(parsed['raw'])} bytes; "
-                f"a header and two continuations hold {PAYLOAD_LIMIT}"
+                f"the header's 64 sector slots hold {PAYLOAD_LIMIT}"
             )
         mods[name] = parsed
     print(text, end="")
@@ -602,7 +615,7 @@ def _append_arm(raw: bytes, prologue: list[int]) -> bytes:
     if len(buf) > PAYLOAD_LIMIT:
         raise SystemExit(
             f"Blink5.rsc is {len(buf)} bytes; "
-            f"a header and two continuations hold {PAYLOAD_LIMIT}"
+            f"the header's 64 sector slots hold {PAYLOAD_LIMIT}"
         )
     return bytes(buf)
 

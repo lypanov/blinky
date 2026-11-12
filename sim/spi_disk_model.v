@@ -5,7 +5,9 @@
 
 module spi_disk_model #(
   parameter [23:0] BASE = 24'h200000,
-  parameter integer MAXB = 65536,
+  // PAGE_LIMIT is 80 sectors plus the 20-byte header, 81940 bytes.
+  // Texts.rsc took the image past 64KB.
+  parameter integer MAXB = 131072,
   parameter integer LOAD = 1,
   parameter FILE = "sim/out/disk.bin"
 ) (
@@ -66,6 +68,10 @@ module spi_disk_model #(
         $fatal(1);
       end
       nbytes = $fread(mem, ki);
+      if ($fgetc(ki) >= 0) begin
+        $display("SPI_DISK file is larger than %0d bytes", MAXB);
+        $fatal(1);
+      end
       $fclose(ki);
       if (nbytes <= 0 || nbytes > MAXB) begin
         $display("SPI_DISK model read %0d bytes from %0s", nbytes, FILE);

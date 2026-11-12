@@ -429,7 +429,7 @@ def _compile_boot(env: dict[str, str], uart: int, memlim: int | None = None) -> 
         raise SystemExit(
             f"BootLoad.Mod constants are not {mem_text}, stack 18000H, {disk_text}"
         )
-    if MEMLIM != 0x28000 or STACK != 0x18000 or DISK_DDR != 0x29000 or KEPT != 1464:
+    if MEMLIM != 0x28000 or STACK != 0x18000 or DISK_DDR != 0x29000 or KEPT != 1247:
         raise SystemExit(
             f"heap constants {STACK:#x}..{MEMLIM:#x} disk {DISK_DDR:#x} kept {KEPT} "
             "do not match BootLoad.Mod"
@@ -562,6 +562,7 @@ def _board_text(name: str, dock: bool) -> str:
                 "sqX = 150; sqY = 110; sqW = 10; sqH = 10;",
             ),
             ("mkX = 80; mkY = 55;", "mkX = 143; mkY = 110;"),
+            ("tx = 64; ty = 40;", "tx = 96; ty = 96;"),
         ],
         "Fonts": [('This("Tiny4x6.Fnt")', 'This("Oberon10.Scn.Fnt")')],
     }.get(name)
@@ -602,10 +603,16 @@ def _compile_files(env: dict[str, str], index_trap: bool = False,
     for name in ORDER:
         src = os.path.join(cache, f"{name}.smb")
         open(os.path.join(work, f"{name}.smb"), "wb").write(open(src, "rb").read())
-    for name in ("AMemoryMappedToggle", "Display", "Fonts", "Blink5", "Oberon"):
-        open(os.path.join(work, f"{name}.Mod"), "w", encoding="ascii").write(
-            _board_text(name, dock)
-        )
+    for name in ("AMemoryMappedToggle", "Display", "Fonts", "Texts", "Blink5", "Oberon"):
+        src = os.path.join(ROOT, "tests", f"{name}.Mod")
+        if name == "Texts":
+            open(os.path.join(work, f"{name}.Mod"), "w", encoding="ascii").write(
+                open(src, "r", encoding="ascii").read()
+            )
+        else:
+            open(os.path.join(work, f"{name}.Mod"), "w", encoding="ascii").write(
+                _board_text(name, dock)
+            )
     if index_trap:
         path = os.path.join(work, "Blink5.Mod")
         patched = _with_index_trap(open(path, encoding="utf-8").read())
@@ -615,7 +622,7 @@ def _compile_files(env: dict[str, str], index_trap: bool = False,
     parked = os.path.join(work, "parked")
     os.makedirs(parked, exist_ok=True)
     text = ""
-    for name in ("AMemoryMappedToggle", "Display", "Fonts", "Blink5", "Oberon"):
+    for name in ("AMemoryMappedToggle", "Display", "Fonts", "Texts", "Blink5", "Oberon"):
         for fn in list(os.listdir(work)):
             if fn.endswith(".rsc"):
                 os.replace(os.path.join(work, fn), os.path.join(parked, fn))
@@ -625,13 +632,13 @@ def _compile_files(env: dict[str, str], index_trap: bool = False,
             os.replace(os.path.join(parked, fn), os.path.join(work, fn))
     print(text, end="" if text.endswith("\n") else "\n")
     out = {}
-    for name in ("AMemoryMappedToggle", "Display", "Fonts", "Blink5", "Oberon"):
+    for name in ("AMemoryMappedToggle", "Display", "Fonts", "Texts", "Blink5", "Oberon"):
         path = os.path.join(work, f"{name}.rsc")
         raw = open(path, "rb").read()
         if len(raw) > PAYLOAD_LIMIT:
             raise SystemExit(
                 f"{name}.rsc is {len(raw)} bytes; "
-                f"a header and {PAYLOAD_LIMIT} bytes of continuations are the limit"
+                f"the header's 64 sector slots hold {PAYLOAD_LIMIT}"
             )
         out[name] = raw
     return out
@@ -684,7 +691,7 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     blink = parse_rsc(os.path.join(ROOT, "sim", "out", "bootfiles", "Blink5.rsc"), output_format="quiet")
     blink["raw"] = files["Blink5"]
     names = [item[0] for item in blink["imports"]]
-    if names != ["Fonts", "Display", "AMemoryMappedToggle", "Kernel", "Modules", "Files"]:
+    if names != ["Files", "Fonts", "Texts", "Display", "AMemoryMappedToggle", "Kernel", "Modules"]:
         raise SystemExit(f"Blink5 imports {names}")
     if no_collect:
         kernel = parse_rsc(os.path.join(ROOT, "sim", "inner-core", "Kernel.rsc"), output_format="quiet")
@@ -693,9 +700,10 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         files["Blink5"] = _drop_collect(
             files["Blink5"], blink["code"], kernel_mno, {mark[0], scan[0]}
         )
-    # Oberon is module 5. Blink5 then loads Fonts (6), Display (7), and
-    # AMemoryMappedToggle (8). Blink5 itself is module 9.
-    blink_mt = 0x20 + 9 * 4
+    # Oberon is module 5. Blink5 loads Texts, which loads Fonts first.
+    # Fonts is 6, Texts 7, Display 8, AMemoryMappedToggle 9.
+    # Blink5 itself is module 10.
+    blink_mt = 0x20 + 10 * 4
     if index_trap:
         _check_index_trap(blink["code"], blink["entry_point"])
     else:
@@ -721,18 +729,21 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     if mem.get(root_now + NUM) != 5:
         raise SystemExit(f"Oberon is module {mem.get(root_now + NUM)}")
     root_now, alloc_now = _load(mem, root_now, alloc_now, "Blink5", files)
-    if mem.get(root_now + NUM) != 9 or _name_at(mem, root_now) != "Blink5":
+    if mem.get(root_now + NUM) != 10 or _name_at(mem, root_now) != "Blink5":
         raise SystemExit(f"root is {_name_at(mem, root_now)} num {mem.get(root_now + NUM)}")
     if alloc_now > LIMIT:
         raise SystemExit(f"allocation ends at {alloc_now:#x}, limit is {LIMIT:#x}")
     fonts = _find(mem, root_now, "Fonts")
     if mem.get(fonts + NUM) != 6:
         raise SystemExit(f"Fonts is module {mem.get(fonts + NUM)}")
+    texts = _find(mem, root_now, "Texts")
+    if mem.get(texts + NUM) != 7:
+        raise SystemExit(f"Texts is module {mem.get(texts + NUM)}")
     display = _find(mem, root_now, "Display")
-    if mem.get(display + NUM) != 7:
+    if mem.get(display + NUM) != 8:
         raise SystemExit(f"Display is module {mem.get(display + NUM)}")
     ammt = _find(mem, root_now, "AMemoryMappedToggle")
-    if mem.get(ammt + NUM) != 8:
+    if mem.get(ammt + NUM) != 9:
         raise SystemExit(f"AMemoryMappedToggle is module {mem.get(ammt + NUM)}")
     # No type descriptor: the exported light is the first variable.
     if mem.get(ammt + DATA) != ammt + DESC:
@@ -756,6 +767,7 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         (b"Fonts.rsc", files["Fonts"]),
         (b"Oberon.rsc", files["Oberon"]),
         (b"Oberon10.Scn.Fnt", face),
+        (b"Texts.rsc", files["Texts"]),
         (b"Tiny4x6.Fnt", tiny),
     )
     if list(order) != sorted(order, key=lambda item: item[0]):

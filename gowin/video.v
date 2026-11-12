@@ -8,15 +8,9 @@
 `ifndef VIDEO_SIM
 `include "video_mode.vh"
 `endif
-// FRAME_CHECK is the Verilator frame tap. The screen write and the
-// four digit registers use the CPU clock, the same way the board
-// does. The digits stay registers. Gowin does not set FRAME_CHECK.
-`ifdef FRAME_CHECK
-  `define VIDEO_REG_DIGITS
-`elsif VIDEO_SIM
-`else
-  `define VIDEO_REG_DIGITS
-`endif
+// FRAME_CHECK is the Verilator frame tap. The screen write uses the
+// CPU clock, the same way the board does. Gowin does not set
+// FRAME_CHECK. The digit converter and the glyph ROM are retired.
 //
 // The Nano 4K has two PLLVR (DS861). HyperRAM already uses one, and
 // its spare outputs are 54, 27, and 18 MHz, not a 5× pixel clock.
@@ -79,7 +73,7 @@ module video (
   input  clk_cpu,
 `endif
 `ifdef VIDEO_TEXT
-  // -76 is the blink count. This block writes four decimal digits.
+  // The digit converter is retired. The ports stay so the top connects.
   input  text_we,
   input  [23:0] text_word,
 `endif
@@ -568,247 +562,9 @@ module video (
       status <= status_in;
   end
 `endif
-`ifdef VIDEO_TEXT
-  // 40×15 characters, 8×8, origin (160, 48) of the active picture.
-  // Columns 18..21 of row 0 are Blink5's four digits. The rest of
-  // the window stays the blank code. A glyph of 0 does not cover
-  // the square; the two do not overlap.
-`ifdef VIDEO_DOCK
-  localparam [10:0] TEXT_X = 11'd160;
-  localparam [10:0] TEXT_Y = 11'd48;
-  localparam [10:0] TEXT_W = 11'd320;
-  localparam [10:0] TEXT_H = 11'd120;
-  wire [10:0] ax = hx - 11'd296;
-  wire [10:0] ay = {1'b0, vy} - 11'd35;
-  wire [10:0] tx = ax - TEXT_X;
-  wire [10:0] ty = ay - TEXT_Y;
-`else
-  localparam [9:0] TEXT_X = 10'd160;
-  localparam [9:0] TEXT_Y = 10'd48;
-  localparam [9:0] TEXT_W = 10'd320;
-  localparam [9:0] TEXT_H = 10'd120;
-  wire [9:0] ax = hx - 10'd122;
-  wire [9:0] ay = vy - 10'd36;
-  wire [9:0] tx = ax - TEXT_X;
-  wire [9:0] ty = ay - TEXT_Y;
-`endif
-  wire in_text = de && (ax >= TEXT_X) && (ax < TEXT_X + TEXT_W)
-      && (ay >= TEXT_Y) && (ay < TEXT_Y + TEXT_H);
-  wire [5:0] tcol = tx[8:3];
-  wire [3:0] trow = ty[6:3];
-  wire [9:0] taddr = in_text
-      ? ({1'b0, trow, 5'b0} + {3'b0, trow, 3'b0} + {4'b0, tcol})
-      : 10'd0;
-  // Columns 18..21 of row 0 are the four digits. One bit per
-  // clock: fourteen clocks a digit, four digits, units first.
-  reg dig_run = 1'b0;
-  reg [1:0] dig_phase = 2'd0;
-  reg [3:0] dig_bi = 4'd0;
-  reg [13:0] dig_src = 14'd0;
-  reg [13:0] dig_quot = 14'd0;
-  reg [4:0] dig_acc = 5'd0;
-  wire dig_msb = dig_src[13];
-  wire [4:0] dig_acc_n = {dig_acc[3:0], dig_msb};
-  wire dig_sub = dig_acc_n >= 5'd10;
-  wire [4:0] dig_acc_d = dig_sub ? (dig_acc_n - 5'd10) : dig_acc_n;
-  wire dig_last = dig_bi == 4'd0;
-  wire dig_we = dig_run && !text_we && dig_last;
-  wire [5:0] dig_col = 6'd21 - {4'b0, dig_phase};
-  wire [9:0] dig_addr = {4'b0, dig_col};
-  wire [7:0] dig_ascii = {4'b0011, dig_acc_d[3:0]};
-  wire [15:0] dig_in = text_word[15:0];
-  wire [13:0] dig_mod = dig_in >= 16'd10000 ? dig_in[13:0] - 14'd10000 : dig_in[13:0];
-  reg in_text_d = 1'b0;
-  reg [2:0] subx_d = 3'd0;
-  reg [2:0] suby_d = 3'd0;
-`ifdef VIDEO_REG_DIGITS
-  // A second SDPB, free or pinned beside the square bitmap, held
-  // DDR3 training. The four digits are registers. The count is the
-  // number of on-stores at -80, so the CPU and Blink5 stay the
-  // square image that trains.
-  reg [15:0] blinks = 16'd0;
-  reg [7:0] d0 = 8'h30;
-  reg [7:0] d1 = 8'h30;
-  reg [7:0] d2 = 8'h30;
-  reg [7:0] d3 = 8'h30;
-  wire [15:0] nxt = blinks + 16'd1;
-  wire [13:0] nxt_mod = nxt >= 16'd10000 ? nxt[13:0] - 14'd10000 : nxt[13:0];
-  always @(posedge clk_cpu) begin
-    if (screen_we && screen_bit) begin
-      blinks <= nxt;
-      dig_src <= nxt_mod;
-      dig_quot <= 14'd0;
-      dig_acc <= 5'd0;
-      dig_bi <= 4'd13;
-      dig_phase <= 2'd0;
-      dig_run <= 1'b1;
-    end else if (dig_run) begin
-      if (dig_last) begin
-        dig_src <= {dig_quot[12:0], dig_sub};
-        dig_quot <= 14'd0;
-        dig_acc <= 5'd0;
-        dig_bi <= 4'd13;
-        if (dig_phase == 2'd3)
-          dig_run <= 1'b0;
-        else
-          dig_phase <= dig_phase + 2'd1;
-      end else begin
-        dig_src <= {dig_src[12:0], 1'b0};
-        dig_quot <= {dig_quot[12:0], dig_sub};
-        dig_acc <= dig_acc_d;
-        dig_bi <= dig_bi - 4'd1;
-      end
-      if (dig_we) begin
-        case (dig_phase)
-          2'd0: d3 <= dig_ascii;
-          2'd1: d2 <= dig_ascii;
-          2'd2: d1 <= dig_ascii;
-          default: d0 <= dig_ascii;
-        endcase
-      end
-    end
-  end
-  reg [7:0] char_q = 8'h30;
-  always @(posedge pix) begin
-    if (taddr == 10'd18) char_q <= d0;
-    else if (taddr == 10'd19) char_q <= d1;
-    else if (taddr == 10'd20) char_q <= d2;
-    else if (taddr == 10'd21) char_q <= d3;
-    else char_q <= 8'h00;
-  end
-`else
-  reg [7:0] tmem [0:599];
-  integer ti;
-  initial for (ti = 0; ti < 600; ti = ti + 1) tmem[ti] = 8'h00;
-  reg [7:0] char_q = 8'h00;
-  always @(posedge pix) begin
-    if (text_we) begin
-      dig_src <= dig_mod;
-      dig_quot <= 14'd0;
-      dig_acc <= 5'd0;
-      dig_bi <= 4'd13;
-      dig_phase <= 2'd0;
-      dig_run <= 1'b1;
-    end else if (dig_run) begin
-      if (dig_we)
-        tmem[dig_addr] <= dig_ascii;
-      if (dig_last) begin
-        dig_src <= {dig_quot[12:0], dig_sub};
-        dig_quot <= 14'd0;
-        dig_acc <= 5'd0;
-        dig_bi <= 4'd13;
-        if (dig_phase == 2'd3)
-          dig_run <= 1'b0;
-        else
-          dig_phase <= dig_phase + 2'd1;
-      end else begin
-        dig_src <= {dig_src[12:0], 1'b0};
-        dig_quot <= {dig_quot[12:0], dig_sub};
-        dig_acc <= dig_acc_d;
-        dig_bi <= dig_bi - 4'd1;
-      end
-    end
-    char_q <= tmem[taddr];
-  end
-`endif
-  // FONT8 BEGIN
-  function [7:0] font8;
-    input [7:0] ch;
-    input [2:0] row;
-    begin
-      case ({ch, row})
-        11'h180: font8 = 8'h7E;
-        11'h181: font8 = 8'h81;
-        11'h182: font8 = 8'h81;
-        11'h183: font8 = 8'h81;
-        11'h184: font8 = 8'h81;
-        11'h185: font8 = 8'h81;
-        11'h186: font8 = 8'h7E;
-        11'h187: font8 = 8'h00;
-        11'h188: font8 = 8'h18;
-        11'h189: font8 = 8'h38;
-        11'h18A: font8 = 8'h18;
-        11'h18B: font8 = 8'h18;
-        11'h18C: font8 = 8'h18;
-        11'h18D: font8 = 8'h18;
-        11'h18E: font8 = 8'h7E;
-        11'h18F: font8 = 8'h00;
-        11'h190: font8 = 8'h7E;
-        11'h191: font8 = 8'h02;
-        11'h192: font8 = 8'h02;
-        11'h193: font8 = 8'h7E;
-        11'h194: font8 = 8'h80;
-        11'h195: font8 = 8'h80;
-        11'h196: font8 = 8'h7E;
-        11'h197: font8 = 8'h00;
-        11'h198: font8 = 8'h7E;
-        11'h199: font8 = 8'h02;
-        11'h19A: font8 = 8'h02;
-        11'h19B: font8 = 8'h7E;
-        11'h19C: font8 = 8'h02;
-        11'h19D: font8 = 8'h02;
-        11'h19E: font8 = 8'h7E;
-        11'h19F: font8 = 8'h00;
-        11'h1A0: font8 = 8'h81;
-        11'h1A1: font8 = 8'h81;
-        11'h1A2: font8 = 8'h81;
-        11'h1A3: font8 = 8'h7E;
-        11'h1A4: font8 = 8'h02;
-        11'h1A5: font8 = 8'h02;
-        11'h1A6: font8 = 8'h02;
-        11'h1A7: font8 = 8'h00;
-        11'h1A8: font8 = 8'h7E;
-        11'h1A9: font8 = 8'h80;
-        11'h1AA: font8 = 8'h80;
-        11'h1AB: font8 = 8'h7E;
-        11'h1AC: font8 = 8'h02;
-        11'h1AD: font8 = 8'h02;
-        11'h1AE: font8 = 8'h7E;
-        11'h1AF: font8 = 8'h00;
-        11'h1B0: font8 = 8'h7E;
-        11'h1B1: font8 = 8'h80;
-        11'h1B2: font8 = 8'h80;
-        11'h1B3: font8 = 8'h7E;
-        11'h1B4: font8 = 8'h81;
-        11'h1B5: font8 = 8'h81;
-        11'h1B6: font8 = 8'h7E;
-        11'h1B7: font8 = 8'h00;
-        11'h1B8: font8 = 8'h7E;
-        11'h1B9: font8 = 8'h02;
-        11'h1BA: font8 = 8'h02;
-        11'h1BB: font8 = 8'h04;
-        11'h1BC: font8 = 8'h08;
-        11'h1BD: font8 = 8'h10;
-        11'h1BE: font8 = 8'h10;
-        11'h1BF: font8 = 8'h00;
-        11'h1C0: font8 = 8'h7E;
-        11'h1C1: font8 = 8'h81;
-        11'h1C2: font8 = 8'h81;
-        11'h1C3: font8 = 8'h7E;
-        11'h1C4: font8 = 8'h81;
-        11'h1C5: font8 = 8'h81;
-        11'h1C6: font8 = 8'h7E;
-        11'h1C7: font8 = 8'h00;
-        11'h1C8: font8 = 8'h7E;
-        11'h1C9: font8 = 8'h81;
-        11'h1CA: font8 = 8'h81;
-        11'h1CB: font8 = 8'h7E;
-        11'h1CC: font8 = 8'h02;
-        11'h1CD: font8 = 8'h02;
-        11'h1CE: font8 = 8'h7E;
-        11'h1CF: font8 = 8'h00;
-        default: font8 = 8'h00;
-      endcase
-    end
-  endfunction
-  // FONT8 END
-  wire [7:0] grow = font8(char_q, suby_d);
-  wire gbit = grow[3'd7 - subx_d];
-  // The bitmap is the whole picture. The digit glyphs stay out of it.
-  wire text_on = 1'b0 && gbit;
-`else
+  // The digit converter and the glyph ROM are retired. Blink draws
+  // the count into the bitmap with the book's Texts and Fonts.
   wire text_on = 1'b0;
-`endif
   wire [9:0] ctrl0 =
       ({vs_r, hs_r} == 2'b00) ? CTRL00 :
       ({vs_r, hs_r} == 2'b01) ? CTRL01 :
@@ -859,11 +615,6 @@ module video (
     py_r <= py;
     rram_q <= rram;
     status_q <= status;
-`ifdef VIDEO_TEXT
-    in_text_d <= in_text;
-    subx_d <= tx[2:0];
-    suby_d <= ty[2:0];
-`endif
 `else
     if (!de) begin
       case ({vs, hs})

@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
              top->r9,
              top->halted ? 1 : 0,
              top->pc);
-      if (!picture_ok(bmp, led, PIC_NANO, PIC_NANO_N)) {
+      if (!picture_ok(bmp, led, rises, 0)) {
         failed = 1;
         break;
       }
@@ -284,7 +284,7 @@ int main(int argc, char** argv) {
         failed = 1;
       }
     }
-    if (!failed && !edges.empty() && !picture_ok(bmp, top->led ? 1 : 0, PIC_NANO, PIC_NANO_N)) {
+    if (!failed && !edges.empty() && !picture_ok(bmp, top->led ? 1 : 0, rises, 0)) {
       failed = 1;
     }
   }

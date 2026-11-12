@@ -131,7 +131,9 @@ echo "[ok] UART disk N=$N period $PERIOD, bad build dark, flipped byte dark"
 # The list fills the heap before the arm word. Collect runs on the
 # fourth on-edge and walks the list again. The three-edge run above is
 # the period. This run only has to keep going.
-"$BIN" --edges 24 --min-pc 0x900 "${GOOD[@]}"
+# The kept list is collected three times before edge 24, and the first
+# edge is already past 130e6. 160e6 stops inside the second walk.
+"$BIN" --edges 24 --min-pc 0x900 --cycles 240000000 "${GOOD[@]}"
 echo "[ok] UART disk still blinking after Collect walked the list"
 # Same third-rise change as the NOR bench. The directory search is the
 # long part of the reopen, about 35 ms on the 4K clock and less here.
@@ -147,7 +149,7 @@ open(dst, "wb").write(set_rate(open(src, "rb").read(), int(delay)))
 print(f"[ok] switch disk {delay} ms")
 PY
 "$BIN" --period "$SWITCH_PERIOD" --period2 $((SWITCH_PERIOD / 2)) \
-  --switch-after 4 --slack 2048 --edges 7 --min-pc 0x900 \
+  --switch-after 4 --slack 2048 --edges 7 --min-pc 0x900 --cycles 240000000 \
   +disk="$ROOT/sim/out/disk-rate-switch.bin" "${GOOD[@]}"
 echo "[ok] UART disk halves 100 ms after the third rise"
 

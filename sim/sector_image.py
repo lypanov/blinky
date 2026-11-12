@@ -20,8 +20,9 @@ HEADER_MARK = 0x9BA71D86
 HEADER_SIZE = 352
 SECTOR = 1024
 # Header data plus continuation sectors. FileDir.SecTabSize is 64.
-# Display.rsc is the book's module and does not fit in two continuations.
-MAX_CONT = 8
+# sec[0] is the header, so a file has at most 63 continuations and no
+# index page. Texts.rsc needs 12 of those slots.
+MAX_CONT = 63
 PAYLOAD_LIMIT = (SECTOR - HEADER_SIZE) + MAX_CONT * SECTOR
 DIR_ROOT = 29
 AMMT_SEC = 58

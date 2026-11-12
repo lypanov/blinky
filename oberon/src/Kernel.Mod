@@ -47,8 +47,11 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
     VAR q: LONGINT;
   BEGIN
     IF list1 # 0 THEN p := list1; SYSTEM.GET(list1+8, list1)
-    ELSE GetBlock(q, 256); SYSTEM.PUT(q+128, 128); SYSTEM.PUT(q+132, -1); SYSTEM.PUT(q+136, list1);
-      list1 := q + 128; p := q
+    ELSE GetBlock(q, 256);
+      IF q = 0 THEN p := 0
+      ELSE SYSTEM.PUT(q+128, 128); SYSTEM.PUT(q+132, -1); SYSTEM.PUT(q+136, list1);
+        list1 := q + 128; p := q
+      END
     END
   END GetBlock128;
 
@@ -56,8 +59,11 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
     VAR q: LONGINT;
   BEGIN
     IF list2 # 0 THEN p := list2; SYSTEM.GET(list2+8, list2)
-    ELSE GetBlock128(q); SYSTEM.PUT(q+64, 64); SYSTEM.PUT(q+68, -1); SYSTEM.PUT(q+72, list2);
-      list2 := q + 64; p := q
+    ELSE GetBlock128(q);
+      IF q = 0 THEN p := 0
+      ELSE SYSTEM.PUT(q+64, 64); SYSTEM.PUT(q+68, -1); SYSTEM.PUT(q+72, list2);
+        list2 := q + 64; p := q
+      END
     END
   END GetBlock64;
 
@@ -65,8 +71,11 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
     VAR q: LONGINT;
   BEGIN
     IF list3 # 0 THEN p := list3; SYSTEM.GET(list3+8, list3)
-    ELSE GetBlock64(q); SYSTEM.PUT(q+32, 32); SYSTEM.PUT(q+36, -1); SYSTEM.PUT(q+40, list3);
-      list3 := q + 32; p := q
+    ELSE GetBlock64(q);
+      IF q = 0 THEN p := 0
+      ELSE SYSTEM.PUT(q+32, 32); SYSTEM.PUT(q+36, -1); SYSTEM.PUT(q+40, list3);
+        list3 := q + 32; p := q
+      END
     END
   END GetBlock32;
 
@@ -420,7 +429,7 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
   PROCEDURE Init*;
   BEGIN Install(SYSTEM.ADR(Trap), 20H);  (*install temporary trap*)
     SYSTEM.GET(12, MemLim); SYSTEM.GET(24, heapOrg);
-    stackOrg := heapOrg; stackSize := 8000H; heapLim := MemLim;
+    stackOrg := heapOrg; stackSize := 7000H; heapLim := MemLim;
     list1 := 0; list2 := 0; list3 := 0; list0 := heapOrg;
     SYSTEM.PUT(list0, heapLim - heapOrg); SYSTEM.PUT(list0+4, -1); SYSTEM.PUT(list0+8, 0);
     allocated := 0; clock := 0; InitSecMap

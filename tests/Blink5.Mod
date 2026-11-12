@@ -1,11 +1,13 @@
 MODULE Blink5;
-  IMPORT Fonts, Display, MMT := AMemoryMappedToggle, Kernel, Modules, Files, SYSTEM;
+  IMPORT Files, Fonts, Texts, Display, MMT := AMemoryMappedToggle, Kernel, Modules, SYSTEM;
   (* The 4K square is five bitmap pixels at (75, 55). The letter A is
      at (80, 55), in the same words. The Dock build replaces these two
      lines with the square at 150, 110, 10, 10 and the letter at
      143, 110. Both squares are the 20-pixel box at screen (300, 220). *)
   CONST sqX = 75; sqY = 55; sqW = 5; sqH = 5;
     mkX = 80; mkY = 55;
+    tx = 64; ty = 40;
+    slackRecs = 33; (*the full heap's free records; the short limit has one fewer*)
   (*
     This body fills a list, checks every record, then calls ArmHook.
     That call's immediate is where the arm sequence is entered. The
@@ -14,15 +16,17 @@ MODULE Blink5;
     MemLim, AllocPtr, the boot root, and the stack origin, 58 DIV 29
     is 2 and the remainder in H is 0, the two products match, the sum
     of this placed code matches the word stored at address 28, and
-    kept is 1464. Modules loads Oberon, and Oberon loads this module.
+    kept is 1247. Modules loads Oberon, and Oberon loads this module.
     The LED pin stays dark otherwise.
 
-    The loop draws the square and one letter, then stores the new light.
-    Display is the book's module. ReplConst paints the rectangle.
-    CopyPattern paints the letter into the same words, so the load has
-    to return what the square stored. The font file is bottom-row first
-    and this bitmap's Y increases downward, so the rows are reversed
-    first. This board's
+    The loop draws the square, the letter, and the count, then stores
+    the new light. Texts.WriteInt writes the count into a text. The
+    line is drawn with this font, one glyph at a time. Display is the
+    book's module. ReplConst paints the rectangle. CopyPattern paints
+    into words the square may already own, so the load has to return
+    what was stored. The font file is bottom-row first and this
+    bitmap's Y increases downward, so the rows are reversed first.
+    This board's
     width, height and bitmap address are its constants. The 4K bitmap
     is at 0FFFE0000H, 256 bits a row, and the square is five rows of
     bits 11..15 at word 442 (0FFFE06E8H). The Dock bitmap is at
@@ -61,11 +65,17 @@ MODULE Blink5;
 
     MemLim is 28000H. The heap is the 65536 bytes from the stack origin
     18000H up to that limit. Files.Old of Oberon, Fonts, the font,
-    Display, AMemoryMappedToggle, this module, and Blink.Rate each take
-    a 1280-byte buffer and a 512-byte descriptor, 1792 bytes. Reading a
-    later page of a file reuses its one buffer. Those seven opens take
-    12544 bytes. Fonts allocates two blocks of 3072 bytes. 1464 records
-    of 32 bytes fill the rest. head and node are global, so the
+    Display, AMemoryMappedToggle, this module, Texts, and Blink.Rate,
+    plus the trailer file and the writer file, are ten opens. Each
+    takes a 1280-byte buffer and a 512-byte descriptor, 17920 bytes.
+    Reading a later page of a file reuses its one buffer. Fonts
+    allocates two blocks of 3072 bytes. The text, the two buffers and
+    the three pieces are 288 bytes, and 1280 bytes stay free so the
+    count can be written until Collect. 1247 records of 32 bytes fill
+    the rest. The heap has 33 records free after that list on the full
+    limit, and 32 when MemLim is one record lower. Those 33 are held
+    while the list is built, then released. head, node and spare are
+    global, so the
     collector follows them. kept counts the records that were linked.
     The arm word depends on that count. A limit one record lower finds
     no block for the last record, stores the light off, and stops
@@ -80,11 +90,14 @@ MODULE Blink5;
     Rec = RECORD n: INTEGER; next: Node END;
 
   VAR last, now, wait, keys, n, due, half, thousand: INTEGER;
-    node, head: Node;
+    node, head, spare: Node;
     kept*: INTEGER;
     rate: Files.File;
     R: Files.Rider;
     sum, diff, prod, quot: REAL;
+    line: Texts.Text;
+    W: Texts.Writer;
+    junk: Texts.Buffer;
 
   PROCEDURE Collect;
     VAR m: Modules.Module;
@@ -114,13 +127,15 @@ MODULE Blink5;
     REPEAT UNTIL FALSE
   END Dark;
 
-  PROCEDURE DrawMark(on: INTEGER);
-    VAR dx, x, y, w, h, pat, nb, row, n, src, dst: INTEGER;
+  PROCEDURE Note(T: Texts.Text; op: INTEGER; beg, en: LONGINT);
+  BEGIN
+  END Note;
+
+  PROCEDURE PaintChar(on, px, py, w, h, pat: INTEGER);
+    VAR row, nb, k, src, dst: INTEGER;
       b: BYTE;
       buf: ARRAY 16 OF BYTE;
   BEGIN
-    Fonts.GetPat(Fonts.Default, 41X, dx, x, y, w, h, pat);
-    IF (w < 1) OR (w > 8) OR (h < 1) OR (h > 8) THEN Dark END;
     nb := (w + 7) DIV 8;
     SYSTEM.PUT(SYSTEM.ADR(buf), CHR(w));
     SYSTEM.PUT(SYSTEM.ADR(buf) + 1, CHR(h));
@@ -128,20 +143,56 @@ MODULE Blink5;
     row := 0;
     WHILE row < h DO
       src := pat + 2 + (h - 1 - row) * nb;
-      n := 0;
-      WHILE n < nb DO
-        SYSTEM.GET(src, b); SYSTEM.PUT(dst, b); INC(src); INC(dst); INC(n)
+      k := 0;
+      WHILE k < nb DO
+        SYSTEM.GET(src, b); SYSTEM.PUT(dst, b); INC(src); INC(dst); INC(k)
       END;
       INC(row)
     END;
-    IF on = 1 THEN
-      Display.ReplConst(Display.white, sqX, sqY, sqW, sqH, Display.replace);
-      Display.CopyPattern(Display.white, SYSTEM.ADR(buf), mkX + x, mkY + y, Display.paint)
-    ELSE
-      Display.ReplConst(Display.black, sqX, sqY, sqW, sqH, Display.replace);
-      Display.CopyPattern(Display.white, SYSTEM.ADR(buf), mkX + x, mkY + y, Display.invert)
+    (* Paint and invert are different instruction streams, and the
+       off edge has to take as long as the on edge. Invert on a black
+       background is the same picture as paint, and the next invert
+       clears it. *)
+    IF on >= 0 THEN
+      Display.CopyPattern(Display.white, SYSTEM.ADR(buf), px, py, Display.invert)
     END
-  END DrawMark;
+  END PaintChar;
+
+  PROCEDURE Show(on: INTEGER);
+    VAR Rdr: Texts.Reader;
+      ch: CHAR;
+      dx, x, y, w, h, pat, pen, i: INTEGER;
+  BEGIN
+    IF on = 1 THEN
+      (* On the Dock the lit Show is about 2000 bridge clocks shorter
+         than the dark one. Two of these steps put that difference
+         back inside the poll slack on both boards. *)
+      i := 0;
+      WHILE i < 2 DO INC(i) END
+    END;
+    Display.ReplConst(Display.white, sqX, sqY, sqW, sqH, Display.invert);
+    Fonts.GetPat(Fonts.Default, 41X, dx, x, y, w, h, pat);
+    IF (w < 1) OR (w > 8) OR (h < 1) OR (h > 8) THEN Dark END;
+    PaintChar(on, mkX + x, mkY + y, w, h, pat);
+    Texts.WriteInt(W, n, 1);
+    Texts.Append(line, W.buf);
+    Texts.OpenReader(Rdr, line, 0);
+    pen := tx;
+    Texts.Read(Rdr, ch);
+    WHILE ~Rdr.eot DO
+      Fonts.GetPat(Fonts.Default, ch, dx, x, y, w, h, pat);
+      IF (w < 0) OR (w > 8) OR (h < 0) OR (h > 8) THEN Dark END;
+      IF (w > 0) & (h > 0) THEN PaintChar(on, pen + x, ty + y, w, h, pat) END;
+      pen := pen + dx;
+      Texts.Read(Rdr, ch)
+    END;
+    IF line.len # 0 THEN
+      (* Delete keeps this buffer's header. Opening a new one allocates,
+         and that block comes off a free list whose shape changes from
+         edge to edge, which moved the off edge past the poll slack. *)
+      Texts.Delete(line, 0, line.len, junk)
+    END
+  END Show;
 
   PROCEDURE Check;
     VAR p: Node; i: INTEGER;
@@ -178,14 +229,31 @@ BEGIN
   quot := 15.0 / 3.0;
   IF quot # 5.0 THEN Dark END;
   wait := wait * half;
+  NEW(line);
+  IF line = NIL THEN Dark END;
+  Texts.Open(line, "");
+  line.notify := Note;
+  NEW(junk);
+  IF junk = NIL THEN Dark END;
+  Texts.OpenBuf(junk);
+  Texts.OpenWriter(W);
+  IF W.buf = NIL THEN Dark END;
   n := 0;
   due := 4;
-  kept := 0; head := NIL;
-  WHILE kept < 1464 DO
+  kept := 0; head := NIL; spare := NIL;
+  half := 0;
+  WHILE half < slackRecs DO
+    NEW(node);
+    IF node = NIL THEN Dark END;
+    node.next := spare; spare := node; INC(half)
+  END;
+  WHILE kept < 1247 DO
     NEW(node);
     IF node = NIL THEN Dark END;
     node.n := kept; node.next := head; head := node; INC(kept)
   END;
+  spare := NIL;
+  Collect;
   Check;
   ArmHook(7E37H);
   last := Kernel.Time();
@@ -195,11 +263,11 @@ BEGIN
     IF ODD(keys) THEN
       IF now - last >= wait THEN last := last + wait END
     ELSIF now - last >= wait THEN
-      IF MMT.light = 0 THEN DrawMark(1) ELSE DrawMark(0) END;
+      IF MMT.light = 0 THEN INC(n); Show(1) ELSE Show(0) END;
+      SYSTEM.LDREG(5, 0);
       MMT.Toggle;
       last := last + wait;
       IF MMT.light = 1 THEN
-        INC(n);
         IF n = 3 THEN wait := wait DIV 2 END;
         DEC(due);
         IF due = 0 THEN Collect; Check; due := 4 END
