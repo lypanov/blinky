@@ -44,7 +44,7 @@ If no scope is sent on the token request, Netatmo's default is `read_station`. S
 
 ## 3. Get the tokens
 
-Do this once, in a browser on a computer. The C6 does not do this step. The flow is the OAuth 2.0 authorization code grant on the [Authentication](https://dev.netatmo.com/apidocumentation/oauth) page. There is no password grant.
+Do this once, in a browser on a computer. The C6 does not do this step. The published flow on the [Authentication](https://dev.netatmo.com/apidocumentation/oauth) page is the OAuth 2.0 authorization code grant. Do not send the account password to the token endpoint.
 
 1. Make a random `state` string and keep it.
 2. Open this URL. Percent-encode `REDIRECT_URI` so it matches the app settings character for character.
