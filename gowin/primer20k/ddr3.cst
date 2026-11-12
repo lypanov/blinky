@@ -202,6 +202,12 @@ GROUP wr47 = {"*dq_oen_0_s*" "*dqs_oen_2_s0*" "*dq_out[2]_8_s0*" "*dq_out[2]_9_s
 GRP_LOC wr47 R47C[33:41];
 GROUP w5432 = {"*dm_out_3_s1*"};
 GRP_LOC w5432 R54C32;
+// This place put the command-cycle counter at R48C19. The image
+// that trains has no registers on rows 48 or 49, and a counter
+// there leaves the eye scanning with E0 0000. Row 30 is below the
+// sampler box and clear of the write rows.
+GROUP cycle_grp = {"*cycle_*_s0*"};
+GRP_LOC cycle_grp R30C[8:12];
 // The millisecond counter sat on row 8 in the image that trains.
 // This place put all 16 flops on rows 43-44, column 31, one column
 // from the DQ flops. The bridge's got flag was at R4C17.
