@@ -124,10 +124,12 @@ module video (
   wire pix = clk27;
 `endif
 
-  // On the Nano, ODIV 4 puts the PLLVR VCO at 540 for a 135 MHz
-  // serializer. On the Dock the pixel rPLL is 27*(11+1)/(4+1) = 64.8
-  // MHz with ODIV 16 (VCO 1036.8). The serializer rPLL is 64.8*5 =
-  // 324 MHz with ODIV 2 (VCO 648).
+  // On the Nano, ODIV 8 puts the PLLVR VCO at 1080 MHz, inside the
+  // tool's 600–1200 window, and CLKOUT stays 135 MHz:
+  // 27*(4+1)*8/(0+1) = 1080, then divided by ODIV. ODIV 4 was a
+  // 540 MHz VCO, under that window. On the Dock the pixel rPLL is
+  // 27*(11+1)/(4+1) = 64.8 MHz with ODIV 16 (VCO 1036.8). The
+  // serializer rPLL is 64.8*5 = 324 MHz with ODIV 2 (VCO 648).
   wire clkoutp_unused;
   wire clkoutd_unused;
   wire clkoutd3_unused;
@@ -244,7 +246,7 @@ module video (
   defparam u_pll.DYN_FBDIV_SEL = "false";
   defparam u_pll.FBDIV_SEL = 4;
   defparam u_pll.DYN_ODIV_SEL = "false";
-  defparam u_pll.ODIV_SEL = 4;
+  defparam u_pll.ODIV_SEL = 8;
   defparam u_pll.PSDA_SEL = "0000";
   defparam u_pll.DYN_DA_EN = "true";
   defparam u_pll.DUTYDA_SEL = "1000";
