@@ -1,0 +1,15 @@
+[Unit]
+Description=VINDSTYRKA 30-minute CSV from the ESP32-C6 console
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -u /home/bot/fpga/blinky-c6-overnight/esp32c6/overnight_log.py
+Restart=on-failure
+RestartSec=10
+# The process reopens the C6 port itself. Stopping it is:
+#   systemctl --user stop vindstyrka-overnight-log.service
+#   systemctl --user disable vindstyrka-overnight-log.service
+
+[Install]
+WantedBy=default.target
