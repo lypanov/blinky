@@ -59,5 +59,6 @@ Ledger items are not to-dos. If a later item cannot fit on the Nano 4K without a
 45. The `Input` stand-in. Same file, item 45.
 46. The main loop with Blink as a background task. Same file, item 46.
 47. The watchdog. Same file, item 47.
+48. Dock: a UART signal reboots to the bootstrap and loads a new disk, with no new bitstream. Same file, item 48.
 
 The rest of `docs/modules-mod-plan.md` is the original fifteen and the boot path. Read a section when the proof cites it. Those headings are not a second queue.
