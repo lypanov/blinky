@@ -1,6 +1,7 @@
 // Disk-boot bench. Counts bridge-clock cycles, LED edges, and halt.
 #include "Vdisk_boot_top.h"
 #include "verilated.h"
+#include "glyph_expect.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -8,36 +9,6 @@
 #include <cstring>
 #include <map>
 #include <vector>
-
-// Five bitmap rows, word 442 then +8, bits 11..15. Display.ReplConst
-// on the 4K constants writes these words and no others.
-static const int SQ_N = 5;
-static const int SQ_WORD0 = 442;
-static const int SQ_STEP = 8;
-static const uint32_t SQ_DATA = 0x0000F800u;
-
-static int square_ok(const std::map<int, uint32_t>& bmp, int led_on) {
-  const uint32_t want = led_on ? SQ_DATA : 0u;
-  for (int i = 0; i < SQ_N; i++) {
-    int word = SQ_WORD0 + i * SQ_STEP;
-    auto it = bmp.find(word);
-    uint32_t got = it == bmp.end() ? 0u : it->second;
-    if (got != want) {
-      fprintf(stderr, "FAIL square word %d is %08x wanted %08x\n", word, got, want);
-      return 0;
-    }
-  }
-  for (const auto& kv : bmp) {
-    int rel = kv.first - SQ_WORD0;
-    int on_square = rel >= 0 && (rel % SQ_STEP) == 0 && (rel / SQ_STEP) < SQ_N;
-    if (!on_square && kv.second != 0u) {
-      fprintf(stderr, "FAIL bitmap word %d is %08x\n", kv.first, kv.second);
-      return 0;
-    }
-  }
-  printf("SQUARE led %d words %d data %08x\n", led_on, SQ_N, want);
-  return 1;
-}
 
 static vluint64_t main_time = 0;
 double sc_time_stamp() { return static_cast<double>(main_time); }
@@ -198,6 +169,10 @@ int main(int argc, char** argv) {
              top->r9,
              top->halted ? 1 : 0,
              top->pc);
+      if (!picture_ok(bmp, led, PIC_NANO, PIC_NANO_N)) {
+        failed = 1;
+        break;
+      }
       if (exhaust_rises == 0 && (int)edges.size() >= edges_needed) break;
     }
     prev = led;
@@ -205,7 +180,7 @@ int main(int argc, char** argv) {
       halt_at = cycle;
       printf("HALT cycle %llu led %d pc %08x\n",
              (unsigned long long)cycle, led, top->pc);
-      if (expect_halt || exhaust_rises) break;
+      break;
     }
   }
 
@@ -309,7 +284,7 @@ int main(int argc, char** argv) {
         failed = 1;
       }
     }
-    if (!failed && !edges.empty() && !square_ok(bmp, top->led ? 1 : 0)) {
+    if (!failed && !edges.empty() && !picture_ok(bmp, top->led ? 1 : 0, PIC_NANO, PIC_NANO_N)) {
       failed = 1;
     }
   }

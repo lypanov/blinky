@@ -67,6 +67,14 @@ module video (
   input  [8:0] status_in,
 `ifndef VIDEO_SIM
   input  clk_cpu,
+`ifdef VIDEO_DOCK
+  // The Dock shadow is read here. Both ports stay on the pixel clock.
+  // A CPU-clock write port is what drags the DDR3 write off.
+  input  [12:0] bmp_rd_addr,
+  input         bmp_rd_req,
+  output [31:0] bmp_rd_data,
+  output        bmp_rd_ack,
+`endif
 `elsif FRAME_CHECK
   input  clk_cpu,
 `endif
@@ -461,6 +469,82 @@ module video (
         rbit_mux = ram_do[rmi][0];
   end
   assign rbit = rbit_mux;
+`ifdef VIDEO_DOCK
+  // Twelve more blocks, same write as the picture, 32-bit read. The
+  // CPU clock and this pixel clock are unrelated. The request is
+  // synchronized, the word is held, then the ack rises. The CPU drops
+  // the request and waits until the ack falls.
+  wire [31:0] sh_do [0:11];
+  reg [12:0] addr_q = 13'd0;
+  reg req_s0 = 1'b0;
+  reg req_s1 = 1'b0;
+  reg [31:0] data_q = 32'd0;
+  reg ack = 1'b0;
+  reg [1:0] sh_st = 2'd0;
+  wire [13:0] sh_adb = {addr_q[8:0], 5'b00000};
+  reg [31:0] sh_mux = 32'd0;
+  integer shi;
+  always @* begin
+    sh_mux = 32'd0;
+    for (shi = 0; shi < 12; shi = shi + 1)
+      if (addr_q[12:9] == shi[3:0])
+        sh_mux = sh_do[shi];
+  end
+  genvar bsi;
+  generate
+    for (bsi = 0; bsi < 12; bsi = bsi + 1) begin : g_shad
+      SDPB u_shad (
+        .DO(sh_do[bsi]),
+        .DI(wr_data),
+        .BLKSELA(3'b000),
+        .BLKSELB(3'b000),
+        .ADA(wada_w),
+        .ADB(sh_adb),
+        .CLKA(pix),
+        .CLKB(pix),
+        .CEA(fire && (wram_w == bsi)),
+        .CEB(1'b1),
+        .OCE(1'b1),
+        .RESETA(1'b0),
+        .RESETB(1'b0)
+      );
+      defparam u_shad.READ_MODE = 1'b0;
+      defparam u_shad.BIT_WIDTH_0 = 32;
+      defparam u_shad.BIT_WIDTH_1 = 32;
+      defparam u_shad.BLK_SEL_0 = 3'b000;
+      defparam u_shad.BLK_SEL_1 = 3'b000;
+      defparam u_shad.RESET_MODE = "SYNC";
+    end
+  endgenerate
+  // SETUP presents the address. CAP is the cycle the read data is
+  // out, and that edge latches it and raises the ack.
+  always @(posedge pix) begin
+    req_s0 <= bmp_rd_req;
+    req_s1 <= req_s0;
+    case (sh_st)
+      2'd0: begin
+        if (req_s1) begin
+          addr_q <= bmp_rd_addr;
+          sh_st <= 2'd1;
+        end
+      end
+      2'd1: sh_st <= 2'd2;
+      2'd2: begin
+        data_q <= sh_mux;
+        ack <= 1'b1;
+        sh_st <= 2'd3;
+      end
+      default: begin
+        if (!req_s1) begin
+          ack <= 1'b0;
+          sh_st <= 2'd0;
+        end
+      end
+    endcase
+  end
+  assign bmp_rd_data = data_q;
+  assign bmp_rd_ack = ack;
+`endif
 `endif
   // The write is one CPU cycle, the same pulse as the square bit.
   // On the Dock the pixel clock is not an integer multiple of the

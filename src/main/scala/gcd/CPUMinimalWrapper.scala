@@ -49,6 +49,11 @@ class CpuWrapDdr3 extends CpuWrapBase {
   val screen_bit = Output(Bool())
   val bmp_data = Output(UInt(32.W))
   val bmp_word = Output(UInt(13.W))
+  // Pixel-clock shadow of the Dock bitmap. The CPU waits on the ack.
+  val bmp_rd_addr = Output(UInt(13.W))
+  val bmp_rd_req = Output(Bool())
+  val bmp_rd_data = Input(UInt(32.W))
+  val bmp_rd_ack = Input(Bool())
   val armed = Output(Bool())
   // -84. The video module keeps the nine flops. Bit 8 is the mode.
   val status_we = Output(Bool())
@@ -115,6 +120,10 @@ class CPUMinimalWrapper(
   cpu.io.diskValid := false.B
   cpu.io.diskWord := 0.U
   cpu.io.btnPressed := false.B
+  if (!exposeDdr) {
+    cpu.io.bmpRdData := 0.U
+    cpu.io.bmpRdAck := false.B
+  }
   if (exposeHyper) {
     cpu.io.btnPressed := io.asInstanceOf[CpuWrapHyper].btnPressed
   }
@@ -235,6 +244,10 @@ class CPUMinimalWrapper(
       wrap.screen_bit := cpu.io.screenBit
       wrap.bmp_data := cpu.io.bmpData
       wrap.bmp_word := cpu.io.bmpWord
+      wrap.bmp_rd_addr := cpu.io.bmpRdAddr
+      wrap.bmp_rd_req := cpu.io.bmpRdReq
+      cpu.io.bmpRdData := wrap.bmp_rd_data
+      cpu.io.bmpRdAck := wrap.bmp_rd_ack
       wrap.armed := cpu.io.armed
       wrap.status_we := cpu.io.statusWe
       wrap.status_word := cpu.io.statusWord

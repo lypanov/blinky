@@ -2,7 +2,7 @@
 
 One item at a time, from the top. This file is an index. The write-up is in the file each item names.
 
-Next: 40.
+Next: 41.
 
 1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay. Done. The measured result is in the ledger.
 
@@ -51,7 +51,7 @@ Ledger items are not to-dos. If a later item cannot fit on the Nano 4K without a
 37. More heap: measure the address reach, raise `MemLim`. Same file, item 37. Done. The measured result is in that file. Next stays 38.
 38. Floating point, trapped to Oberon on both boards. Same file, item 38. Done. The measured result is in that file. Next stays 39.
 39. The book's `Display` draws the square. Same file, item 39. Done. The measured result is in that file. Next is 40.
-40. The book's `Fonts`: the 4×6 font on the 4K, `Oberon10` on the Dock. Same file, item 40.
+40. The book's `Fonts`: the 4×6 font on the 4K, `Oberon10` on the Dock. Same file, item 40. Done. The measured result is in that file. Next is 41.
 41. The book's `Texts` writes the count; the Dock's digit hardware retires. Same file, item 41.
 42. Commands by name: `Oberon.Call` starts Blink. Same file, item 42.
 43. The trap line on screen. Same file, item 43.

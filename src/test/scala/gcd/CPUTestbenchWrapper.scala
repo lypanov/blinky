@@ -49,6 +49,8 @@ class CPUTestbenchWrapper(instructionHexStrings: Seq[String] = Seq.empty[String]
   cpu.io.diskValid := false.B
   cpu.io.diskWord := 0.U
   cpu.io.btnPressed := false.B
+  cpu.io.bmpRdData := 0.U
+  cpu.io.bmpRdAck := false.B
   
   // Connect outputs
   io.r0 := cpu.io.r0

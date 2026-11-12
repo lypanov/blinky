@@ -12,6 +12,8 @@ export CHISEL_CPU_PROJECT_ROOT="$ROOT"
 export PATH="${HOME}/bin:/usr/local/bin:${PATH}"
 export PYTHONPATH="$ROOT/tools${PYTHONPATH:+:$PYTHONPATH}"
 
+python3 "$ROOT/tools/font_glyph.py" --check
+
 MAP="$ROOT/sim/visualizer/imem/core.map"
 WORDS="$ROOT/sim/visualizer/imem/modules.words"
 DISK="$ROOT/sim/out/disk.bin"
@@ -73,7 +75,8 @@ VERILATOR_FLAGS=(
   -Wno-fatal
   -Wno-WIDTH -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND
   -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINMISSING
-  -CFLAGS "-std=c++17 -O2"
+  --x-initial 0 --x-assign 0
+  -CFLAGS "-std=c++17 -O2 -I$ROOT/sim"
   --Mdir "$ROOT/sim/obj_dir_uart_disk"
   -o uart_disk
 )
@@ -212,6 +215,17 @@ PY
   --status-seq 1,3,4,5,6,7,8,9,10,11,0x81 \
   +disk="$ROOT/sim/out/disk-index-trap-uart.bin"
 echo "[ok] UART disk index trap is 81H, the arm word stays unstored, the LED stays dark"
+
+python3 "$ROOT/sim/link_inner.py" \
+  --uart-disk \
+  --bad-font \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/bad-font-uart.words"
+cp "$DISK" "$ROOT/sim/out/disk-bad-font-uart.bin"
+"$BIN" --expect-halt --expect-no-arm --expect-status 0x81 --min-pc 0x900 \
+  --status-seq 1,3,4,5,6,7,8,9,10,11,0x81 \
+  +disk="$ROOT/sim/out/disk-bad-font-uart.bin"
+echo "[ok] UART disk damaged font is 81H, the arm word stays unstored, the LED stays dark"
 
 python3 "$ROOT/sim/link_inner.py" \
   --uart-disk \

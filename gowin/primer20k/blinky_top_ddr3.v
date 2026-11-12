@@ -75,6 +75,10 @@ module blinky_top_ddr3 (
   wire        screen_bit;
   wire [31:0] bmp_data;
   wire [12:0] bmp_word;
+  wire [12:0] bmp_rd_addr;
+  wire bmp_rd_req;
+  wire [31:0] bmp_rd_data;
+  wire bmp_rd_ack;
   wire        cpu_armed;
   wire [31:0] cpu_pc;
   wire [31:0] cpu_r0, cpu_r4, cpu_r5, cpu_r7, cpu_r8, cpu_r9;
@@ -564,6 +568,10 @@ module blinky_top_ddr3 (
     .io_screen_bit    (screen_bit),
     .io_bmp_data      (bmp_data),
     .io_bmp_word      (bmp_word),
+    .io_bmp_rd_addr   (bmp_rd_addr),
+    .io_bmp_rd_req    (bmp_rd_req),
+    .io_bmp_rd_data   (bmp_rd_data),
+    .io_bmp_rd_ack    (bmp_rd_ack),
     .io_armed         (cpu_armed),
     .io_status_we     (status_we),
     .io_status_word   (status_word),
@@ -751,6 +759,10 @@ module blinky_top_ddr3 (
     .screen_bit (screen_bit),
     .bmp_data   (bmp_data),
     .bmp_word   (bmp_word),
+    .bmp_rd_addr(bmp_rd_addr),
+    .bmp_rd_req (bmp_rd_req),
+    .bmp_rd_data(bmp_rd_data),
+    .bmp_rd_ack (bmp_rd_ack),
     .armed      (cpu_armed),
     .status_we  (status_we),
     .status_in  (status_word),

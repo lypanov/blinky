@@ -227,13 +227,21 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
 
     // The bitmap is ordinary words in two windows, both dropped here.
     // Bit 15 of the address picks the board: 0 is the 4K at 0xFFFE0000,
-    // 1 is the Dock at 0xFFFE8000. This image writes one of them. The
-    // screen, when the build has one, takes the pulse. -80 stays decoded
-    // and dropped; the bitmap replaced that one block.
+    // 1 is the Dock at 0xFFFE8000. This image writes one of them, and a
+    // load reads the shadow of that write. The screen, when the build
+    // has one, takes the pulse. -80 stays decoded and dropped; the
+    // bitmap replaced that one block.
     val screenWe = Output(Bool())
     val screenBit = Output(Bool())
     val bmpData = Output(UInt(32.W))
     val bmpWord = Output(UInt(13.W))
+    // Dock bitmap read. The shadow is on the pixel clock. This load
+    // holds the request until the ack rises, then waits for it to fall.
+    // The 4K image keeps its own shadow and does not use the ack.
+    val bmpRdAddr = Output(UInt(13.W))
+    val bmpRdReq = Output(Bool())
+    val bmpRdData = Input(UInt(32.W))
+    val bmpRdAck = Input(Bool())
     val armed = Output(Bool())
     // -84 (0xFFFFFFAC). Nine bits: the status byte, and bit 8 for the
     // screen mode. The store is dropped. The video module keeps the
@@ -559,12 +567,48 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   val timerLoad = RegInit(false.B)
   val btnLoad = RegInit(false.B)
   // The picture RAM is written by the store and read by the video.
-  // A load of the live window returns black, which is what that RAM
-  // holds until the first store of a word. ReplConst replaces from it.
+  // That RAM has no CPU read port. The 4K shadow is 1024 words on this
+  // clock, written in the same cycle as screenWe. Twelve CPU-clock
+  // write clocks drag the Dock off the DDR3 write and the CPU leaves
+  // the boot ROM, so the Dock read uses the picture's pixel-clock
+  // blocks. The request stays up until the ack rises, and the next
+  // instruction waits until the ack falls, so it cannot take the
+  // previous word. A word past the depth reads as 0. The execute path
+  // does not hold the PC.
+  val bmpDepth = if (uartDisk) 6144 else 1024
+  val bmpAddrW = log2Ceil(bmpDepth)
+  val bmpRdAddr = Wire(UInt(bmpAddrW.W))
+  val bmpRdEn = if (!uartDisk) WireDefault(false.B) else false.B
+  bmpRdAddr := 0.U
+  val bmpRdHit = RegInit(false.B)
   val bmpLoad = RegInit(false.B)
+  val bmpRdSt = if (uartDisk) RegInit(0.U(2.W)) else 0.U(2.W)
+  val bmpAddrHold = if (uartDisk) Reg(UInt(13.W)) else 0.U(13.W)
+  val bmpHitHold = if (uartDisk) RegInit(false.B) else false.B
+  val ackMeta = if (uartDisk) RegInit(false.B) else false.B
+  val ackSync = if (uartDisk) RegInit(false.B) else false.B
+  if (uartDisk) {
+    ackMeta := io.bmpRdAck
+    ackSync := ackMeta
+    io.bmpRdAddr := bmpAddrHold
+    io.bmpRdReq := (bmpRdSt === 1.U) && bmpHitHold
+  } else {
+    io.bmpRdAddr := 0.U
+    io.bmpRdReq := false.B
+  }
+  val bmpRdData = if (!uartDisk) {
+    val bmpMem = SyncReadMem(bmpDepth, UInt(32.W))
+    when (io.screenWe && (io.bmpWord < bmpDepth.U)) {
+      bmpMem.write(io.bmpWord(bmpAddrW - 1, 0), io.bmpData)
+    }
+    bmpMem.read(bmpRdAddr, bmpRdEn)
+  } else {
+    io.bmpRdData
+  }
   timerLoad := false.B
   btnLoad := false.B
   bmpLoad := false.B
+  bmpRdHit := false.B
   // Book's millisecond counter. Step 2, limit 27000: exactly 13500
   // clocks at 13.5 MHz. The Dock limit 48375 is 24187.5 clocks at
   // 24.1875 MHz, alternating 24188 and 24187, exact over every 2 ms.
@@ -749,6 +793,33 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         io.diskTake := true.B
       }
     }
+    if (uartDisk) {
+      // 1 waits for the ack. 2 waits for it to fall. The register
+      // write is the rising ack. The next instruction starts after
+      // the fall, so a following load cannot reuse this word.
+      when (bmpRdSt =/= 0.U) {
+        when (bmpRdSt === 1.U && !bmpHitHold) {
+          regWrite := true.B
+          regWriteAddr := memoryTargetReg
+          regWriteData := 0.U
+          bmpRdSt := 0.U
+          memoryAccessPending := false.B
+          printf(p"Bitmap R${memoryTargetReg} ${Hexadecimal(0.U)}\n")
+        } .elsewhen (bmpRdSt === 1.U && ackSync) {
+          regWrite := true.B
+          regWriteAddr := memoryTargetReg
+          regWriteData := io.bmpRdData
+          bmpRdSt := 2.U
+          memoryAccessPending := true.B
+          printf(p"Bitmap R${memoryTargetReg} ${Hexadecimal(io.bmpRdData)}\n")
+        } .elsewhen (bmpRdSt === 2.U && !ackSync) {
+          bmpRdSt := 0.U
+          memoryAccessPending := false.B
+        } .otherwise {
+          memoryAccessPending := true.B
+        }
+      }
+    }
     when (timerLoad) {
       when (memoryIsLoad) {
         val timerByte = MuxLookup(memoryLane, msec(7, 0))(Seq(
@@ -782,10 +853,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
       memoryAccessPending := false.B
     } .elsewhen (bmpLoad) {
       when (memoryIsLoad) {
+        val word = Mux(bmpRdHit, bmpRdData, 0.U)
         regWrite := true.B
         regWriteAddr := memoryTargetReg
-        regWriteData := 0.U
-        printf(p"Bitmap R${memoryTargetReg} black\n")
+        regWriteData := word
+        printf(p"Bitmap R${memoryTargetReg} ${Hexadecimal(word)}\n")
       }
       memoryAccessPending := false.B
     } .elsewhen (fpRbLoad) {
@@ -804,7 +876,7 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         printf(p"FP Rc R${memoryTargetReg} ${Hexadecimal(fpRcVal)}\n")
       }
       memoryAccessPending := false.B
-    } .elsewhen (!norHold && !uartHold && !io.memStall) {
+    } .elsewhen (!norHold && !uartHold && !io.memStall && bmpRdSt === 0.U) {
       when (memoryIsLoad) {
         // RISC5 inbus1: LDB zero-extends the lane adr[1:0] selects.
         // LDW returns the word. Same completion cycle either way.
@@ -1111,8 +1183,18 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
           }
         }
         when (bmpRegion && bmpLive) {
+          val word = effectiveAddr(14, 2)
+          if (uartDisk) {
+            bmpAddrHold := word
+            bmpHitHold := word < bmpDepth.U
+            bmpRdSt := 1.U
+          } else {
+            bmpRdAddr := word(bmpAddrW - 1, 0)
+            bmpRdEn := word < bmpDepth.U
+            bmpRdHit := word < bmpDepth.U
+            bmpLoad := true.B
+          }
           useHyper := false.B
-          bmpLoad := true.B
           memoryAccessPending := true.B
           memoryIsLoad := true.B
           memoryIsByte := false.B

@@ -429,7 +429,7 @@ def _compile_boot(env: dict[str, str], uart: int, memlim: int | None = None) -> 
         raise SystemExit(
             f"BootLoad.Mod constants are not {mem_text}, stack 18000H, {disk_text}"
         )
-    if MEMLIM != 0x28000 or STACK != 0x18000 or DISK_DDR != 0x29000 or KEPT != 1768:
+    if MEMLIM != 0x28000 or STACK != 0x18000 or DISK_DDR != 0x29000 or KEPT != 1464:
         raise SystemExit(
             f"heap constants {STACK:#x}..{MEMLIM:#x} disk {DISK_DDR:#x} kept {KEPT} "
             "do not match BootLoad.Mod"
@@ -547,28 +547,52 @@ def _check_trap_status(code: list[int]) -> None:
 
 
 def _board_text(name: str, dock: bool) -> str:
-    """The 4K constants are the source. The Dock replaces that one line."""
+    """The 4K constants are the source. The Dock replaces those lines."""
     text = open(os.path.join(ROOT, "tests", f"{name}.Mod"), "r", encoding="ascii").read()
     if not dock:
         return text
-    if name == "Display":
-        old = "width = 256; height = 120; base = -131072;"
-        new = "width = 512; height = 384; base = -98304;"
-    elif name == "Blink5":
-        old = "sqX = 75; sqY = 55; sqW = 5; sqH = 5;"
-        new = "sqX = 150; sqY = 110; sqW = 10; sqH = 10;"
-    else:
+    reps = {
+        "Display": [(
+            "width = 256; height = 120; base = -131072;",
+            "width = 512; height = 384; base = -98304;",
+        )],
+        "Blink5": [
+            (
+                "sqX = 75; sqY = 55; sqW = 5; sqH = 5;",
+                "sqX = 150; sqY = 110; sqW = 10; sqH = 10;",
+            ),
+            ("mkX = 80; mkY = 55;", "mkX = 143; mkY = 110;"),
+        ],
+        "Fonts": [('This("Tiny4x6.Fnt")', 'This("Oberon10.Scn.Fnt")')],
+    }.get(name)
+    if reps is None:
         return text
-    if text.count(old) != 1:
-        raise SystemExit(f"{name}.Mod has no single 4K constant line")
-    return text.replace(old, new, 1)
+    for old, new in reps:
+        if text.count(old) != 1:
+            raise SystemExit(f"{name}.Mod has no single line {old}")
+        text = text.replace(old, new, 1)
+    return text
+
+
+def _font_bytes(name: str, damage: bool) -> bytes:
+    """A font file. Damage sets NofRuns to 17 so run[16] traps."""
+    data = bytearray(open(os.path.join(ROOT, "tests", name), "rb").read())
+    if len(data) < 16 or data[0] != 0xDB:
+        raise SystemExit(f"{name} is not a font file")
+    if damage:
+        if data[14] == 17:
+            raise SystemExit(f"{name} NofRuns is already 17")
+        data[14] = 17
+    return bytes(data)
 
 
 def _compile_files(env: dict[str, str], index_trap: bool = False,
                    dock: bool = False) -> dict[str, bytes]:
-    # Isolated from sim/payload. Norebo's inner core loads module Oberon
-    # from the working directory before the command, so a leftover
-    # Oberon.rsc here would run Blink5.Go and never reach the compiler.
+    # Isolated from sim/payload. Norebo loads every module it imports from
+    # the working directory before the command. Oberon.rsc would run
+    # Blink5.Go. Texts imports Fonts, and a Fonts.rsc left here is loaded
+    # with the inner-core Files key, which norebo rejects. Compiled
+    # objects are parked until every compile has finished.
     work = os.path.join(ROOT, "sim", "out", "bootfiles")
     os.makedirs(work, exist_ok=True)
     for name in os.listdir(work):
@@ -578,7 +602,7 @@ def _compile_files(env: dict[str, str], index_trap: bool = False,
     for name in ORDER:
         src = os.path.join(cache, f"{name}.smb")
         open(os.path.join(work, f"{name}.smb"), "wb").write(open(src, "rb").read())
-    for name in ("AMemoryMappedToggle", "Display", "Blink5", "Oberon"):
+    for name in ("AMemoryMappedToggle", "Display", "Fonts", "Blink5", "Oberon"):
         open(os.path.join(work, f"{name}.Mod"), "w", encoding="ascii").write(
             _board_text(name, dock)
         )
@@ -588,15 +612,20 @@ def _compile_files(env: dict[str, str], index_trap: bool = False,
         open(path, "w", encoding="utf-8").write(patched)
     run_env = dict(os.environ)
     run_env.update(NOREBO_BIN=env["bin"], NOREBO_ROOT=env["root"], NOREBO_PATH=env["path"])
+    parked = os.path.join(work, "parked")
+    os.makedirs(parked, exist_ok=True)
     text = ""
-    for name in ("AMemoryMappedToggle", "Display", "Blink5", "Oberon"):
-        stale = os.path.join(work, "Oberon.rsc")
-        if os.path.exists(stale):
-            os.remove(stale)
+    for name in ("AMemoryMappedToggle", "Display", "Fonts", "Blink5", "Oberon"):
+        for fn in list(os.listdir(work)):
+            if fn.endswith(".rsc"):
+                os.replace(os.path.join(work, fn), os.path.join(parked, fn))
         text += _run([env["bin"], "ORP.Compile", f"{name}.Mod/s"], work, run_env)
+    for fn in list(os.listdir(parked)):
+        if fn.endswith(".rsc"):
+            os.replace(os.path.join(parked, fn), os.path.join(work, fn))
     print(text, end="" if text.endswith("\n") else "\n")
     out = {}
-    for name in ("AMemoryMappedToggle", "Display", "Blink5", "Oberon"):
+    for name in ("AMemoryMappedToggle", "Display", "Fonts", "Blink5", "Oberon"):
         path = os.path.join(work, f"{name}.rsc")
         raw = open(path, "rb").read()
         if len(raw) > PAYLOAD_LIMIT:
@@ -626,13 +655,16 @@ def _hyper_bytes() -> int:
 
 def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
          uart_disk: bool = False, no_collect: bool = False,
-         index_trap: bool = False, short_heap: bool = False) -> dict:
+         index_trap: bool = False, short_heap: bool = False,
+         bad_font: bool = False) -> dict:
     if flash_boot == uart_disk:
         raise SystemExit("pass one of flash boot or the UART disk")
-    if index_trap and (no_collect or break_arm):
+    if index_trap and (no_collect or break_arm or bad_font):
         raise SystemExit("the index trap is its own disk")
-    if short_heap and (no_collect or break_arm or index_trap):
+    if short_heap and (no_collect or break_arm or index_trap or bad_font):
         raise SystemExit("the short heap is its own ROM, on the ordinary disk")
+    if bad_font and (no_collect or break_arm):
+        raise SystemExit("the damaged font is its own disk")
     if max_iter % 2 or not 1 <= max_iter <= 0x7FFF:
         raise SystemExit(f"rate {max_iter} must be a positive even millisecond count")
     env = _norebo()
@@ -652,7 +684,7 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     blink = parse_rsc(os.path.join(ROOT, "sim", "out", "bootfiles", "Blink5.rsc"), output_format="quiet")
     blink["raw"] = files["Blink5"]
     names = [item[0] for item in blink["imports"]]
-    if names != ["Display", "AMemoryMappedToggle", "Kernel", "Modules", "Files"]:
+    if names != ["Fonts", "Display", "AMemoryMappedToggle", "Kernel", "Modules", "Files"]:
         raise SystemExit(f"Blink5 imports {names}")
     if no_collect:
         kernel = parse_rsc(os.path.join(ROOT, "sim", "inner-core", "Kernel.rsc"), output_format="quiet")
@@ -661,9 +693,9 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         files["Blink5"] = _drop_collect(
             files["Blink5"], blink["code"], kernel_mno, {mark[0], scan[0]}
         )
-    # Oberon is module 5. Blink5 then loads Display (6) and
-    # AMemoryMappedToggle (7). Blink5 itself is module 8.
-    blink_mt = 0x20 + 8 * 4
+    # Oberon is module 5. Blink5 then loads Fonts (6), Display (7), and
+    # AMemoryMappedToggle (8). Blink5 itself is module 9.
+    blink_mt = 0x20 + 9 * 4
     if index_trap:
         _check_index_trap(blink["code"], blink["entry_point"])
     else:
@@ -689,15 +721,18 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     if mem.get(root_now + NUM) != 5:
         raise SystemExit(f"Oberon is module {mem.get(root_now + NUM)}")
     root_now, alloc_now = _load(mem, root_now, alloc_now, "Blink5", files)
-    if mem.get(root_now + NUM) != 8 or _name_at(mem, root_now) != "Blink5":
+    if mem.get(root_now + NUM) != 9 or _name_at(mem, root_now) != "Blink5":
         raise SystemExit(f"root is {_name_at(mem, root_now)} num {mem.get(root_now + NUM)}")
     if alloc_now > LIMIT:
         raise SystemExit(f"allocation ends at {alloc_now:#x}, limit is {LIMIT:#x}")
+    fonts = _find(mem, root_now, "Fonts")
+    if mem.get(fonts + NUM) != 6:
+        raise SystemExit(f"Fonts is module {mem.get(fonts + NUM)}")
     display = _find(mem, root_now, "Display")
-    if mem.get(display + NUM) != 6:
+    if mem.get(display + NUM) != 7:
         raise SystemExit(f"Display is module {mem.get(display + NUM)}")
     ammt = _find(mem, root_now, "AMemoryMappedToggle")
-    if mem.get(ammt + NUM) != 7:
+    if mem.get(ammt + NUM) != 8:
         raise SystemExit(f"AMemoryMappedToggle is module {mem.get(ammt + NUM)}")
     # No type descriptor: the exported light is the first variable.
     if mem.get(ammt + DATA) != ammt + DESC:
@@ -711,12 +746,17 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     which = 1 + boot_pages
     page_bytes: dict[int, bytes] = {}
     entries = []
+    tiny = _font_bytes("Tiny4x6.Fnt", bad_font and not uart_disk)
+    face = _font_bytes("Oberon10.Scn.Fnt", bad_font and uart_disk)
     order = (
         (b"AMemoryMappedToggle.rsc", files["AMemoryMappedToggle"]),
         (b"Blink.Rate", None),
         (b"Blink5.rsc", files["Blink5"]),
         (b"Display.rsc", files["Display"]),
+        (b"Fonts.rsc", files["Fonts"]),
         (b"Oberon.rsc", files["Oberon"]),
+        (b"Oberon10.Scn.Fnt", face),
+        (b"Tiny4x6.Fnt", tiny),
     )
     if list(order) != sorted(order, key=lambda item: item[0]):
         raise SystemExit("directory names are not in order")

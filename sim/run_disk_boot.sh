@@ -11,6 +11,8 @@ N="${1:-2}"
 export CHISEL_CPU_PROJECT_ROOT="$ROOT"
 export PATH="${HOME}/bin:/usr/local/bin:${PATH}"
 
+python3 "$ROOT/tools/font_glyph.py" --check
+
 python3 "$ROOT/sim/link_inner.py" \
   --flash-boot \
   --max-iter "$N" \
@@ -29,7 +31,8 @@ VERILATOR_FLAGS=(
   -Wno-fatal
   -Wno-WIDTH -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND
   -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINMISSING
-  -CFLAGS "-std=c++17 -O2"
+  --x-initial 0 --x-assign 0
+  -CFLAGS "-std=c++17 -O2 -I$ROOT/sim"
   --Mdir "$ROOT/sim/obj_dir_disk"
   -o disk_boot
 )
@@ -154,6 +157,17 @@ cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-index-trap.bin"
 "$BIN" --expect-halt --expect-no-arm --expect-status 0x81 \
   --status-seq 1,2,5,6,7,8,9,10,11,0x81
 echo "[ok] NOR disk index trap is 81H, the arm word stays unstored, the LED stays dark"
+cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
+
+python3 "$ROOT/sim/link_inner.py" \
+  --flash-boot \
+  --bad-font \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/bad-font.words"
+cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-bad-font.bin"
+"$BIN" --expect-halt --expect-no-arm --expect-status 0x81 \
+  --status-seq 1,2,5,6,7,8,9,10,11,0x81
+echo "[ok] NOR disk damaged font is 81H, the arm word stays unstored, the LED stays dark"
 cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
 cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-full.bin"

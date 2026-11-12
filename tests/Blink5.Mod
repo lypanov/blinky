@@ -1,9 +1,11 @@
 MODULE Blink5;
-  IMPORT Display, MMT := AMemoryMappedToggle, Kernel, Modules, Files, SYSTEM;
-  (* The 4K square is five bitmap pixels at (75, 55). The Dock build
-     replaces this line with 150, 110, 10, 10. Both are the 20-pixel
-     box at screen (300, 220). *)
+  IMPORT Fonts, Display, MMT := AMemoryMappedToggle, Kernel, Modules, Files, SYSTEM;
+  (* The 4K square is five bitmap pixels at (75, 55). The letter A is
+     at (80, 55), in the same words. The Dock build replaces these two
+     lines with the square at 150, 110, 10, 10 and the letter at
+     143, 110. Both squares are the 20-pixel box at screen (300, 220). *)
   CONST sqX = 75; sqY = 55; sqW = 5; sqH = 5;
+    mkX = 80; mkY = 55;
   (*
     This body fills a list, checks every record, then calls ArmHook.
     That call's immediate is where the arm sequence is entered. The
@@ -12,11 +14,15 @@ MODULE Blink5;
     MemLim, AllocPtr, the boot root, and the stack origin, 58 DIV 29
     is 2 and the remainder in H is 0, the two products match, the sum
     of this placed code matches the word stored at address 28, and
-    kept is 1768. Modules loads Oberon, and Oberon loads this module.
+    kept is 1464. Modules loads Oberon, and Oberon loads this module.
     The LED pin stays dark otherwise.
 
-    The loop draws the square, then stores the new light. Display is
-    the book's module. ReplConst paints the rectangle; this board's
+    The loop draws the square and one letter, then stores the new light.
+    Display is the book's module. ReplConst paints the rectangle.
+    CopyPattern paints the letter into the same words, so the load has
+    to return what the square stored. The font file is bottom-row first
+    and this bitmap's Y increases downward, so the rows are reversed
+    first. This board's
     width, height and bitmap address are its constants. The 4K bitmap
     is at 0FFFE0000H, 256 bits a row, and the square is five rows of
     bits 11..15 at word 442 (0FFFE06E8H). The Dock bitmap is at
@@ -54,11 +60,12 @@ MODULE Blink5;
     hold does not queue a burst. Releasing it resumes the same wait.
 
     MemLim is 28000H. The heap is the 65536 bytes from the stack origin
-    18000H up to that limit.     Files.Old of Oberon, Display, AMemoryMappedToggle,
-    this module, and Blink.Rate each take a 1280-byte buffer and a
-    512-byte descriptor, 1792 bytes. Reading a later page of a file
-    reuses its one buffer. Those five opens take 8960 bytes. 1768
-    records of 32 bytes fill the rest. head and node are global, so the
+    18000H up to that limit. Files.Old of Oberon, Fonts, the font,
+    Display, AMemoryMappedToggle, this module, and Blink.Rate each take
+    a 1280-byte buffer and a 512-byte descriptor, 1792 bytes. Reading a
+    later page of a file reuses its one buffer. Those seven opens take
+    12544 bytes. Fonts allocates two blocks of 3072 bytes. 1464 records
+    of 32 bytes fill the rest. head and node are global, so the
     collector follows them. kept counts the records that were linked.
     The arm word depends on that count. A limit one record lower finds
     no block for the last record, stores the light off, and stops
@@ -107,6 +114,35 @@ MODULE Blink5;
     REPEAT UNTIL FALSE
   END Dark;
 
+  PROCEDURE DrawMark(on: INTEGER);
+    VAR dx, x, y, w, h, pat, nb, row, n, src, dst: INTEGER;
+      b: BYTE;
+      buf: ARRAY 16 OF BYTE;
+  BEGIN
+    Fonts.GetPat(Fonts.Default, 41X, dx, x, y, w, h, pat);
+    IF (w < 1) OR (w > 8) OR (h < 1) OR (h > 8) THEN Dark END;
+    nb := (w + 7) DIV 8;
+    SYSTEM.PUT(SYSTEM.ADR(buf), CHR(w));
+    SYSTEM.PUT(SYSTEM.ADR(buf) + 1, CHR(h));
+    dst := SYSTEM.ADR(buf) + 2;
+    row := 0;
+    WHILE row < h DO
+      src := pat + 2 + (h - 1 - row) * nb;
+      n := 0;
+      WHILE n < nb DO
+        SYSTEM.GET(src, b); SYSTEM.PUT(dst, b); INC(src); INC(dst); INC(n)
+      END;
+      INC(row)
+    END;
+    IF on = 1 THEN
+      Display.ReplConst(Display.white, sqX, sqY, sqW, sqH, Display.replace);
+      Display.CopyPattern(Display.white, SYSTEM.ADR(buf), mkX + x, mkY + y, Display.paint)
+    ELSE
+      Display.ReplConst(Display.black, sqX, sqY, sqW, sqH, Display.replace);
+      Display.CopyPattern(Display.white, SYSTEM.ADR(buf), mkX + x, mkY + y, Display.invert)
+    END
+  END DrawMark;
+
   PROCEDURE Check;
     VAR p: Node; i: INTEGER;
   BEGIN
@@ -145,7 +181,7 @@ BEGIN
   n := 0;
   due := 4;
   kept := 0; head := NIL;
-  WHILE kept < 1768 DO
+  WHILE kept < 1464 DO
     NEW(node);
     IF node = NIL THEN Dark END;
     node.n := kept; node.next := head; head := node; INC(kept)
@@ -159,7 +195,7 @@ BEGIN
     IF ODD(keys) THEN
       IF now - last >= wait THEN last := last + wait END
     ELSIF now - last >= wait THEN
-      IF MMT.light = 0 THEN Square(1) ELSE Square(0) END;
+      IF MMT.light = 0 THEN DrawMark(1) ELSE DrawMark(0) END;
       MMT.Toggle;
       last := last + wait;
       IF MMT.light = 1 THEN

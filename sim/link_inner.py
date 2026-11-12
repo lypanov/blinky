@@ -54,19 +54,22 @@ ALLOC = 0x2000
 # The boot image occupies the low addresses. The stack sits above the
 # modules, and the heap is the gap from that origin up to MemLim.
 # Files.Old takes a 1280-byte buffer and a 512-byte descriptor.
-# Oberon, Display, AMemoryMappedToggle, Blink5, and Blink.Rate each
-# take that pair (8960). A continuation reuses its one buffer. The rest
-# of this 64 KB heap is 1768 records of 32 bytes. The bitmap windows sit
+# Oberon, Fonts, the one font file, Display, AMemoryMappedToggle,
+# Blink5, and Blink.Rate each take that pair (12544). Fonts.This
+# allocates two 3072-byte blocks before the collector runs. The rest
+# of this 64 KB heap is 1464 records of 32 bytes. The bitmap windows sit
 # at 0FFFE0000H and 0FFFE8000H, outside the heap. One record less is
 # the ROM whose LED stays dark.
 STACK = 0x18000
 FILE_BYTES = 1280 + 512
-OPEN_FILES = 5
-KEPT = (0x10000 - FILE_BYTES * OPEN_FILES) // 32
-HEAP_BYTES = FILE_BYTES * OPEN_FILES + 32 * KEPT
+OPEN_FILES = 7
+FONT_BLOCK = 3072
+FONT_BLOCKS = 2
+KEPT = (0x10000 - FILE_BYTES * OPEN_FILES - FONT_BLOCK * FONT_BLOCKS) // 32
+HEAP_BYTES = FILE_BYTES * OPEN_FILES + FONT_BLOCK * FONT_BLOCKS + 32 * KEPT
 MEMLIM = STACK + HEAP_BYTES
 SHORT_MEMLIM = MEMLIM - 32
-if KEPT != 1768 or HEAP_BYTES != 0x10000 or MEMLIM != 0x28000 or SHORT_MEMLIM != 0x27FE0:
+if KEPT != 1464 or HEAP_BYTES != 0x10000 or MEMLIM != 0x28000 or SHORT_MEMLIM != 0x27FE0:
     raise SystemExit(
         f"heap {HEAP_BYTES:#x} kept {KEPT} memlim {MEMLIM:#x} short {SHORT_MEMLIM:#x}"
     )
@@ -1200,7 +1203,8 @@ def _finalize_flash(info: dict) -> dict:
 
 def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
          uart_disk: bool = False, no_collect: bool = False,
-         index_trap: bool = False, short_heap: bool = False) -> dict:
+         index_trap: bool = False, short_heap: bool = False,
+         bad_font: bool = False) -> dict:
     if flash_boot and uart_disk:
         raise SystemExit("flash boot and the UART disk are different images")
     if not flash_boot and not uart_disk:
@@ -1215,6 +1219,7 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         no_collect=no_collect,
         index_trap=index_trap,
         short_heap=short_heap,
+        bad_font=bad_font,
     )
 
 
@@ -1263,11 +1268,14 @@ def main() -> int:
                         help="Blink indexes past an array before the arm word is stored")
     parser.add_argument("--short-heap", action="store_true",
                         help="BootLoad publishes MemLim one record low. The disk bytes stay")
+    parser.add_argument("--bad-font", action="store_true",
+                        help="The font this board opens has 17 runs, so load traps")
     args = parser.parse_args()
     n = args.mov_iter if args.mov_iter is not None else args.max_iter
     info = link(n, break_arm=args.break_arm, flash_boot=args.flash_boot,
                 uart_disk=args.uart_disk, no_collect=args.no_collect,
-                index_trap=args.index_trap, short_heap=args.short_heap)
+                index_trap=args.index_trap, short_heap=args.short_heap,
+                bad_font=args.bad_font)
     write_words(info["words"], args.out)
     write_map(info, MAP_PATH)
     counts = " ".join(f"{name} {info['counts'][name]}" for name in ORDER)
@@ -1295,6 +1303,7 @@ def main() -> int:
         + (f" short {SHORT_MEMLIM:#x}" if args.short_heap else "")
         + (" NO-COLLECT" if args.no_collect else "")
         + (" INDEX-TRAP" if args.index_trap else "")
+        + (" BAD-FONT" if args.bad_font else "")
     )
     if args.flash_boot or args.uart_disk:
         disk_path = os.path.join(ROOT, "sim", "out", "disk.bin")

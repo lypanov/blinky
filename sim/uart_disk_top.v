@@ -31,6 +31,25 @@ module uart_disk_top (
   wire [31:0] disk_word;
   wire tx;
   wire rx = tx & host_rx;
+  // The Dock bitmap read. One cycle after the request the word is
+  // valid and the ack rises. The CPU waits out its own synchronizer.
+  wire [12:0] bmp_rd_addr;
+  wire bmp_rd_req;
+  reg [31:0] bmp_rd_data = 32'd0;
+  reg bmp_rd_ack = 1'b0;
+  reg [31:0] bmp_shadow [0:6143];
+  integer bmp_i;
+  initial for (bmp_i = 0; bmp_i < 6144; bmp_i = bmp_i + 1)
+    bmp_shadow[bmp_i] = 32'd0;
+  always @(posedge cpu_clk) begin
+    if (screen_we && (bmp_word < 13'd6144))
+      bmp_shadow[bmp_word] <= bmp_data;
+    if (bmp_rd_addr < 13'd6144)
+      bmp_rd_data <= bmp_shadow[bmp_rd_addr];
+    else
+      bmp_rd_data <= 32'd0;
+    bmp_rd_ack <= bmp_rd_req;
+  end
   // Disk bytes contain 0x01 and 0x00. Ignore them until Blink arms.
   wire gate_rx = armed ? rx : 1'b1;
 
@@ -53,6 +72,10 @@ module uart_disk_top (
     .io_screenWe(screen_we),
     .io_bmpData(bmp_data),
     .io_bmpWord(bmp_word),
+    .io_bmpRdAddr(bmp_rd_addr),
+    .io_bmpRdReq(bmp_rd_req),
+    .io_bmpRdData(bmp_rd_data),
+    .io_bmpRdAck(bmp_rd_ack),
     .io_statusWe(status_we),
     .io_statusWord(status_word),
     .io_diskValid(disk_valid),
