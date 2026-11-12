@@ -11,14 +11,14 @@ MODULE* BootLoad;  (*NW 20.10.2013 / PR 4.2.2014; boot from the disk*)
      one whole capture frame. The Dock does not: its UART keeps eight
      words, and a hold while the host is sending would drop the file. *)
   CONST MT = 12; SP = 14;
-    MTOrg = 20H; MemLim = 19D00H; stackOrg = 18000H;
+    MTOrg = 20H; MemLim = 28000H; stackOrg = 18000H;
     Uart = 0;
     wordPort = -72; secPort = -68;
     statusPort = -84;
     spiData = -48; spiCtrl = -44;
     CARD0 = 1; SPIFAST = 4;
     FSoffset = 80000H;
-    FlashBase = 200000H; DiskOrg = 21000H;
+    FlashBase = 200000H; DiskOrg = 29000H;
     Magic = 314B5344H; Version = 1; Build = 0E1H;
     Halt = 0E7FFFFFFH;
     StStarted = 1; StNor = 2; StDdr = 3; StUart = 4;

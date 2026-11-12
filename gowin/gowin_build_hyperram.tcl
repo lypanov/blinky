@@ -74,7 +74,9 @@ if {[info exists ::env(GOWIN_OUT_NAME)] && $::env(GOWIN_OUT_NAME) ne ""} {
   set_option -output_base_name hyperram_n262144
 }
 set_option -synthesis_tool gowinsynthesis
-set_option -place_option 2
+# place_option 2 met timing and left the LED dark for the arm
+# constant of this disk. place_option 0 arms that same constant.
+set_option -place_option 0
 set_option -use_mspi_as_gpio 1
 set_option -use_sspi_as_gpio 1
 set_option -use_ready_as_gpio 1

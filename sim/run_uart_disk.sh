@@ -103,11 +103,11 @@ PY
 "$BIN" --expect-halt --expect-status 0x07 --status-seq 1,3,4,5,6,7 \
   +disk="$ROOT/sim/out/disk_bad_byte.bin"
 echo "[ok] UART disk N=$N period $PERIOD, bad build dark, flipped byte dark"
-# Twelve on-edges is past the eighth, where the heap would have run out.
-# Collect runs on the fourth on-edge and stretches that half. The
-# three-edge run above is the period. This run only has to keep going.
+# The list fills the heap before the arm word. Collect runs on the
+# fourth on-edge and walks the list again. The three-edge run above is
+# the period. This run only has to keep going.
 "$BIN" --edges 24 --min-pc 0x900 "${GOOD[@]}"
-echo "[ok] UART disk still blinking after the heap would have run out"
+echo "[ok] UART disk still blinking after Collect walked the list"
 # Same third-rise change as the NOR bench. The directory search is the
 # long part of the reopen, about 35 ms on the 4K clock and less here.
 # 100 ms halves to 50, which covers it.
@@ -174,18 +174,19 @@ echo "[ok] UART disk index trap is 81H, the arm word stays unstored, the LED sta
 
 python3 "$ROOT/sim/link_inner.py" \
   --uart-disk \
-  --no-collect \
+  --short-heap \
   --max-iter "$N" \
   --out "$WORDS"
 cp "$DISK" "$ROOT/sim/out/disk_uart_neg.bin"
 cp "$MAP" "$ROOT/sim/out/core_uart_neg.map"
 python3 "$ROOT/sim/link_inner.py" \
   --flash-boot \
-  --no-collect \
+  --short-heap \
   --max-iter "$N" \
   --out "$ROOT/sim/out/flash_boot_neg.words"
 cmp "$DISK" "$ROOT/sim/out/disk_uart_neg.bin"
-echo "[ok] negative UART disk bytes match the 4K flash disk"
+cmp "$DISK" "$ROOT/sim/out/disk_uart.bin"
+echo "[ok] short-heap UART disk bytes match the 4K flash disk and the full disk"
 cp "$ROOT/sim/out/core_uart_neg.map" "$MAP"
 cp "$ROOT/sim/out/disk_uart_neg.bin" "$DISK"
 if ! SIM_IMAGE=modules mill chisel-blinky.runMain gcd.CPUSimTop; then
@@ -204,5 +205,5 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/gowin/button_gate.v" \
   "$ROOT/sim/uart_disk_top.v" \
   "$ROOT/sim/tb_uart_disk.cpp"
-"$BIN" --exhaust-rises 8 --min-pc 0x900 "${GOOD[@]}"
-echo "[ok] UART disk goes dark at rise 8 without the collector"
+"$BIN" --expect-halt --expect-no-arm --min-pc 0x900 "${GOOD[@]}"
+echo "[ok] UART disk one record short halts with the LED dark"

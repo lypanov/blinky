@@ -27,13 +27,19 @@ fi
 BLINK3_MAXITER="${BLINK3_MAXITER:-1000}"
 # The negative disk removes Blink's collector call. The arm word follows
 # the disk checksum, so this is a separate bitstream, not a second disk
-# on the same ROM.
+# on the same ROM. The short heap is the other way round: the disk stays,
+# and BootLoad publishes MemLim one record low.
 NO_COLLECT="${NO_COLLECT:-0}"
+SHORT_HEAP="${SHORT_HEAP:-0}"
 LINK_EXTRA=()
 NAME_EXTRA=""
 if [[ "$NO_COLLECT" == 1 ]]; then
   LINK_EXTRA+=(--no-collect)
   NAME_EXTRA="_nocollect"
+fi
+if [[ "$SHORT_HEAP" == 1 ]]; then
+  LINK_EXTRA+=(--short-heap)
+  NAME_EXTRA="${NAME_EXTRA}_shortheap"
 fi
 if [[ "$FPGA_IMAGE" == "modules" && -z "${BLINK3_IMEM:-}" ]]; then
   BLINK3_IMEM="$ROOT/sim/visualizer/imem/modules.words"

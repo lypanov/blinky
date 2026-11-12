@@ -204,6 +204,36 @@ Next stays 36. Item 34 is not done.
 
 Proof: Blink allocates and keeps a list of records filling the published size, checks every one, and the arm word depends on the count. A limit one block short leaves the LED dark at the predicted blink. The collector still runs.
 
+The HyperRAM bridge keeps `lineAddr = {cpuAddr[22:4], 3'b000}`. That is byte address bits [22:1]. Bits above 22 never reach the controller. `sim/measure_addr_reach.py` drove the elaborated bridge: byte 0 → line 0, byte `0x10` → line 8, byte `0x7FFFF0` → line `0x3FFFF8`, byte `0x800000` → line 0, byte `0xFFFFF0` → line `0x3FFFF8`. The distinct bytes are `0x000000` through `0x7FFFFF`, 8 MiB. The part is the embedded W956x8MKY, 8 MB, `ADDR_WIDTH` 22. The path reaches the whole chip.
+
+The DDR3 bridge presents a 26-bit halfword address, `cpuAddr[26:1]` on a word store. Bits above 26 never reach the controller. The same script: byte 0 → half 0, byte `0x10` → half 8, byte `0x04000000` → half `0x2000000` (bank 4), byte `0x07FFFFF0` → half `0x3FFFFF8` (bank 7, row `0x1FFF`, column `0x3F8`), byte `0x08000000` → half 0. The distinct bytes are `0x0000000` through `0x7FFFFFF`, 128 MiB. The part is the H5TQ1G63EFR, 1 Gbit, x16. The path reaches the whole chip.
+
+The bitmap windows are `0xFFFE0000` on the 4K and `0xFFFE8000` on the Dock. The CPU decodes them. They are not on either memory port. `MemLim` at `0x28000` is below both.
+
+The stack origin stays `0x18000`. The heap is `0x10000` bytes, so `MemLim` is `0x28000`. Four file bodies take 7168 bytes before the fill. The remainder is 58368 bytes, 1824 records of 32 bytes. Blink keeps that count, checks every record, and the stored arm word misses the constant when the count differs. `DiskOrg` is `0x29000`, above the sentinel at `MemLim`. The short limit is `0x27FE0`, one record below, and it is only the BootLoad constant. The disk bytes stay the same. The HyperRAM stand-in is 65536 words, 256 KB, so the heap and the UART copy both fit. The rate file is still 1000 ms, `E8 03 00 00 18 FC FF FF`. The third time the light turns on, `wait` is halved in memory. The file is left as it was. `Collect` runs on every fourth on-edge, and the check walks the list again after it.
+
+The disk is 47124 bytes, checksum `db4d84df`, arm word `7a51893a`, sha256 `11e0120fb11fef355ee738a24ca89d18a78b4dcbbe5e3d440d51054ac6ce5f11`. Blink's code is 365 words at `0xa014`, sum `e10ed7b4`. The boot ROM is 430 of 512 words.
+
+Verilator, `sim/run_heap_limit.sh`, N=2, so the file stands in at 2 ms. The NOR disk's first three edges are cycles 327064572, 327118366, and 327172006, period 54000, mask `FFFFFFFFFF`, R5 and R9 zero. The 24-edge run is still blinking after `Collect` walked the list, last edge cycle 370174700. The UART disk matches those bytes. Its period is 96750, first edge cycle 50130526, and its 24-edge run ends at cycle 93466054 with the same mask. The short ROM keeps that disk. The NOR short image halts at cycle 325535272, PC `0xA184`, zero edges. The UART short image halts at cycle 48580706, the same PC, zero edges.
+
+`place_option` 2 of this disk met timing and left the Nano LED dark. That bitstream is sha256 `79c39cf76b74b883504f0d0864d2ef593c4a2b0070f7c3112ac4c990102ee4ba`. Webcam `/dev/video2`, box `200,218` 40×24, 1202 frames, 40.07 s, max chroma 12, zero frames at 20. The 4K build uses `place_option` 0.
+
+4K place, `modules_n1000`, square, `place_option` 0. Logic 4123/4608 (90%; 3756 LUT, 367 ALU), registers 2026/3612 (57%), CLS 2234/2304 (97%). BSRAM 5/10 (3 SDPB, 1 SDPX9B, 1 pROM). DSP 2/8, one `MULT36X36`. Setup and hold violated endpoints 0. Worst setup slack +3.077 ns. Worst hold slack +0.558 ns. The 27 MHz port's Fmax is 67.779 MHz. `cpu_clk` Fmax is 14.336 MHz against 13.500. The HyperRAM `clkdiv` Fmax is 72.553 MHz against 27.000. The bitstream is `gowin/impl/pnr/modules_n1000.fs`, 1772222 bytes, sha256 `2e1875ead56e98f2c9751fcf04aec9030c548978df02aa5651e34ab45f8328f0`.
+
+The Nano is USB port `3-3.3`, bus 003 device 012. The NOR write is the data file at `0x200000`. The read-back matches, and the 256 bytes at `0x1FFF00` are unchanged. One SRAM load, `openFPGALoader -m`, `write to ram`, Load SRAM 100%, CRC check Success. Nothing else was written to flash.
+
+Webcam `/dev/video2`, the same box, 30 fps. Clip `/home/lypanov/fpga/blink-measure/more-heap-7e90/nano-p0.mkv`, 1502 frames. One rise during the load, then 14.600 s dark while the list is filled. The next rise-to-rise gaps are 2.000 s, 2.000 s, then 1.000 s. The HDMI cable stayed on the Dock.
+
+The short 4K image is the same disk and `MemLim` `0x27FE0` in the ROM. Setup and hold violated endpoints 0, and the same two slacks. The bitstream is `gowin/impl/pnr/modules_n1000_shortheap.fs`, 1772222 bytes, sha256 `aa8e5309f10f1c665149649aaa64e35dddac0b9c6a1e39d393884d0126d7562d`. The clip starts on the previous image's light. That light ends at frame 27. The next 1234 frames, 41.13 s, have max chroma 12 and zero frames at 20. Clip `/home/lypanov/fpga/blink-measure/more-heap-7e90/nano-short-p0.mkv`. The predicted first blink of the full image is inside that dark stretch.
+
+Dock place, `ddr3modules_n1000`, text, `place_option` 0, `route_option` 1. The bitstream was built Wed 11 Nov 2026 23:34:57, `gowin/primer20k/impl/pnr/ddr3modules_n1000.fs`. The short ROM was built 23:37:12, `ddr3modules_n1000_shortheap.fs`. Both files were rebuilt later and those later files are not this result. The Dock is USB port `3-3.1.1`. Three SRAM loads, each `openFPGALoader -m`, each `write to ram` and Load SRAM 100%. Each waited at `C.0440`, lanes `000C` `000A`, E0 `A55A`, G `A55A`, F `A8`, took the disk, and the mask became `FFFFFFFFFF` with R5 and R9 zero. Nothing was written to the Dock flash.
+
+Webcam `/dev/video2`, box `320,25` 32×21, on the first of those three loads. Clip `/home/lypanov/fpga/blink-measure/more-heap-7e90/dock-load2-led.mkv`, 1082 frames, 36.07 s, 30 fps. The first rise is 8.433 s after the clip starts. The next gaps are 2.000 s, 2.000 s, then 1.000 s. The other two loads are in the blink loop with that mask: PCs include `3B2C` and `3B28`, which is the wait at `0x3B20`.
+
+The short Dock image trained at `C.0440` with the same lanes, E0, G, and F, then halted at PC `A184`, instruction `E7FFFFFF`, mask `0000000000`. The LED clip is 661 frames, 22.03 s. The box max chroma is 26, and no frame reaches 80. The lit core of the full image, x 329 y 27, is chroma 9 in that clip. Clip `/home/lypanov/fpga/blink-measure/more-heap-7e90/dock-short-led.mkv`. The predicted first blink is 8.4 s, inside that dark stretch.
+
+Next stays 38. Item 34 is not done.
+
 ## Item 38 — floating point
 
 The book's `FAD`, `FSB`, `FML` and `FDV` instructions. Neither chip has a floating-point block; there are only the 18×18 multipliers. On both boards the CPU recognises the four instructions and traps to an Oberon routine that does the arithmetic in software. The Dock may get the book's hardware unit later; not in this item. The same `.rsc` runs on both boards.

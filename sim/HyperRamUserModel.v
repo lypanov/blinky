@@ -54,10 +54,10 @@ module HyperRamUserModel (
   input  [3:0]  data_mask
 );
 
-  // 49152 words is 192 KB. The boot image, the heap, and the UART
-  // disk copy at 0x21000 have to sit in this array together. 40960
-  // words ended at 0x27FFF, short of a 40 KB boot file stored there.
-  localparam integer WORDS = 49152;
+  // 65536 words is 256 KB. The heap ends at 0x28000 and the UART
+  // disk copy starts at 0x29000. Both have to sit in this array.
+  // 49152 words ended at byte 0x30000, short of that disk.
+  localparam integer WORDS = 65536;
   localparam integer INIT_CYCLES = 64;
   // See the header. 12 is the pre-load model. 13 is the post-measurement fit.
   parameter integer FIRST_VALID = 12;

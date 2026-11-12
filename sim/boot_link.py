@@ -24,8 +24,10 @@ from link_inner import (  # noqa: E402
     FLASH_BASE,
     HALT_WORD,
     HEAP_BYTES,
+    KEPT,
     LIMIT,
     MEMLIM,
+    SHORT_MEMLIM,
     STACK,
     SUM_ADDR,
     _append_arm,
@@ -418,15 +420,25 @@ def _check_first_store(words: list[int]) -> None:
     raise SystemExit("BootLoad has no status store in the first instructions of the body")
 
 
-def _compile_boot(env: dict[str, str], uart: int) -> list[int]:
+def _compile_boot(env: dict[str, str], uart: int, memlim: int | None = None) -> list[int]:
     src = open(os.path.join(ROOT, "oberon", "src", "BootLoad.Mod"), "r", encoding="ascii").read()
-    if "MemLim = 19D00H" not in src or "stackOrg = 18000H" not in src:
-        raise SystemExit("BootLoad.Mod constants are not MemLim 19D00H and stack 18000H")
-    if MEMLIM != 0x19D00 or STACK != 0x18000 or DISK_DDR != 0x21000:
+    mem_text = f"MemLim = {MEMLIM:X}H"
+    disk_text = f"DiskOrg = {DISK_DDR:X}H"
+    if mem_text not in src or "stackOrg = 18000H" not in src or disk_text not in src:
         raise SystemExit(
-            f"heap constants {STACK:#x}..{MEMLIM:#x} disk {DISK_DDR:#x} "
+            f"BootLoad.Mod constants are not {mem_text}, stack 18000H, {disk_text}"
+        )
+    if MEMLIM != 0x28000 or STACK != 0x18000 or DISK_DDR != 0x29000 or KEPT != 1824:
+        raise SystemExit(
+            f"heap constants {STACK:#x}..{MEMLIM:#x} disk {DISK_DDR:#x} kept {KEPT} "
             "do not match BootLoad.Mod"
         )
+    if memlim is None:
+        memlim = MEMLIM
+    if memlim != MEMLIM:
+        src = src.replace(mem_text, f"MemLim = {memlim:X}H", 1)
+        if src.count(f"MemLim = {memlim:X}H") != 1:
+            raise SystemExit(f"short MemLim {memlim:#x} did not land in BootLoad")
     lines = []
     replaced = False
     for line in src.splitlines(True):
@@ -579,13 +591,24 @@ def _checksum(payload: bytes) -> int:
     return total
 
 
+def _hyper_bytes() -> int:
+    path = os.path.join(ROOT, "sim", "HyperRamUserModel.v")
+    text = open(path, "r", encoding="ascii").read()
+    marker = "localparam integer WORDS = "
+    line = next(item for item in text.splitlines() if item.strip().startswith(marker))
+    words = int(line.split("=")[1].strip().rstrip(";"))
+    return words * 4
+
+
 def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
          uart_disk: bool = False, no_collect: bool = False,
-         index_trap: bool = False) -> dict:
+         index_trap: bool = False, short_heap: bool = False) -> dict:
     if flash_boot == uart_disk:
         raise SystemExit("pass one of flash boot or the UART disk")
     if index_trap and (no_collect or break_arm):
         raise SystemExit("the index trap is its own disk")
+    if short_heap and (no_collect or break_arm or index_trap):
+        raise SystemExit("the short heap is its own ROM, on the ordinary disk")
     if max_iter % 2 or not 1 <= max_iter <= 0x7FFF:
         raise SystemExit(f"rate {max_iter} must be a positive even millisecond count")
     env = _norebo()
@@ -620,8 +643,21 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     if index_trap:
         _check_index_trap(blink["code"], blink["entry_point"])
     else:
+        # nofent counts the entry-point word that precedes the exports.
+        # kept* is the only export, so it is the second word.
+        if len(blink["entries"]) != 2 or blink["entries"][0] != blink["entry_point"]:
+            raise SystemExit(
+                f"Blink5 entries {blink['entries']} entry {blink['entry_point']}"
+            )
+        kept_off = blink["entries"][1]
+        if not isinstance(kept_off, int) or kept_off < 0:
+            raise SystemExit(f"kept offset {kept_off!r} is not a byte offset")
+        blink_src = open(os.path.join(ROOT, "tests", "Blink5.Mod"), "r", encoding="ascii").read()
+        if f"WHILE kept < {KEPT} DO" not in blink_src or "ArmHook(7E37H)" not in blink_src:
+            raise SystemExit("Blink5.Mod does not publish the kept loop and the hook")
         prologue = _arm_prologue(
-            with_disk=True, memlim=MEMLIM, alloc=alloc, root=root, stack=STACK, blink_mt=blink_mt
+            with_disk=True, memlim=MEMLIM, alloc=alloc, root=root, stack=STACK,
+            blink_mt=blink_mt, kept_off=kept_off,
         )
         files["Blink5"] = _append_arm(files["Blink5"], prologue)
     mem = Mem(bytes(image), LIMIT)
@@ -687,8 +723,12 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     disk = struct.pack("<5I", MAGIC, VERSION, BUILD, len(payload), total) + bytes(payload)
     if FLASH_BASE + len(disk) >= 0x400000:
         raise SystemExit(f"disk ends at {FLASH_BASE + len(disk):#x}")
-    if DISK_DDR + len(payload) >= 49152 * 4:
-        raise SystemExit("UART disk does not fit the HyperRAM stand-in")
+    hyper_bytes = _hyper_bytes()
+    if DISK_DDR + len(payload) >= hyper_bytes:
+        raise SystemExit(
+            f"UART disk ends at {DISK_DDR + len(payload):#x}, "
+            f"the HyperRAM stand-in ends at {hyper_bytes:#x}"
+        )
     rate_sec = next(sec for name, sec in entries if name == b"Blink.Rate")
     rate_at = HEADER_BYTES + (rate_sec // 29 - 1) * SECTOR + HEADER_SIZE
     got = struct.unpack_from("<ii", disk, rate_at)
@@ -701,8 +741,9 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     string_at = image.find(b"Oberon\x00")
     if string_at < 0:
         raise SystemExit("the image has no Oberon string")
-    rom_code = _compile_boot(env, 1 if uart_disk else 0)
-    other = _compile_boot(env, 0 if uart_disk else 1)
+    published = SHORT_MEMLIM if short_heap else MEMLIM
+    rom_code = _compile_boot(env, 1 if uart_disk else 0, published)
+    other = _compile_boot(env, 0 if uart_disk else 1, published)
     diffs = [i for i, (a, b) in enumerate(zip(rom_code, other)) if a != b]
     if not diffs or any((rom_code[i] & 0xFFFF0000) != 0x40000000 for i in diffs):
         raise SystemExit(f"flash and UART BootLoad differ at {diffs}")

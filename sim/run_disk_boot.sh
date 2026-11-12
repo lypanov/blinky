@@ -65,11 +65,11 @@ echo "[ok] NOR disk N=$N period $PERIOD"
 # S1 held across three edges. The LED stays on, then the period resumes.
 "$BIN" --press --period "$PERIOD" --slack 2048 --edges 1 --hold-cycles $((PERIOD * 3)) "${GOOD[@]}"
 echo "[ok] NOR disk N=$N paused while the button was held"
-# Twelve on-edges is past the eighth, where the heap would have run out.
-# Collect runs on the fourth on-edge and stretches that half. The
-# three-edge run above is the period. This run only has to keep going.
+# The list fills the heap before the arm word. Collect runs on the
+# fourth on-edge and walks the list again. The three-edge run above is
+# the period. This run only has to keep going.
 "$BIN" --edges 24 "${GOOD[@]}"
-echo "[ok] NOR disk still blinking after the heap would have run out"
+echo "[ok] NOR disk still blinking after Collect walked the list"
 # Reopening the file searches the directory, which is still a disk read.
 # That read is about 35 ms, so a 1 ms half would queue a burst. A 100 ms
 # file halves to 50 ms, and the copy finishes inside the half. The third
@@ -155,11 +155,14 @@ cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-index-trap.bin"
 echo "[ok] NOR disk index trap is 81H, the arm word stays unstored, the LED stays dark"
 cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
+cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-full.bin"
 python3 "$ROOT/sim/link_inner.py" \
   --flash-boot \
-  --no-collect \
+  --short-heap \
   --max-iter "$N" \
   --out "$ROOT/sim/visualizer/imem/modules.words"
+cmp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-full.bin"
+echo "[ok] short-heap ROM keeps the full disk bytes"
 if ! SIM_IMAGE=modules mill chisel-blinky.runMain gcd.CPUSimTop; then
   echo "error: CPUSimTop elaboration failed" >&2
   exit 1
@@ -176,5 +179,5 @@ verilator "${VERILATOR_FLAGS[@]}" \
   "$ROOT/gowin/button_gate.v" \
   "$ROOT/sim/disk_boot_top.v" \
   "$ROOT/sim/tb_disk_boot.cpp"
-"$BIN" --exhaust-rises 8 "${GOOD[@]}"
-echo "[ok] NOR disk goes dark at rise 8 without the collector"
+"$BIN" --expect-halt --expect-no-arm "${GOOD[@]}"
+echo "[ok] NOR disk one record short halts with the LED dark"

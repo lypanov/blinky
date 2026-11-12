@@ -54,14 +54,20 @@ ALLOC = 0x2000
 # modules, and the heap is the gap from that origin up to MemLim.
 # Files.Old takes a 1280-byte buffer and a 512-byte descriptor.
 # Oberon, AMemoryMappedToggle, Blink5, and Blink.Rate each take that
-# pair (7168). Blink5's continuation reuses its one buffer. 7424 bytes
-# leaves eight 32-byte records. head takes one. The eighth on-edge
-# finds none.
+# pair (7168). Blink5's continuation reuses its one buffer. The rest of
+# this 64 KB heap is 1824 records of 32 bytes. The bitmap windows sit
+# at 0FFFE0000H and 0FFFE8000H, outside the heap. One record less is
+# the ROM whose LED stays dark.
 STACK = 0x18000
 FILE_BYTES = 1280 + 512
-HEAP_BYTES = FILE_BYTES * 4 + 32 * 8
+KEPT = (0x10000 - FILE_BYTES * 4) // 32
+HEAP_BYTES = FILE_BYTES * 4 + 32 * KEPT
 MEMLIM = STACK + HEAP_BYTES
-EXHAUST_RISES = 8
+SHORT_MEMLIM = MEMLIM - 32
+if KEPT != 1824 or HEAP_BYTES != 0x10000 or MEMLIM != 0x28000 or SHORT_MEMLIM != 0x27FE0:
+    raise SystemExit(
+        f"heap {HEAP_BYTES:#x} kept {KEPT} memlim {MEMLIM:#x} short {SHORT_MEMLIM:#x}"
+    )
 LIMIT = STACK - 0x8000
 BODY_LO = ALLOC
 BODY_HI = LIMIT
@@ -320,6 +326,9 @@ def _drop_collect(raw: bytes, code: list[int], kernel_mno: int, proc_pnos: set[i
 # The LED arms only when Blink5 stores this word at this address.
 ARM_ADDR = 0x7C0
 ARM_WORD = 0xA11C0DE5
+# Blink5's empty hook is called with this immediate. The call's MOV is
+# replaced by a branch into the arm sequence, after the list exists.
+HOOK = 0x7E37
 SUM_ADDR = 28
 # Modules' descriptor. The two-slot table is 2060 bytes. Kernel's static
 # image started 8 bytes past a 16-byte boundary, so the pad grows by 4
@@ -333,11 +342,12 @@ ALWAYS = 7
 
 def _arm_prologue(with_disk: bool = False, memlim: int | None = None,
                   alloc: int | None = None, root: int | None = None,
-                  stack: int | None = None, blink_mt: int | None = None) -> list[int]:
+                  stack: int | None = None, blink_mt: int | None = None,
+                  kept_off: int | None = None) -> list[int]:
     """OR the differences, then store ARM_WORD xor that OR.
 
-    R8 is the accumulator. R12 and R14 stay. The caller branches to the
-    compiled delay loop after the store.
+    R8 is the accumulator. R12 and R14 stay. The body calls this sequence
+    after the list exists, and the sequence returns with BR R15.
 
     The flash image also xors mem[8]. The bootstrap stores the disk
     checksum there. A stale disk stores a different sum, the hardware
@@ -354,6 +364,10 @@ def _arm_prologue(with_disk: bool = False, memlim: int | None = None,
         stack = STACK
     if blink_mt is None:
         blink_mt = BLINK_MT
+    if with_disk and kept_off is None:
+        raise SystemExit("the disk arm sequence needs the kept offset")
+    if kept_off is not None and not 0 <= kept_off < (1 << 20):
+        raise SystemExit(f"kept offset {kept_off:#x} does not fit in LDW")
     a = Asm()
     a.word(f1(0, 8, 0, 0))
 
@@ -411,6 +425,15 @@ def _arm_prologue(with_disk: bool = False, memlim: int | None = None,
     for word in load_const(0, blink_mt):
         a.word(word)
     a.word(ldw(0, 0, 0))
+    # R0 is Blink5's static base. kept is the exported word there.
+    # A count other than KEPT leaves a difference in R8, and the stored
+    # word is not the one the CPU compares.
+    if kept_off is not None:
+        a.word(ldw(4, 0, kept_off))
+        for word in load_const(5, KEPT):
+            a.word(word)
+        a.word(f0(9, 4, 4, 5))
+        a.word(f0(6, 8, 8, 4))
     a.word(f1(9, 1, 0, 24))
     a.word(ldw(1, 1, 0))
     a.word(f1(9, 2, 0, 20))
@@ -439,6 +462,11 @@ def _arm_prologue(with_disk: bool = False, memlim: int | None = None,
     for word in load_const(1, ARM_ADDR):
         a.word(word)
     a.word(stw(0, 1, 0))
+    # The blink loop does not write R5. The count lived there, and the
+    # edge check wants it clear. R9 is left alone; the loop does not
+    # write it either.
+    a.word(f1(0, 4, 0, 0))
+    a.word(f1(0, 5, 0, 0))
     words = a.encode(0)
     if any(_is_wait_mov(word) for word in words):
         # That MOV is Blink's millisecond assignment. The prologue has none.
@@ -492,10 +520,11 @@ def _rsc_spots(data: bytes) -> dict:
 
 
 def _append_arm(raw: bytes, prologue: list[int]) -> bytes:
-    """The arm sequence follows the compiled loop. The entry point moves to it.
+    """The arm sequence follows the compiled body. The entry point stays.
 
-    Prepending would stretch the fixup displacements, which count back to the
-    first word. The sequence branches to that word when the store has retired.
+    The body fills the list, then calls ArmHook. That call's MOV of HOOK
+    becomes a BL to this sequence, which stores the arm word and returns
+    with BR R15. Prepending would stretch the fixup displacements.
     """
     spot = _rsc_spots(raw)
     ncode = spot["ncode"]
@@ -503,13 +532,28 @@ def _append_arm(raw: bytes, prologue: list[int]) -> bytes:
     body = struct.unpack_from("<I", raw, spot["entry_at"])[0]
     if body % 4 or not 0 <= body < ncode * 4:
         raise SystemExit(f"Blink5 entry {body:#x} is outside the compiled code")
-    branch_at = (ncode + len(prologue)) * 4
-    enter_loop = cond_branch(branch_at, body, ALWAYS)
-    extra = list(prologue) + [enter_loop]
+    code = list(struct.unpack_from("<" + "I" * ncode, raw, code_at))
+    hits = [
+        i for i, w in enumerate(code)
+        if (w >> 28) == 4 and ((w >> 20) & 0xF) == 0 and ((w >> 16) & 0xF) == 0
+        and (w & 0xFFFF) == HOOK
+    ]
+    if len(hits) != 1:
+        raise SystemExit(f"Blink5 has {len(hits)} MOV of {HOOK:#x}; want the ArmHook argument")
+    hit = hits[0]
+    off = ncode - hit - 1
+    if not 0 <= off < (1 << 23):
+        raise SystemExit(f"arm branch from word {hit} to {ncode} does not fit")
+    code[hit] = 0xF7000000 | off
+    # BR R15. The body's BL planted the return.
+    extra = list(prologue) + [0xC700000F]
+    if any((word & 0xFFFF) == HOOK and (word >> 28) == 4 for word in extra):
+        raise SystemExit("arm sequence contains the hook MOV")
     buf = bytearray()
     buf += raw[: spot["code_len_at"]]
     buf += struct.pack("<I", ncode + len(extra))
-    buf += raw[code_at : code_at + ncode * 4]
+    for word in code:
+        buf += struct.pack("<I", word & 0xFFFFFFFF)
     for word in extra:
         buf += struct.pack("<I", word & 0xFFFFFFFF)
     buf += raw[code_at + ncode * 4 :]
@@ -522,7 +566,6 @@ def _append_arm(raw: bytes, prologue: list[int]) -> bytes:
     entry = struct.unpack_from("<I", buf, entry_at)[0]
     if entry != body:
         raise SystemExit(f"Blink5 entry moved from {body:#x} to {entry:#x}")
-    struct.pack_into("<I", buf, entry_at, ncode * 4)
     size = struct.unpack_from("<I", buf, spot["size_at"])[0]
     struct.pack_into("<I", buf, spot["size_at"], size + 4 * len(extra))
     if len(buf) > SECTOR - HEADER_SIZE + SECTOR:
@@ -803,10 +846,10 @@ FLASH_BASE = 0x200000
 # the sector base take the two words between those and the window.
 IO_WORD = -72
 IO_BASE = -68
-# The Dock has no NOR. The same file lands here, above the init stream
-# (the stream ends near 0x2025C) and inside the HyperRAM stand-in,
-# which covers 160 KB. The Dock DDR3 uses this same address.
-DISK_DDR = 0x21000
+# The Dock has no NOR. The same file lands here, above MemLim, and
+# inside the HyperRAM stand-in, which covers 256 KB. The sentinel is
+# the 8 bytes at MemLim. The Dock DDR3 uses this same address.
+DISK_DDR = 0x29000
 CHECK_ADDR = 8
 DIR_AT = 0x60
 BOOT_ROM = 512
@@ -1129,7 +1172,7 @@ def _finalize_flash(info: dict) -> dict:
 
 def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
          uart_disk: bool = False, no_collect: bool = False,
-         index_trap: bool = False) -> dict:
+         index_trap: bool = False, short_heap: bool = False) -> dict:
     if flash_boot and uart_disk:
         raise SystemExit("flash boot and the UART disk are different images")
     if not flash_boot and not uart_disk:
@@ -1143,6 +1186,7 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         uart_disk=uart_disk,
         no_collect=no_collect,
         index_trap=index_trap,
+        short_heap=short_heap,
     )
 
 
@@ -1189,11 +1233,13 @@ def main() -> int:
                         help="Leave the collector call out, so the eighth on-edge stops")
     parser.add_argument("--index-trap", action="store_true",
                         help="Blink indexes past an array before the arm word is stored")
+    parser.add_argument("--short-heap", action="store_true",
+                        help="BootLoad publishes MemLim one record low. The disk bytes stay")
     args = parser.parse_args()
     n = args.mov_iter if args.mov_iter is not None else args.max_iter
     info = link(n, break_arm=args.break_arm, flash_boot=args.flash_boot,
                 uart_disk=args.uart_disk, no_collect=args.no_collect,
-                index_trap=args.index_trap)
+                index_trap=args.index_trap, short_heap=args.short_heap)
     write_words(info["words"], args.out)
     write_map(info, MAP_PATH)
     counts = " ".join(f"{name} {info['counts'][name]}" for name in ORDER)
@@ -1217,7 +1263,8 @@ def main() -> int:
     print(f"[ok] map {MAP_PATH}")
     print(
         f"[ok] heap {STACK:#x}..{MEMLIM:#x} bytes {HEAP_BYTES} "
-        f"exhaust rise {EXHAUST_RISES}"
+        f"kept {KEPT} disk {DISK_DDR:#x}"
+        + (f" short {SHORT_MEMLIM:#x}" if args.short_heap else "")
         + (" NO-COLLECT" if args.no_collect else "")
         + (" INDEX-TRAP" if args.index_trap else "")
     )
