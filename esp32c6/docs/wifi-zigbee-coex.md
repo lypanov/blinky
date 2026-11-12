@@ -4,6 +4,8 @@ Can one ESP32-C6 run a Zigbee coordinator, with the VINDSTYRKA already joined, a
 
 This note uses Espressif's ESP-IDF v5.5.6, which is the tree installed on this machine, the ESP Zigbee SDK introduction, and Espressif's replies on their own issue trackers. No board was flashed and no serial port was opened for this note. The miss counts below follow from the reporting intervals and the retry rules. They are not a measurement from the air.
 
+The last section is the inverse schedule: Wi-Fi for most of each ten minutes, and the coordinator only on the wall-clock mark.
+
 ## One 2.4 GHz radio
 
 The ESP32-C6 is a Wi-Fi, Bluetooth LE, and 802.15.4 (Thread / Zigbee) chip with a single 2.4 GHz radio. ESP-IDF's coexistence guide says a module cannot receive or transmit while another module is using the radio, so the chip shares it by time-division multiplexing.
@@ -130,3 +132,98 @@ The smaller split, for a network that is already joined, is to leave this C6 as 
 ## Answer
 
 It depends. One ESP32-C6 can run this Zigbee coordinator and a Wi-Fi station together: Espressif's gateway example does that on a C6, and their engineers say the chip supports it. They also mark that pair unstable, because a coordinator has to keep listening and the chip has one radio, and they tell gateway products to use two chips. For this joined VINDSTYRKA, a Wi-Fi visit of about 15 seconds every 10 minutes usually misses zero or one sample per reading, and a second device for Wi-Fi keeps every sample.
+
+## Inverse schedule: Wi-Fi most of the time
+
+The schedule Alex prefers keeps the ESP32-C6 on Wi-Fi for most of each ten minutes, and switches it to the Zigbee coordinator for a short window on each wall-clock mark, for example 23:50:00–23:51:00. Other devices can treat that mark as the time the C6 will not take Wi-Fi requests. The C6 is already the coordinator. The VINDSTYRKA (IKEA E2112) is already joined, and it is a mains-powered router.
+
+This section uses the same ESP-IDF v5.5.6 tree, ESP Zigbee SDK 1.6.8 and ZBOSS from esp-zboss-lib 1.6.4 as installed for the coordinator, and the Zigbee Specification revision 23 (document 05-3474-23). No board was flashed and no serial port was opened. The times below are the published budgets and the retry arithmetic. They are not a measurement of this chip.
+
+[Zigbee Specification revision 23, CSA, 15 March 2023](https://csa-iot.org/wp-content/uploads/2023/04/05-3474-23-csg-zigbee-specification-compressed.pdf)
+
+### How long the switch takes
+
+Espressif does not publish one duration for "stop Wi-Fi, run the coordinator, start Wi-Fi again." The published pieces are a driver stop, a scan budget, and a DHCP timer tick.
+
+**Wi-Fi off.** `esp_wifi_stop()` stops the station and frees the station control block. When it returns `ESP_OK`, `WIFI_EVENT_STA_STOP` follows. The event task then releases the station IP address, stops the DHCP client, removes TCP and UDP connections, and clears the station netif. That is the moment the C6 cannot take a Wi-Fi request. The guide describes a driver stop, and it gives that stop no millisecond budget.
+
+[Wi-Fi driver, ESP-IDF v5.5.6, `WIFI_EVENT_STA_STOP`](https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32c6/api-guides/wifi.html)
+
+**The coordinator returns as the same network.** A coordinator does not rejoin a network. Revision 23 says so in the beacon-survey procedure: a coordinator that receives `Mgmt_NWK_Beacon_Survey_req` rejects it, because "the coordinator does not perform rejoins" (section 2.4.3.3.12.3). The C6 is the network. Coming back means putting the same PAN on the air: the same extended PAN id, the same network key, channel 13, short address 0x0000.
+
+`esp_zb_start(true)` loads NVRAM and then starts. In esp-zigbee-lib 1.6.8, `esp_zigbee_core.h` says startup is formation for a coordinator, or rejoin, or a discovery join, and the application hears the result in `esp_zb_app_signal_handler`. With NVRAM left intact, a later start raises `ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT`, "joins or rejoins network from the configured network information." `esp_zb_factory_reset()` erases the `zb_storage` partition and restarts. `esp_zb_nvram_erase_at_start(true)` wipes NVRAM on every boot. Either one makes the next start factory-new. A factory-new formation, even with the channel mask still pinned to channel 13, creates a new PAN id and a new key. The VINDSTYRKA stays on the old PAN. The resume path is the one that still has the sensor.
+
+SDK 1.6.8 has no `esp_zb_stop`. That same header exposes `esp_zb_start`, `esp_zb_is_started`, sleepy-end-device sleep, factory reset, and a local leave. [esp-zigbee-sdk#361](https://github.com/espressif/esp-zigbee-sdk/issues/361) asked for pause and resume. The reply, already cited above, was coexistence, then two chips. ESP-IDF v5.5.6 does have `esp_ieee802154_disable()`, which deinitializes the raw 802.15.4 subsystem. The Zigbee SDK does not say a running coordinator survives that call.
+
+[`esp_ieee802154_disable` in ESP-IDF v5.5.6](https://github.com/espressif/esp-idf/blob/v5.5.6/components/ieee802154/include/esp_ieee802154.h)
+
+Two shapes follow from that.
+
+1. The Zigbee stack stays up for the life of the boot. The window is `esp_wifi_stop`, the poll below, then `esp_wifi_start` and `esp_wifi_connect`. The coordinator does not rejoin, and the sensor does not have to join again. The unpublished part on the front of the window is how long `esp_wifi_stop` takes to reach `WIFI_EVENT_STA_STOP`. For the other nine minutes the station is associated, and this is the C1 case from the first half of this note. Wi-Fi and the coordinator share the one radio. The coordinator is still on the air in the gaps the station leaves, so those nine minutes are not a hard Zigbee silence.
+2. Wi-Fi runs with the Zigbee stack not started, and each window calls `esp_zb_start(true)` against the saved network, polls, then has to get the 802.15.4 radio off again. That is the shape that matches a coordinator which is off the air except on the mark. The SDK has no stop, so the documented way back to a Wi-Fi-only process is a reboot. Espressif does not publish that boot-plus-start time. The high-resolution timer does not survive a reset. The RTC timer does, except on a power-on reset. See the clock section.
+
+**Wi-Fi back.** `esp_wifi_start` raises `WIFI_EVENT_STA_START`. `esp_wifi_connect` scans for the configured AP before it associates. That scan matches "scan for a specific AP," and a fast scan ends when the first match is found. Fast scan is the default (`WIFI_FAST_SCAN`). The default active scan waits at most 120 ms on a channel (`scan_time.active.max` in `esp_wifi_scan_start`), and the minimum is 0, so a channel can finish sooner when the probe response arrives. Those same defaults are what a connect-scan uses (`esp_wifi_set_scan_parameters`).
+
+If the stored channel is 0, the station walks channel 1 through N. If the channel is set, it starts on that channel and walks the others only when the AP is not there. Thirteen 2.4 GHz channels at 120 ms is 1.56 seconds. That is the published ceiling for a walk that finds the AP on the last channel. A stored channel that still has the AP is one dwell, at most 120 ms.
+
+Association has no published duration. `WIFI_EVENT_STA_CONNECTED` means the station can pass frames, and it is the event that starts the DHCP client. An application that needs an IP waits for the got-IP event. The DHCP coarse timer defaults to 1 second (`CONFIG_LWIP_DHCP_COARSE_TIMER_SECS`). That is how often the client advances its state machine. `CONFIG_LWIP_DHCP_RESTORE_LAST_IP` defaults off, and `WIFI_EVENT_STA_STOP` has already dropped the address, so the next connect does a full discover. Sockets from before the stop are gone. A client opens a new connection after the got-IP event.
+
+The blackout other devices see is the Zigbee window plus this return. The scan on the way back is at most 1.56 seconds, or at most 120 ms when the channel is known and the AP answers. Association and DHCP sit after that, and Espressif does not bound them. A Wi-Fi client that tries at the first second after the Zigbee window can still meet a station that is scanning or waiting for DHCP.
+
+[Wi-Fi scan defaults, `esp_wifi_scan_start`, ESP-IDF v5.5.6](https://github.com/espressif/esp-idf/blob/v5.5.6/components/esp_wifi/include/esp_wifi.h)
+
+### Reports while the coordinator is off the air
+
+A report is one ZCL message carrying the current value. The sensor keeps no queue of samples it failed to deliver. The next report, on the 10-second minimum and 30-second maximum this coordinator wrote, carries the value at that later time.
+
+The attempt that hits a silent coordinator dies inside a few seconds:
+
+- MAC. ZBOSS allows 3 retries after a failed transmission (`ZB_MAC_MAX_FRAME_RETRIES` in esp-zboss-lib 1.6.4). As the earlier section says, that budget is milliseconds.
+- NWK. Revision 23 sets `nwkcUnicastRetries` to 3 and `nwkcUnicastRetryDelay` to 50 ms (NWK constants, section 3.5.1). That is a few hundred milliseconds inside one attempt.
+- APS, when the frame asks for an APS acknowledgement. `apscMaxFrameRetries` is 3. `apscAckWaitDuration` is 1.6 seconds, from `0.05 * (2 * nwkcMaxDepth) + 0.1` with `nwkcMaxDepth` 15 (section 2.2.7.1). The sender waits, then transmits again, up to 3 retransmissions (section 2.2.8.4.4). The failure path is four attempts at up to 1.6 seconds, about 6.4 seconds, and then the APS sub-layer tells the next layer the transmission failed. The report is dropped. ZBOSS, on a command this coordinator sends to a non-sleepy device, waits 3 seconds instead of 1.6 (`ZB_N_APS_ACK_WAIT_DURATION_FROM_NON_SLEEPY`), so the failure path of a read below is about 12 seconds. The sensor's own stack may use the 1.6 second spec value. Both numbers are seconds, and the nine minutes of Wi-Fi are longer than either.
+
+Link status does not save the report. A router or coordinator sends a link status every `nwkLinkStatusPeriod` seconds, default 15 (`0x0f`), as a one-hop broadcast without retries (section 3.6.4.4.1). `nwkRouterAgeLimit` is 3 (section 3.5.2, NIB attribute `0xa7`). ZBOSS cites the same two numbers as Zigbee Specification revision 22, subclause 3.5.1, and the values match revision 23. After 45 seconds with no link status from the coordinator, the VINDSTYRKA sets that neighbor's outgoing cost to 0. The specification calls the entry stale, and says it may be reused if the neighbor table needs the slot (section 3.6.4.4.4). Stale is a routing cost.
+
+Leave is `NLME-LEAVE`. A channel change is `Mgmt_NWK_Update_req` with `ScanDuration` `0xFE`, sent by the network manager (section 2.4.3.3.9). The coordinator is off the air, so it is not sending that command. The router's channel stays the channel in its NIB. This coordinator formed the network on Zigbee channel 13 only. Revision 23 also requires a router to be able to rejoin if communication is lost (section 2.5.2.4). That sentence is a capability the stack must have. It does not name nine minutes of silence as the event that starts a channel scan. This note did not watch the E2112.
+
+When the coordinator returns with the same PAN, the same key, and channel 13, the sensor is still a member. The first poll can pay for a route discovery, because the outgoing cost was zeroed. On 2.4 GHz the route-request retry interval is 254 ms (`nwkcRREQRetryInterval`, `0xfe` ms), and the first broadcast is retried 3 times (`nwkcInitialRREQRetries`). On this one-hop link that still fits in the window below.
+
+### Polling with Read Attributes
+
+The coordinator can read the current values in the window. Always-on reporting is optional.
+
+ZCL general command `0x00` is Read Attributes (`ZB_ZCL_CMD_READ_ATTRIB` in esp-zboss-lib 1.6.4, `zcl/zb_zcl_commands.h`). SDK 1.6.8 sends it with `esp_zb_zcl_read_attr_cmd_req()`. The coordinator firmware already sends that command once during setup, for attribute `measuredValue` (`0x0000`) on temperature (cluster `0x0402`), humidity (`0x0405`), PM2.5 (`0x042A`), and the IKEA VOC index (`0xFC7E`, manufacturer code `0x117C`). Those four reads are the poll. The VOC read is a manufacturer-specific frame. The others are standard. The call takes the manufacturer flag and the manufacturer code, which the setup path already fills in.
+
+The VINDSTYRKA is a mains-powered router, so its receiver stays on. It can answer a unicast while the coordinator is on channel 13. Read Attributes returns the value the sensor holds at that moment. The nine minutes of missed reports are not in that response.
+
+Reporting can stay at minimum 10 and maximum 30. The reports that land in the Wi-Fi period are still dropped, as above. A later Configure Reporting can set the maximum reporting interval to `0xFFFF`. ZBOSS names that value `ZB_ZCL_REPORTING_NOT_NEEDED` and says reporting is not needed for the attribute (`zcl/zb_zcl_reporting.h`). The poll works with reporting left as it is, and it works after that `0xFFFF` write.
+
+Four clusters means four commands. The setup code sends them one at a time and arms a 5 second application timeout (`SETUP_TIMEOUT_MS` in `esp32c6/main/vindstyrka_coord.c`). On a healthy link each one is a request and a response, and four of them finish in well under a second of airtime. A read that never gets an APS acknowledgement can sit in this ZBOSS for about 12 seconds, four attempts at 3 seconds, before the stack gives up. Serializing four reads that each burn that whole budget would be about 48 seconds, and the window would still have no sample. The useful budget is one healthy pass, plus room for one of those 12 second misses.
+
+### Clock drift, and SNTP as a later step
+
+While the chip is awake, system time uses the high-resolution timer. ESP-IDF v5.5.6 says that timer runs from APB_CLK, typically 80 MHz, with a frequency deviation of less than ±10 ppm, at 1 µs resolution. Ten parts per million across the ten minutes between marks is 6 ms. Across the default SNTP period of one hour it is 36 ms. Espressif's hardware design guidelines for the ESP32-C6 require the 40 MHz crystal to be within ±10 ppm, which is the same order. A 15 second window does not move under that error.
+
+[System Time, ESP-IDF v5.5.6 for ESP32-C6](https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32c6/api-reference/system/system_time.html)
+
+[ESP32-C6 schematic checklist, external 40 MHz crystal](https://docs.espressif.com/projects/esp-hardware-design-guidelines/en/latest/esp32c6/schematic-checklist.html)
+
+The RTC is the other timer. It keeps time in sleep, and it persists across resets other than a power-on reset. The high-resolution timer does neither. On the C6 the default RTC source is the internal slow RC, about 136 kHz. The datasheet lists that oscillator next to the 40 MHz crystal and the 480 MHz PLL. ESP-IDF says the RC's frequency moves with temperature, and that this deviation shows up in light sleep and deep sleep. The same release's BLE guide says this 136 kHz RC, used as a sleep clock, has a sleep-clock accuracy exceeding 500 ppm. Five hundred parts per million across ten minutes is 0.3 seconds. This schedule is awake on Wi-Fi, so the high-resolution timer is the clock that hits the mark. The RC is the clock that matters if a later version sleeps, or if each window reboots and the time has to cross that reset on the RTC.
+
+[ESP32-C6 Series Datasheet, section 4.1.3.3 Clock](https://documentation.espressif.com/esp32-c6_datasheet_en.html)
+
+[Low-power BLE clock sources, ESP-IDF v5.5.6 for ESP32-C6](https://docs.espressif.com/projects/esp-idf/en/v5.5.6/esp32c6/api-guides/low-power-mode/low-power-mode-ble.html)
+
+The wall-clock marks need civil time. After boot, `gettimeofday` is not 23:50 until something sets it. SNTP over the station does that, and it belongs in a later step, once the radio schedule is chosen. `esp_netif_sntp_init()` with a server such as `pool.ntp.org` starts the client. `esp_netif_sntp_sync_wait()` blocks until a reply, or until its timeout. The default mode writes the new time immediately (`SNTP_SYNC_MODE_IMMED`). The update period defaults to one hour (`CONFIG_LWIP_SNTP_UPDATE_DELAY` is 3600000 ms). The Kconfig minimum is 15 seconds, which is the SNTPv4 floor from RFC 4330. With the startup delay left on, the first request waits a random time up to 5 seconds (`CONFIG_LWIP_SNTP_MAXIMUM_STARTUP_DELAY`). That delay keeps a herd of devices off the server at once. One C6 can turn it off when this step is written. The example Espressif ships is `examples/protocols/sntp`.
+
+An uptime timer can prove the radio switch before any of that. The marks at :00, :10, :20, :30, :40, and :50 wait until the station has an IP and one SNTP reply. Other devices that avoid the window need a time source of their own. After this C6 has synced, its own error is the ±10 ppm above. A partner whose clock is off by many seconds will miss a 15 second window and still land inside a 60 second one.
+
+### Verdict
+
+It depends. The inverse plan works as a way to take one current reading from the VINDSTYRKA every ten minutes, by Read Attributes, with the coordinator brought back as the same network. Reports sent while the coordinator is off the air are dropped after a few seconds of MAC, NWK, and APS retries. The sensor stays joined, and it stays on channel 13.
+
+The Zigbee airtime for the poll is 15 to 20 seconds when the stack is already running: stop Wi-Fi, read the four attributes, start Wi-Fi. That covers a healthy poll, one ZBOSS APS-acknowledgement miss of about 12 seconds, and the route discovery that can follow 45 seconds of silence. `esp_wifi_stop` on the front of that window has no published duration. On the way back, the scan is at most 1.56 seconds, or at most 120 ms on a known channel, and association plus DHCP are unbounded beyond the 1 second DHCP timer tick. That 15 to 20 seconds is the poll. It leaves the coordinator sharing the radio for the other nine minutes.
+
+A coordinator that is actually off the air except on the mark has to boot the Zigbee stack for the window and shut it down afterwards. SDK 1.6.8 has no pause, so that shutdown is a reboot, and Espressif does not publish the boot-plus-start time. Until that cycle is measured, keep the Zigbee window at the full minute.
+
+Advertise that same minute, 23:50:00–23:51:00, to anything that uses the C6 over Wi-Fi. It holds a 15 to 20 second poll, the Wi-Fi return, and a few seconds of skew on the other device's clock. It also has room for the unmeasured cold start. The minute does not bring back the readings from the other nine minutes.
