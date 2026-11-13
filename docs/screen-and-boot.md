@@ -364,9 +364,35 @@ Next is 43. Item 34 is not done.
 
 ## Item 43 — the trap line on screen
 
-The trap handler prints the book's one-line trap message on the bitmap with `Texts`: the trap number, the module and the position. If the screen and font are not ready yet, it falls back to item 35's status code.
+`Kernel.Trap` still takes `NEW` and floating point. Any other trap calls Blink's handler with the trap number, the position, and the link, once the font is in use. The handler writes System.Trap's line with `Texts` and draws it: two spaces, `pos`, the position, two spaces, `TRAP`, the number, ` in `, the module name, ` at`, and the link as eight hex digits. A trap before the font, and a second trap, stores `80H` plus the number at −84. Bit 8 stays clear.
 
-Proof: two broken Blinks. One traps after the font is loaded: the capture card reads the exact line. One traps before: the status blocks show the code. The LED is dark in both.
+The 4K line is `  pos 12174  TRAP   1 in Blink at 00010778`. The Dock line is `  pos 12181  TRAP   1 in Blink at 00010798`. The pre-font trap is an index check in the module body, so the handler is not installed and the byte is `81H`.
+
+Bitmap pixels stay dark until a store at `7C0H` matches the bitstream's arm word and bit 8 is set. These loads are the item 42 bitstreams. The handler stores that word, `222FE47DH` on the 4K and `28097085H` on the Dock, draws the line, and stores `10BH`. The blink loop does not run, so the LED pin stays dark. Each disk's own arm word stays unstored. A later place bakes a new word, and this constant misses it.
+
+`Modules.Init` reserves `6F00H`, and `Kernel.stackSize` is the same, so the limit is `11100H`. The 4K font is `Tiny4x6`, with the letters of this line. The Dock font is `Oberon10.Scn.Fnt`.
+
+Verilator, `tools/run_verilator_sim.sh`, exit 0, at 8 ms. The NOR line matches the host painting, 30 words. Status `10BH` is stored at cycle 401590408. The halt is cycle 401590442, 0 edges. The UART line matches, 58 words. The halt is cycle 118825904, PC `000106CC`, 0 edges. Both index traps halt on `81H` with an empty bitmap and 0 edges. The NOR halt is cycle 394576194. The UART halt is cycle 108337574, PC `000047FC`. The good NOR and UART disks still blink, including the button hold, the 24-edge collect, and the 100 ms halve.
+
+The rate pair sums to zero, so the 1000 ms disks have these same checksums and arm words. Each disk is 79892 bytes. The rate bytes at `0xB174` are `e8 03 00 00 18 fc ff ff`. The 4K line disk is checksum `7708f620`, arm word `d614fbc5`, sha256 `27d6553c7a478b9c5a076150c0e295f06d0404c10cb950d0c881baa7bbbf80f4`. The 4K index disk is checksum `a7f49902`, arm word `06e894e7`, sha256 `5cd088111b6b9ca846a0df608df552fbcd3789a81d32de4c0466ef449d5c7dd0`. The Dock line disk is checksum `7cbd5a4c`, arm word `dda157a9`, sha256 `38fb3513aa0b85ba001e4b753878257c79cef972f4107486476c6584ce5da9bf`. The Dock index disk is checksum `8b4f1fcf`, arm word `2a53122a`, sha256 `3b767cc8c6cffb80326d4006fd0a269914d214a025d7e3b3991773eca86a3757`.
+
+No new place. The 4K bitstream is item 42's `gowin/impl/pnr/modules_n1000.fs`, 1772222 bytes, sha256 `f5be4b47389872765861c71de5596df9f0931fa6ab62fab99e688e82a7534952`. The Dock bitstream is item 42's `gowin/primer20k/impl/pnr/ddr3modules_n1000.fs`, 7261998 bytes, sha256 `4919b243935e79f5e1b2ef7b580772091b5806b7a8dc9d3ba98d0275ad220036`.
+
+The Nano is USB port `3-3.3`, bus 003 device 012. JEDEC `856016`. Each NOR write is the data file at `0x200000`. The read-back matches, and the 256 bytes at `0x1FFF00` are unchanged. Each SRAM load was `openFPGALoader -m` of that bitstream, `write to ram`, Load SRAM 100%, CRC success. Nothing else was written to flash.
+
+Webcam `/dev/video2`, 640×480, 30 fps, MJPEG. Manual exposure reads 310, gain 255, brightness 128, contrast 40. The post-font clip is `/home/lypanov/fpga/blink-measure/trap-line-9bb4/nano-line2/led.mkv`, 1202 frames, 40.028 s. The brightest red sample is 105. The item 42 core, x 210..214, y 206..209, stays at or below 11. The pre-font clip is `nano-index2/led.mkv`, 1202 frames, 40.023 s. The brightest red sample is 108, and that core stays at or below 8. A reload of the item 42 good disk, `nano-control/led.mkv`, 1202 frames, 40.021 s, has brightest red 14 and the core at or below 4. The item 42 clip `command-name-9bb4/nano-good/clip.mkv`, 1801 frames, still has red 255 in that core. Tonight's frames do not contain the LED. The simulation counted 0 edges on both traps.
+
+The Dock is USB port `3-3.1.1`, bus 003 device 013. Two SRAM loads of the item 42 bitstream, each `openFPGALoader -m`, each `write to ram` and Load SRAM 100%. Each waited at `C.0440` with the mask clear, lanes `000C` `000A`, E0 `A55A`, G `A55A`, F `A8`. Nothing was written to the Dock flash. The HDMI cable stayed on the Dock.
+
+The first Dock line send leaves the picture dark. File `/home/lypanov/fpga/blink-measure/trap-line-9bb4/dock-line/hdmi.yuyv`, 2700 frames. From frame 787 the field is luma 139–142, and no pixel is at or above 200, for 1913 frames.
+
+The line disk that stores `28097085H` halts at `C.06CC`. Forty-three samples show that PC and the mask `FFFFFFFFFF`. E0 stays `A55A`. File `dock-line2/hdmi.yuyv`, YUYV, 1024×768, 60 fps, 2400 frames. From frame 783, 13.05 s, for 1617 frames, 26.95 s, all 1712 host pixels are lit, luma 255. The line box is x 30..421, y 58..81. The text is `  pos 12181  TRAP   1 in Blink at 00010798`. Four extra pixels sit at (142, 2), (143, 2), (142, 3), and (143, 3), luma 255, on every one of those frames. That cell is bitmap (71, 1). The simulated bitmap has 58 words, and word 18 is absent. The field is at most luma 142.
+
+The index disk halts at `C.47FC`. Thirty-two samples show that PC and a clear mask. File `dock-index/hdmi.yuyv`, 1800 frames. From frame 696, 11.60 s, for 1104 frames, 18.40 s, the picture is code `81H`: 25600 pixels, luma 255, none missing and none extra. Bit 7 is x 0..79 and bit 0 is x 560..639, y 160..319, 12800 pixels each. The field is at most luma 142.
+
+Webcam `/dev/video2` on the Dock line is `dock-line2/led.mkv`, 1202 frames, 40.017 s. The brightest red sample is 100. The item 42 Dock core, x 281..284, y 17..22, stays at or below 9. The index clip is `dock-index/led.mkv`, 902 frames, 30.029 s, brightest red 95, and that core stays at or below 9. The item 42 clip `command-name-9bb4/dock-good/led.mkv`, 1502 frames, still has red 255 in that core.
+
+Next is 44. Item 34 is not done.
 
 ## Item 44 — the book's file system
 
