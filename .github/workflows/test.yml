@@ -31,7 +31,11 @@ jobs:
           curl -L https://github.com/com-lihaoyi/mill/releases/download/0.12.5/0.12.5 > mill && chmod +x mill
       - name: Setup Dependencies
         run: |
-          sudo apt-get install ccache ffmpeg python3-numpy python3-matplotlib python3-pil
+          # ubuntu-latest package lists go stale. install without update
+          # exits 100, and without -y the same step can wait on a prompt.
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            ccache ffmpeg python3-numpy python3-matplotlib python3-pil
       - name: Cache Norebo
         uses: actions/cache@v4
         with:
@@ -66,7 +70,9 @@ jobs:
       - name: Install Verilator
         if: steps.get-cached-verilator.outputs.cache-hit != 'true'
         run: |
-          sudo apt-get install git help2man perl python3 make autoconf g++ flex bison numactl perl-doc libfl-dev
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            git help2man perl python3 make autoconf g++ flex bison numactl perl-doc libfl-dev
           git clone https://github.com/verilator/verilator
           unset VERILATOR_ROOT
           cd verilator
