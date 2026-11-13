@@ -55,19 +55,20 @@ ALLOC = 0x2000
 # modules, and the heap is the gap from that origin up to MemLim.
 # Files.Old takes a 1280-byte buffer and a 512-byte descriptor.
 # Oberon, Fonts, the one font file, Display, AMemoryMappedToggle,
-# Blink5, Texts, and Blink.Rate, plus Texts' trailer and the writer,
-# are ten of those pairs. Fonts.This allocates two 3072-byte blocks
-# before the collector runs. The text, two buffers and three pieces
-# are 288 bytes. 1280 bytes are the type-size remainder. The allocator
-# has 33 records free on the full limit and 32 when MemLim is one
-# record lower. Blink holds the 33 while it builds the list, then
-# Collect releases them for WriteInt. The rest of this 64 KB heap is
-# 1247 records of 32 bytes. The bitmap windows sit at 0FFFE0000H and
+# Blink, Texts, Input, and Blink.Rate, plus Texts' trailer and the
+# writer, are eleven of those pairs. Fonts.This allocates two
+# 3072-byte blocks before the collector runs. The text, two buffers
+# and three pieces are 288 bytes. 1280 bytes are the type-size
+# remainder. The allocator has 33 records free on the full limit and
+# 32 when MemLim is one record lower. Blink holds the 33 while it
+# builds the list, then Collect releases them for WriteInt. The rest
+# of this 64 KB heap is 1191 records of 32 bytes. The bitmap windows
+# sit at 0FFFE0000H and
 # 0FFFE8000H, outside the heap. One record less is the ROM whose list
 # finds no block, so the LED stays dark.
 STACK = 0x18000
 FILE_BYTES = 1280 + 512
-OPEN_FILES = 10
+OPEN_FILES = 11
 FONT_BLOCK = 3072
 FONT_BLOCKS = 2
 TEXT_BYTES = 288
@@ -78,15 +79,16 @@ HEAP_BYTES = (FILE_BYTES * OPEN_FILES + FONT_BLOCK * FONT_BLOCKS
               + TEXT_BYTES + WRITE_SLACK + 32 * KEPT)
 MEMLIM = STACK + HEAP_BYTES
 SHORT_MEMLIM = MEMLIM - 32
-if KEPT != 1247 or HEAP_BYTES != 0x10000 or MEMLIM != 0x28000 or SHORT_MEMLIM != 0x27FE0:
+if KEPT != 1191 or HEAP_BYTES != 0x10000 or MEMLIM != 0x28000 or SHORT_MEMLIM != 0x27FE0:
     raise SystemExit(
         f"heap {HEAP_BYTES:#x} kept {KEPT} memlim {MEMLIM:#x} short {SHORT_MEMLIM:#x}"
     )
-# Modules.Init subtracts this from the stack origin. Texts' module
-# block ends near 0x10600, past the old 32KB ceiling at 0x10000.
-# FileDir.Init's frame is about 12KB, so 28KB still clears it.
-RESERVE = 0x6F00
-LIMIT = STACK - RESERVE  # Modules.Mod DEC(limit, 6F00H): 18000H - 6F00H = 11100H
+# Modules.Init subtracts this from the stack origin. Input and Blink
+# end past the old ceiling at 0x11100. The loop's turn count ends past
+# 11800H. FileDir.Init's frame is 8008 bytes, so 24576 bytes still
+# clears it. 18000H - 6000H = 12000H.
+RESERVE = 0x6000
+LIMIT = STACK - RESERVE  # Modules.Mod DEC(limit, 6000H)
 BODY_LO = ALLOC
 BODY_HI = LIMIT
 ROM_WORDS = 4096
@@ -352,7 +354,8 @@ SUM_ADDR = 28
 # image started 8 bytes past a 16-byte boundary, so the pad grows by 4
 # and the root moves 2064 bytes past item 29's 0xF7A0.
 EXPECT_ROOT = 0xFFB0
-BLINK_MT = 0x38
+# Blink is module 11. The table starts at 0x20.
+BLINK_MT = 0x4C
 PLANTED_NUM = 4
 EQ = 1
 ALWAYS = 7
@@ -1219,7 +1222,7 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
          index_trap: bool = False, short_heap: bool = False,
          bad_font: bool = False, bad_command: bool = False,
          line_trap: bool = False, bad_dir: bool = False,
-         arm_sum: int | None = None) -> dict:
+         stuck: bool = False, arm_sum: int | None = None) -> dict:
     if flash_boot and uart_disk:
         raise SystemExit("flash boot and the UART disk are different images")
     if not flash_boot and not uart_disk:
@@ -1238,6 +1241,7 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         bad_command=bad_command,
         line_trap=line_trap,
         bad_dir=bad_dir,
+        stuck=stuck,
         arm_sum=arm_sum,
     )
 
@@ -1295,6 +1299,8 @@ def main() -> int:
                         help="Blink traps after the font is loaded and prints the line")
     parser.add_argument("--bad-dir", action="store_true",
                         help="The directory mark is zero. FileDir.Init asserts and the LED stays dark")
+    parser.add_argument("--stuck", action="store_true",
+                        help="A second task never returns after the second on-edge")
     parser.add_argument("--arm-sum", type=lambda s: int(s, 0), default=None,
                         help="Directory filler word that makes the payload checksum this value")
     args = parser.parse_args()
@@ -1304,7 +1310,7 @@ def main() -> int:
                 index_trap=args.index_trap, short_heap=args.short_heap,
                 bad_font=args.bad_font, bad_command=args.bad_command,
                 line_trap=args.line_trap, bad_dir=args.bad_dir,
-                arm_sum=args.arm_sum)
+                stuck=args.stuck, arm_sum=args.arm_sum)
     write_words(info["words"], args.out)
     write_map(info, MAP_PATH)
     counts = " ".join(f"{name} {info['counts'][name]}" for name in ORDER)
@@ -1334,6 +1340,7 @@ def main() -> int:
         + (" INDEX-TRAP" if args.index_trap else "")
         + (" LINE-TRAP" if args.line_trap else "")
         + (" BAD-DIR" if args.bad_dir else "")
+        + (" STUCK" if args.stuck else "")
         + (" BAD-FONT" if args.bad_font else "")
         + (" BAD-COMMAND" if args.bad_command else "")
     )

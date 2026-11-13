@@ -64,6 +64,8 @@ class CPUSimTop(
     val armed = Output(Bool())
     // Switch bit at -60. The bench's sampler drives it.
     val btnPressed = Input(Bool())
+    // -40 reads ones while this is high. The good image holds it low.
+    val kbdOnes = Input(Bool())
   })
   val phy = if (ddr3 && externalPhy) Some(IO(new Ddr3UserBundle)) else None
 
@@ -90,6 +92,7 @@ class CPUSimTop(
   io.cpuClk := cpuClock
   io.armed := cpu.io.armed
   cpu.io.btnPressed := io.btnPressed
+  cpu.io.kbdOnes := io.kbdOnes
   cpu.io.diskValid := io.diskValid
   cpu.io.diskWord := io.diskWord
   io.diskTake := cpu.io.diskTake

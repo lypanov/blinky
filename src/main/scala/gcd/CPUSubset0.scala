@@ -259,6 +259,9 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     // or the UART press latch is set. The sampler is outside, on this
     // same cpu clock. A board with neither ties it low.
     val btnPressed = Input(Bool())
+    // -40 reads ones on the dark image. The good image ties this low,
+    // and the word is 0: no key ready, mouse at the origin.
+    val kbdOnes = Input(Bool())
   })
   
   // Initialize the logByte signal with a default value
@@ -564,8 +567,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   }
   // A load of -64 completes from the counter below, not from RAM.
   // A load of -60 completes from the switch bit, on the same cycle.
+  // A load of -40 is the mouse word. A load of -36 is the keyboard byte.
   val timerLoad = RegInit(false.B)
   val btnLoad = RegInit(false.B)
+  val msLoad = RegInit(false.B)
+  val kbdLoad = RegInit(false.B)
   // The picture RAM is written by the store and read by the video.
   // That RAM has no CPU read port. The 4K shadow is 1024 words on this
   // clock, written in the same cycle as screenWe. Twelve CPU-clock
@@ -607,6 +613,8 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
   }
   timerLoad := false.B
   btnLoad := false.B
+  msLoad := false.B
+  kbdLoad := false.B
   bmpLoad := false.B
   bmpRdHit := false.B
   // Book's millisecond counter. Step 2, limit 27000: exactly 13500
@@ -849,6 +857,35 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         regWriteAddr := memoryTargetReg
         regWriteData := Mux(memoryIsByte, Cat(0.U(24.W), btnByte), btnWord)
         printf(p"Keys R${memoryTargetReg} ${Hexadecimal(btnWord)}\n")
+      }
+      memoryAccessPending := false.B
+    } .elsewhen (msLoad) {
+      when (memoryIsLoad) {
+        // Input.Mouse and SYSTEM.BIT read -40. Bit 28 is keyboard-ready.
+        // Bits 26:24 are the buttons, 21:12 are Y, 9:0 are X. Nothing is
+        // wired, so the good image is zero. The dark image is ones.
+        val msWord = Mux(io.kbdOnes, "hFFFFFFFF".U(32.W), 0.U(32.W))
+        val msByte = MuxLookup(memoryLane, msWord(7, 0))(Seq(
+          0.U -> msWord(7, 0),
+          1.U -> msWord(15, 8),
+          2.U -> msWord(23, 16),
+          3.U -> msWord(31, 24)
+        ))
+        regWrite := true.B
+        regWriteAddr := memoryTargetReg
+        regWriteData := Mux(memoryIsByte, Cat(0.U(24.W), msByte), msWord)
+        printf(p"Mouse R${memoryTargetReg} ${Hexadecimal(msWord)}\n")
+      }
+      memoryAccessPending := false.B
+    } .elsewhen (kbdLoad) {
+      when (memoryIsLoad) {
+        // Input.Peek reads -36 only when bit 28 of -40 is set. The byte
+        // is 0. A read acknowledges the keyboard; nothing is pending.
+        val kbdWord = 0.U(32.W)
+        regWrite := true.B
+        regWriteAddr := memoryTargetReg
+        regWriteData := Mux(memoryIsByte, 0.U, kbdWord)
+        printf(p"Kbd R${memoryTargetReg} ${Hexadecimal(kbdWord)}\n")
       }
       memoryAccessPending := false.B
     } .elsewhen (bmpLoad) {
@@ -1104,6 +1141,10 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
     val timerAddr = effectiveAddr === "hFFFFFFC0".U
     // -60 (0xFFFFFFC4). The book's switches. Bit 0 is the button.
     val btnAddr = effectiveAddr === "hFFFFFFC4".U
+    // -40 (0xFFFFFFD8). Mouse, and keyboard-ready in bit 28.
+    val msAddr = effectiveAddr(31, 2) === "h3FFFFFF6".U
+    // -36 (0xFFFFFFDC). The keyboard byte. A read acknowledges it.
+    val kbdAddr = effectiveAddr(31, 2) === "h3FFFFFF7".U
     // -96 Rb, -92 Rc, -88 the result store that returns from the trap.
     val fpRbAddr = !isByte && effectiveAddr === "hFFFFFFA0".U
     val fpRcAddr = !isByte && effectiveAddr === "hFFFFFFA4".U
@@ -1123,6 +1164,24 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         when (btnAddr) {
           useHyper := false.B
           btnLoad := true.B
+          memoryAccessPending := true.B
+          memoryIsLoad := true.B
+          memoryIsByte := isByte
+          memoryLane := effectiveAddr(1, 0)
+          memoryTargetReg := regA
+        }
+        when (msAddr) {
+          useHyper := false.B
+          msLoad := true.B
+          memoryAccessPending := true.B
+          memoryIsLoad := true.B
+          memoryIsByte := isByte
+          memoryLane := effectiveAddr(1, 0)
+          memoryTargetReg := regA
+        }
+        when (kbdAddr) {
+          useHyper := false.B
+          kbdLoad := true.B
           memoryAccessPending := true.B
           memoryIsLoad := true.B
           memoryIsByte := isByte
@@ -1255,11 +1314,11 @@ class CPUSubset0(instructionHexStrings: Seq[String] = Seq.empty[String],
         fpPhase := 18.U
         fpHold := true.B
         printf(p"FP result ${Hexadecimal(rdX)} -> R${fpRa}\n")
-      } .elsewhen (screenHit || timerAddr || btnAddr) {
+      } .elsewhen (screenHit || timerAddr || btnAddr || msAddr || kbdAddr) {
         // -80 is the old one-block screen. -64's write is blank in
-        // the book. -60's write is the LED bank. This board's blink
-        // pin is the armed light, not that bank, so none of these
-        // stores goes to memory.
+        // the book. -60's write is the LED bank. -40 and -36 are read.
+        // This board's blink pin is the armed light, not that bank, so
+        // none of these stores goes to memory.
       } .elsewhen (if (diskBoot) norPtrHit || uartHit || norBaseHit else false.B) {
         if (flashBoot) {
           when (norPtrHit) {
@@ -1773,6 +1832,9 @@ object CPUSubset0 {
     ))
     val useUart = ddr3modules && coreMap.exists(_.uartDisk)
     val useFlash = modules && coreMap.exists(_.romWords <= 512) && !coreMap.exists(_.uartDisk)
+    // The dark image. A load of -40 is ones, so Input does not arm.
+    val kbdOnes = sys.env.get("KBD_ONES").contains("1")
+    if (kbdOnes) println("FPGA image: -40 reads ones")
     if (ddr3modules && !useUart) {
       throw new RuntimeException("ddr3modules needs the UART disk map")
     }
@@ -1811,7 +1873,8 @@ object CPUSubset0 {
         core = coreMap,
         flashBoot = useFlash,
         uartDisk = useUart,
-        enableLogger = ddr3
+        enableLogger = ddr3,
+        kbdOnes = kbdOnes
       ),
       firtoolOpts = firtoolOpts
     )
@@ -1827,7 +1890,8 @@ object CPUSubset0 {
         core = coreMap,
         flashBoot = useFlash,
         uartDisk = useUart,
-        enableLogger = ddr3
+        enableLogger = ddr3,
+        kbdOnes = kbdOnes
       ),
       firtoolOpts = firtoolOpts
     )

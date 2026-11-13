@@ -60,14 +60,21 @@ if (( N % 2 )); then
   exit 1
 fi
 # 13500 cpu clocks/ms * 2 bridge clocks per cpu clock.
-# Blink polls Time, so one edge can miss the tick by a poll. 2048
-# bridge clocks covers that poll. The gaps still add up inside it.
+# The task loop polls Time. One poll, and the first drawing, sit
+# inside 40960 bridge clocks, which is under 2 ms. A 2 ms rate
+# change still misses it. The gaps still add up inside it.
 PERIOD=$((N * 27000))
 echo "[ok] elaborated N=$N ms period=$PERIOD  binary sim/obj_dir_disk/disk_boot"
-"$BIN" --period "$PERIOD" --slack 2048 --edges 3 "${GOOD[@]}"
-echo "[ok] NOR disk N=$N period $PERIOD"
+"$BIN" --period "$PERIOD" --slack 40960 --edges 3 "${GOOD[@]}" \
+  | tee "$ROOT/sim/out/nor-turns.log"
+python3 "$ROOT/tools/turn_count.py" "$ROOT/sim/out/nor-turns.log" nano
+echo "[ok] NOR disk N=$N period $PERIOD, the turn count rises"
+# -40 reads ones. Input reports a key and the mouse leaves the origin.
+# Dark halts before the arm word, so the LED stays off.
+"$BIN" --kbd-ones --expect-halt --expect-no-arm "${GOOD[@]}"
+echo "[ok] NOR disk -40 reads ones, the arm word stays unstored, the LED stays dark"
 # S1 held across three edges. The LED stays on, then the period resumes.
-"$BIN" --press --period "$PERIOD" --slack 2048 --edges 1 --hold-cycles $((PERIOD * 3)) "${GOOD[@]}"
+"$BIN" --press --period "$PERIOD" --slack 40960 --edges 1 --hold-cycles $((PERIOD * 3)) "${GOOD[@]}"
 echo "[ok] NOR disk N=$N paused while the button was held"
 # The list fills the heap before the arm word. Collect runs on the
 # fourth on-edge and walks the list again. The three-edge run above is
@@ -93,7 +100,7 @@ PY
 cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-rate-base.bin"
 cp "$ROOT/sim/out/disk-rate-switch.bin" "$ROOT/sim/out/disk.bin"
 "$BIN" --period "$SWITCH_PERIOD" --period2 $((SWITCH_PERIOD / 2)) \
-  --switch-after 4 --slack 2048 --edges 7 "${GOOD[@]}"
+  --switch-after 4 --slack 40960 --edges 7 "${GOOD[@]}"
 echo "[ok] NOR disk halves 100 ms after the third rise"
 cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
@@ -125,7 +132,7 @@ print(f"[ok] second rate {delay} ms differs in {len(diffs)} rate bytes, checksum
 PY
 cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-rate-base.bin"
 cp "$ROOT/sim/out/disk-rate-alt.bin" "$ROOT/sim/out/disk.bin"
-"$BIN" --period "$ALT_PERIOD" --slack 2048 --edges 3 "${GOOD[@]}"
+"$BIN" --period "$ALT_PERIOD" --slack 40960 --edges 3 "${GOOD[@]}"
 echo "[ok] NOR disk N=$ALT period $ALT_PERIOD, same image"
 cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
@@ -209,6 +216,35 @@ cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-bad-dir.bin"
   --dump-bmp "$ROOT/sim/out/bad-dir-nano.dump"
 python3 "$ROOT/tools/trap_line.py" --blank "$ROOT/sim/out/bad-dir-nano.dump"
 echo "[ok] NOR disk damaged directory is 87H, the arm word stays unstored, the LED stays dark"
+cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
+
+python3 "$ROOT/sim/link_inner.py" \
+  --flash-boot \
+  --stuck \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/stuck.words"
+cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-stuck.bin"
+# hang := 1 changes Blink's code sum, so the arm word changes. The
+# compare constant has to be this disk's word or the pin stays dark.
+if ! SIM_IMAGE=modules mill chisel-blinky.runMain gcd.CPUSimTop; then
+  echo "error: CPUSimTop elaboration failed" >&2
+  exit 1
+fi
+verilator "${VERILATOR_FLAGS[@]}" \
+  "$ROOT/generated/CPUSimTopHyper.v" \
+  "$ROOT/generated/InstrRom.v" \
+  "$ROOT/generated/HwMul.v" \
+  "$ROOT/generated/FpSnap.v" \
+  "$ROOT/sim/HyperRamUserModel.v" \
+  "$ROOT/sim/CpuClock2.v" \
+  "$ROOT/gowin/KeepBit.v" \
+  "$ROOT/sim/LUT2.v" \
+  "$ROOT/sim/spi_disk_model.v" \
+  "$ROOT/gowin/button_gate.v" \
+  "$ROOT/sim/disk_boot_top.v" \
+  "$ROOT/sim/tb_disk_boot.cpp"
+"$BIN" --period "$PERIOD" --slack 40960 --stuck-edges 3 "${GOOD[@]}"
+echo "[ok] NOR disk stuck task halts after the second on-edge"
 cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
 cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-full.bin"

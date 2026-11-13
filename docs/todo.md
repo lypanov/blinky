@@ -2,7 +2,7 @@
 
 One item at a time, from the top. This file is an index. The write-up is in the file each item names.
 
-Next: 44.
+Next: 46.
 
 1. Omit the Logger on the 4K. [`docs/bringup-ledger.md`](bringup-ledger.md) item 1. That is the 4K UART change. The Dock training UART stays. Both blink laws stay. Done. The measured result is in the ledger.
 
@@ -56,7 +56,7 @@ Ledger items are not to-dos. If a later item cannot fit on the Nano 4K without a
 42. Commands by name: `Oberon.Call` starts Blink. Same file, item 42. Done. The measured result is in that file. Next is 43.
 43. The trap line on screen. Same file, item 43. Done. The measured result is in that file. Next is 44.
 44. The book's file system, `FileDir`, on the disk. Same file, item 44.
-45. The `Input` stand-in. Same file, item 45.
+45. The `Input` stand-in. Same file, item 45. Done. The measured result is in that file. Next is 46.
 46. The main loop with Blink as a background task. Same file, item 46.
 47. The watchdog. Same file, item 47.
 

@@ -18,7 +18,9 @@ module disk_boot_top (
   output wire [8:0] status_word,
   output wire armed,
   // Active-low, like S1. Held high unless the bench is pausing.
-  input  wire btn_n
+  input  wire btn_n,
+  // High: a load of -40 is ones and the arm word stays unstored.
+  input  wire kbd_ones
 );
   wire cs_n;
   wire sclk;
@@ -56,7 +58,8 @@ module disk_boot_top (
     .io_diskTake(),
     .io_cpuClk(cpu_clk),
     .io_armed(armed),
-    .io_btnPressed(pressed)
+    .io_btnPressed(pressed),
+    .io_kbdOnes(kbd_ones)
   );
 
   // The NOR image has no disk on this UART. The bench drives the button.

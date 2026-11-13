@@ -78,7 +78,10 @@ class CPUMinimalWrapper(
     uartDisk: Boolean = false,
     // DDR3 elaborations keep the Logger. Nano 4K images leave it out.
     // The Dock training UART is ddr3_uart_tx, not this module.
-    enableLogger: Boolean = false
+    enableLogger: Boolean = false,
+    // The dark image: a load of -40 is ones. The good image leaves this
+    // false, so -40 reads 0 and -36 reads 0.
+    kbdOnes: Boolean = false
 ) extends Module {
   val hyper = memBackend == "hyperram"
   val ddr3 = memBackend == "ddr3"
@@ -120,6 +123,7 @@ class CPUMinimalWrapper(
   cpu.io.diskValid := false.B
   cpu.io.diskWord := 0.U
   cpu.io.btnPressed := false.B
+  cpu.io.kbdOnes := kbdOnes.B
   if (!exposeDdr) {
     cpu.io.bmpRdData := 0.U
     cpu.io.bmpRdAck := false.B
@@ -225,6 +229,21 @@ class CPUMinimalWrapper(
     bridge.io.cpuWrite := sync.io.write
     bridge.io.cpuRead := sync.io.read
     bridge.io.cpuByte := sync.io.byte
+    // The store that reaches DDR is this registered copy, one cpu_clk
+    // after the instruction. The same-cycle compare in the CPU watches
+    // the combinational address and does not move the Dock pin. The bit
+    // here is the word the bridge writes.
+    if (core.isDefined) {
+      val lightBit = withClock(cpuClock) {
+        val bit = RegInit(false.B)
+        when (sync.io.write && !sync.io.byte &&
+            sync.io.addr === core.get.light.U) {
+          bit := sync.io.writeData(0)
+        }
+        bit
+      }
+      io.led := lightBit && cpu.io.armed
+    }
     cpu.io.memReadData := bridge.io.cpuReadData
     val align = withClock(cpuClock) { Module(new Ddr3StallAlign) }
     align.io.req := cpu.io.memRead || cpu.io.memWrite

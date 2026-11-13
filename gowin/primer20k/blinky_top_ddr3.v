@@ -397,10 +397,14 @@ module blinky_top_ddr3 (
   // then dq_in beats 0..7 as four halfword pairs. Beat 0 is the byte
   // the CPU is given today.
   wire       hold_seen = 1'b0;
-  reg [1:0] hold_sync = 2'b00;
+  reg [1:0] hold_sync = 2'b11;
+  // In the bridge_lo group (tx_data*) so the probe flop stays off the DDR rows.
+  (* syn_keep = 1 *) reg tx_data_rxprobe = 1'b1;
   reg [15:0] pc_snap = 16'd0;
+  // Second status character is the disk UART pin. '.' is mark. 'v' is space.
   always @(posedge pclk) begin
-    hold_sync <= {hold_sync[0], hold_seen};
+    tx_data_rxprobe <= uart_rx;
+    hold_sync <= {tx_data_rxprobe, hold_seen};
     pc_snap <= cpu_pc[15:0];
   end
   // dout128 is {beat0, ..., beat7} with beat 0 in the high half.
@@ -457,7 +461,7 @@ module blinky_top_ddr3 (
   localparam integer UBYTES = 128;
   wire [UBYTES*8-1:0] msg = {
     read_calib_done ? "C" : ".",
-    hold_sync[1] ? "H" : ".",
+    hold_sync[1] ? (hold_sync[0] ? "H" : ".") : "v",
     hex16(pc_snap), " ",
     hex8(cpu_mask[39:32]), hex32(cpu_mask[31:0]), " ",
     hex32(cpu_r5), " ",

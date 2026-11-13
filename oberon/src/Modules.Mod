@@ -217,10 +217,11 @@ MODULE Modules;  (*Link and load on RISC; NW 20.10.2013 / 8.1.2019*)
 
   PROCEDURE Init*;
   BEGIN Files.Init; MTOrg := SYSTEM.REG(MT);
-    (* Texts needs the module area past 10000H. The deepest frame is
-       FileDir.Init, about 12KB. 6F00H leaves 28416 bytes, which still
-       clears that frame and leaves room for Blink's trap line. *)
-    SYSTEM.GET(16, AllocPtr); SYSTEM.GET(20, root); SYSTEM.GET(24, limit); DEC(limit, 6F00H)
+    (* Texts and Input need the module area past 10000H. The turn count
+       needs it past 11800H. FileDir.Init's frame is 8008 bytes. 6000H
+       leaves 24576 bytes, which still clears that frame. The module
+       limit is 12000H. *)
+    SYSTEM.GET(16, AllocPtr); SYSTEM.GET(20, root); SYSTEM.GET(24, limit); DEC(limit, 6000H)
   END Init;
 
 BEGIN Init; Load("Oberon", M);

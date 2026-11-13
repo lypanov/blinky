@@ -55,7 +55,7 @@ VERSION = 1
 BUILD = 0xE1
 HEADER_BYTES = 20
 BOOT_ROM = 512
-PAGE_LIMIT = 80
+PAGE_LIMIT = 81
 NEXT = 32
 KEY = 36
 NUM = 40
@@ -430,7 +430,7 @@ def _compile_boot(env: dict[str, str], uart: int, memlim: int | None = None) -> 
         raise SystemExit(
             f"BootLoad.Mod constants are not {mem_text}, stack 18000H, {disk_text}"
         )
-    if MEMLIM != 0x28000 or STACK != 0x18000 or DISK_DDR != 0x29000 or KEPT != 1247:
+    if MEMLIM != 0x28000 or STACK != 0x18000 or DISK_DDR != 0x29000 or KEPT != 1191:
         raise SystemExit(
             f"heap constants {STACK:#x}..{MEMLIM:#x} disk {DISK_DDR:#x} kept {KEPT} "
             "do not match BootLoad.Mod"
@@ -594,6 +594,19 @@ def _check_line_trap(code: list[int], run_off: int) -> int:
     return at * 4
 
 
+def _check_input_ports(raw: bytes) -> None:
+    """Peek loads -40 and -36. Mouse loads -40 again. Both are MOV immediates."""
+    path = os.path.join(ROOT, "sim", "out", "bootfiles", "Input.rsc")
+    if open(path, "rb").read() != raw:
+        raise SystemExit("Input.rsc on disk is not the linked object")
+    code = parse_rsc(path, output_format="quiet")["code"]
+    d8 = sum(1 for word in code if word == 0x5000FFD8)
+    dc = sum(1 for word in code if word == 0x5000FFDC)
+    if d8 != 2 or dc != 1:
+        raise SystemExit(f"Input has {d8} loads of -40 and {dc} of -36")
+    print(f"[ok] Input reads -40 ({d8}) and -36 ({dc})")
+
+
 def _check_trap_status(code: list[int]) -> None:
     """The failed trap stores the status byte at -84. Trap 0 does not."""
     ports = [i for i, word in enumerate(code) if (word & 0xF0FFFFFF) == 0x5000FFAC]
@@ -620,6 +633,7 @@ def _board_text(name: str, dock: bool) -> str:
             ("mkX = 80; mkY = 55;", "mkX = 143; mkY = 110;"),
             ("tx = 64; ty = 40;", "tx = 96; ty = 96;"),
             ("lnX = 4; lnY = 8;", "lnX = 8; lnY = 32;"),
+            ("tnX = 4; tnY = 100; tnW = 40; tnH = 8;", "tnX = 8; tnY = 160; tnW = 56; tnH = 10;"),
             ("SYSTEM.PUT(7C0H, 222FE47DH);", "SYSTEM.PUT(7C0H, 28097085H);"),
         ],
         "Fonts": [('This("Tiny4x6.Fnt")', 'This("Oberon10.Scn.Fnt")')],
@@ -652,14 +666,23 @@ _UNITS = (
     ("Display", "Display"),
     ("Fonts", "Fonts"),
     ("Texts", "Texts"),
-    ("Blink", "Blink5"),
+    ("Input", "Input"),
     ("Oberon", "Oberon"),
+    ("Blink", "Blink5"),
 )
+
+
+def _with_stuck(text: str) -> str:
+    """The second task never returns once the light has come on twice."""
+    old = "hang := 0"
+    if text.count(old) != 1:
+        raise SystemExit("Blink.Mod has no single hang assignment")
+    return text.replace(old, "hang := 1", 1)
 
 
 def _compile_files(env: dict[str, str], index_trap: bool = False,
                    dock: bool = False, bad_command: bool = False,
-                   line_trap: bool = False) -> dict[str, bytes]:
+                   line_trap: bool = False, stuck: bool = False) -> dict[str, bytes]:
     # Isolated from sim/payload. Norebo loads every module it imports from
     # the working directory before the command. Oberon.rsc would run
     # Blink5.Go. Texts imports Fonts, and a Fonts.rsc left here is loaded
@@ -700,6 +723,10 @@ def _compile_files(env: dict[str, str], index_trap: bool = False,
     if line_trap:
         path = os.path.join(work, "Blink.Mod")
         patched = _with_line_trap(open(path, encoding="utf-8").read())
+        open(path, "w", encoding="utf-8").write(patched)
+    if stuck:
+        path = os.path.join(work, "Blink.Mod")
+        patched = _with_stuck(open(path, encoding="utf-8").read())
         open(path, "w", encoding="utf-8").write(patched)
     if bad_command:
         path = os.path.join(work, "Oberon.Mod")
@@ -756,7 +783,7 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
          index_trap: bool = False, short_heap: bool = False,
          bad_font: bool = False, bad_command: bool = False,
          line_trap: bool = False, bad_dir: bool = False,
-         arm_sum: int | None = None) -> dict:
+         stuck: bool = False, arm_sum: int | None = None) -> dict:
     if flash_boot == uart_disk:
         raise SystemExit("pass one of flash boot or the UART disk")
     if index_trap and (no_collect or break_arm or bad_font or bad_command or line_trap or bad_dir):
@@ -769,8 +796,11 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         raise SystemExit("the damaged font is its own disk")
     if bad_command and (no_collect or break_arm or bad_dir):
         raise SystemExit("the misspelt command is its own disk")
-    if bad_dir and (no_collect or break_arm or arm_sum is not None):
+    if bad_dir and (no_collect or break_arm or arm_sum is not None or stuck):
         raise SystemExit("the damaged directory is its own disk")
+    if stuck and (no_collect or break_arm or index_trap or short_heap or bad_font
+                  or bad_command or line_trap or bad_dir):
+        raise SystemExit("the stuck task is its own disk")
     if max_iter % 2 or not 1 <= max_iter <= 0x7FFF:
         raise SystemExit(f"rate {max_iter} must be a positive even millisecond count")
     env = _norebo()
@@ -788,12 +818,12 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         raise SystemExit("address 28 is already used")
     files = _compile_files(
         env, index_trap=index_trap, dock=uart_disk, bad_command=bad_command,
-        line_trap=line_trap,
+        line_trap=line_trap, stuck=stuck,
     )
     blink = parse_rsc(os.path.join(ROOT, "sim", "out", "bootfiles", "Blink.rsc"), output_format="quiet")
     blink["raw"] = files["Blink"]
     names = [item[0] for item in blink["imports"]]
-    if names != ["Files", "Fonts", "Texts", "Display", "AMemoryMappedToggle", "Kernel", "Modules"]:
+    if names != ["Files", "Fonts", "Texts", "Display", "AMemoryMappedToggle", "Input", "Kernel", "Modules", "Oberon"]:
         raise SystemExit(f"Blink imports {names}")
     if files["Blink"].count(b"Run\x00") != 1:
         raise SystemExit("Blink.rsc does not publish one command Run")
@@ -804,10 +834,11 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         files["Blink"] = _drop_collect(
             files["Blink"], blink["code"], kernel_mno, {mark[0], scan[0]}
         )
-    # Oberon is module 5. Blink loads Texts, which loads Fonts first.
-    # Fonts is 6, Texts 7, Display 8, AMemoryMappedToggle 9.
-    # Blink itself is module 10.
-    blink_mt = 0x20 + 10 * 4
+    # Oberon imports Input, so Input is 5 and Oberon is 6. Blink then
+    # loads Fonts 7, Texts 8, Display 9, AMemoryMappedToggle 10.
+    # Blink itself is module 11. Its table slot stays 4CH.
+    blink_num = 11
+    blink_mt = 0x20 + blink_num * 4
     line_off = None
     if index_trap:
         _check_index_trap(blink["code"], blink["entry_point"])
@@ -841,10 +872,10 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
             files["Blink"] = _append_arm(files["Blink"], prologue)
     mem = Mem(bytes(image), LIMIT)
     root_now, alloc_now = _load(mem, root, alloc, "Oberon", files)
-    if mem.get(root_now + NUM) != 5:
+    if mem.get(root_now + NUM) != 6:
         raise SystemExit(f"Oberon is module {mem.get(root_now + NUM)}")
     root_now, alloc_now = _load(mem, root_now, alloc_now, "Blink", files)
-    if mem.get(root_now + NUM) != 10 or _name_at(mem, root_now) != "Blink":
+    if mem.get(root_now + NUM) != blink_num or _name_at(mem, root_now) != "Blink":
         raise SystemExit(f"root is {_name_at(mem, root_now)} num {mem.get(root_now + NUM)}")
     if line_off is not None:
         abs_at = mem.get(root_now + CODE) + line_off
@@ -877,17 +908,21 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     if alloc_now > LIMIT:
         raise SystemExit(f"allocation ends at {alloc_now:#x}, limit is {LIMIT:#x}")
     fonts = _find(mem, root_now, "Fonts")
-    if mem.get(fonts + NUM) != 6:
+    if mem.get(fonts + NUM) != 7:
         raise SystemExit(f"Fonts is module {mem.get(fonts + NUM)}")
     texts = _find(mem, root_now, "Texts")
-    if mem.get(texts + NUM) != 7:
+    if mem.get(texts + NUM) != 8:
         raise SystemExit(f"Texts is module {mem.get(texts + NUM)}")
     display = _find(mem, root_now, "Display")
-    if mem.get(display + NUM) != 8:
+    if mem.get(display + NUM) != 9:
         raise SystemExit(f"Display is module {mem.get(display + NUM)}")
     ammt = _find(mem, root_now, "AMemoryMappedToggle")
-    if mem.get(ammt + NUM) != 9:
+    if mem.get(ammt + NUM) != 10:
         raise SystemExit(f"AMemoryMappedToggle is module {mem.get(ammt + NUM)}")
+    inp = _find(mem, root_now, "Input")
+    if mem.get(inp + NUM) != 5:
+        raise SystemExit(f"Input is module {mem.get(inp + NUM)}")
+    _check_input_ports(files["Input"])
     # No type descriptor: the exported light is the first variable.
     if mem.get(ammt + DATA) != ammt + DESC:
         raise SystemExit("AMemoryMappedToggle data is not the descriptor tail")
@@ -908,6 +943,7 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         (b"Blink.rsc", files["Blink"]),
         (b"Display.rsc", files["Display"]),
         (b"Fonts.rsc", files["Fonts"]),
+        (b"Input.rsc", files["Input"]),
         (b"Oberon.rsc", files["Oberon"]),
         (b"Oberon10.Scn.Fnt", face),
         (b"Texts.rsc", files["Texts"]),

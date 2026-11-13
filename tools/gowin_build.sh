@@ -41,6 +41,13 @@ if [[ "$SHORT_HEAP" == 1 ]]; then
   LINK_EXTRA+=(--short-heap)
   NAME_EXTRA="${NAME_EXTRA}_shortheap"
 fi
+# The published disks already carry this payload checksum. The filler
+# word makes the sum match, and the bitstream compares the stored arm
+# word with it. Linking without the sum bakes a different arm word,
+# so those disks run the loop and never arm the LED.
+if [[ -n "${ARM_SUM:-}" ]]; then
+  LINK_EXTRA+=(--arm-sum "$ARM_SUM")
+fi
 if [[ "$FPGA_IMAGE" == "modules" && -z "${BLINK3_IMEM:-}" ]]; then
   BLINK3_IMEM="$ROOT/sim/visualizer/imem/modules.words"
 fi

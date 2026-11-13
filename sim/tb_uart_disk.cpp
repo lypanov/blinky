@@ -16,7 +16,8 @@ double sc_time_stamp() { return static_cast<double>(main_time); }
 
 static int fell_through(uint32_t addr) {
   if (addr == 0xFFFFFFACu || addr == 0xFFFFFFB0u || addr == 0xFFFFFFB8u ||
-      addr == 0xFFFFFFBCu || addr == 0xFFFFFFC0u || addr == 0xFFFFFFC4u)
+      addr == 0xFFFFFFBCu || addr == 0xFFFFFFC0u || addr == 0xFFFFFFC4u ||
+      addr == 0xFFFFFFD8u || addr == 0xFFFFFFDCu)
     return 1;
   // Both bitmap windows, 0xFFFE0000..0xFFFEFFFF.
   return (addr & 0xFFFF0000u) == 0xFFFE0000u;
@@ -37,11 +38,13 @@ int main(int argc, char** argv) {
   int edges_needed = 3;
   int expect_halt = 0;
   int expect_no_arm = 0;
+  int stuck_edges = 0;
   int exhaust_rises = 0;
   int reset_cycles = 32;
   uint32_t min_pc = 0;
   int watch = 0;
   int press = 0;
+  int kbd_ones = 0;
   uint64_t hold_cycles = 0;
   int bit_clocks = 210;
   int expect_status = -1;
@@ -63,12 +66,14 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--slack")) slack = strtoull(need("--slack"), nullptr, 10);
     else if (!strcmp(argv[i], "--edges")) edges_needed = atoi(need("--edges"));
     else if (!strcmp(argv[i], "--expect-halt")) expect_halt = 1;
+    else if (!strcmp(argv[i], "--stuck-edges")) stuck_edges = atoi(need("--stuck-edges"));
     else if (!strcmp(argv[i], "--expect-no-arm")) expect_no_arm = 1;
     else if (!strcmp(argv[i], "--exhaust-rises")) exhaust_rises = atoi(need("--exhaust-rises"));
     else if (!strcmp(argv[i], "--reset")) reset_cycles = atoi(need("--reset"));
     else if (!strcmp(argv[i], "--min-pc")) min_pc = strtoul(need("--min-pc"), nullptr, 0);
     else if (!strcmp(argv[i], "--watch")) watch = 1;
     else if (!strcmp(argv[i], "--press")) press = 1;
+    else if (!strcmp(argv[i], "--kbd-ones")) kbd_ones = 1;
     else if (!strcmp(argv[i], "--hold-cycles")) hold_cycles = strtoull(need("--hold-cycles"), nullptr, 10);
     else if (!strcmp(argv[i], "--bit-clocks")) bit_clocks = atoi(need("--bit-clocks"));
     else if (!strcmp(argv[i], "--expect-status")) expect_status = (int)strtol(need("--expect-status"), nullptr, 0);
@@ -97,6 +102,7 @@ int main(int argc, char** argv) {
   top->clock = 0;
   top->reset = 1;
   top->host_rx = 1;
+  top->kbd_ones = kbd_ones;
   std::vector<uint64_t> edges;
   int prev = 0;
   int saw_led = 0;
@@ -186,7 +192,7 @@ int main(int argc, char** argv) {
         failed = 1;
         break;
       }
-      if (exhaust_rises == 0 && (int)edges.size() >= edges_needed) break;
+      if (stuck_edges == 0 && exhaust_rises == 0 && (int)edges.size() >= edges_needed) break;
     }
     prev = led;
     if (top->halted && halt_at == 0) {
@@ -247,6 +253,35 @@ int main(int argc, char** argv) {
     if (expect_no_arm && saw_arm) {
       fprintf(stderr, "FAIL arm word was stored\n");
       failed = 1;
+    }
+  } else if (stuck_edges) {
+    // The second task halts after the second on-edge. The gaps before
+    // that are the task period, and the halt is before the next one.
+    if (!halt_at || (int)edges.size() != stuck_edges || !top->led) {
+      fprintf(stderr, "FAIL stuck halt %llu edges %zu led %d wanted %d\n",
+              (unsigned long long)halt_at, edges.size(), top->led ? 1 : 0, stuck_edges);
+      failed = 1;
+    } else if ((uint64_t)top->mask != 0xffffffffffULL) {
+      fprintf(stderr, "FAIL stuck mask %010llx\n", (unsigned long long)top->mask);
+      failed = 1;
+    } else if (period && halt_at - edges.back() >= period) {
+      fprintf(stderr, "FAIL stuck halt %llu after the edge, period %llu\n",
+              (unsigned long long)(halt_at - edges.back()),
+              (unsigned long long)period);
+      failed = 1;
+    }
+    if (!failed && period && edges.size() >= 2) {
+      for (size_t i = 1; i < edges.size(); i++) {
+        uint64_t d = edges[i] - edges[i - 1];
+        uint64_t diff = d > period ? d - period : period - d;
+        if (diff > slack) {
+          fprintf(stderr, "FAIL period %llu wanted %llu slack %llu gap %zu\n",
+                  (unsigned long long)d, (unsigned long long)period,
+                  (unsigned long long)slack, i);
+          failed = 1;
+          break;
+        }
+      }
     }
   } else {
     if (halt_at) {

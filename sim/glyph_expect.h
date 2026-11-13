@@ -447,10 +447,56 @@ static const PicWord* const PIC_DOCK_AT[] = { PIC_DOCK_1, PIC_DOCK_2, PIC_DOCK_3
 static const int PIC_DOCK_AT_N[] = { PIC_DOCK_1_N, PIC_DOCK_2_N, PIC_DOCK_3_N, PIC_DOCK_4_N, PIC_DOCK_5_N, PIC_DOCK_6_N, PIC_DOCK_7_N, PIC_DOCK_8_N, PIC_DOCK_9_N, PIC_DOCK_10_N, PIC_DOCK_11_N, PIC_DOCK_12_N };
 static const int PIC_COUNTS = 12;
 
+// Blink draws Oberon.Turns here, and leaves it up on both edges.
+static const int TURN_NANO_LO = 800;
+static const int TURN_NANO_HI = 864;
+static const int TURN_DOCK_LO = 2560;
+static const int TURN_DOCK_HI = 2688;
+
+inline int turn_word(int word, int dock) {
+  if (dock) return word >= TURN_DOCK_LO && word < TURN_DOCK_HI;
+  return word >= TURN_NANO_LO && word < TURN_NANO_HI;
+}
+
 inline int picture_ok(const std::map<int, uint32_t>& bmp, int led_on,
                        int count, int dock) {
+  uint64_t sig = 14695981039346656037ull;
+  int band = 0;
+  for (const auto& kv : bmp) {
+    if (!turn_word(kv.first, dock) || kv.second == 0u) continue;
+    band = 1;
+    sig = (sig ^ kv.second) * 1099511628211ull;
+    sig ^= (uint64_t)kv.first * 0x9E3779B97F4A7C15ull;
+  }
+  if (!band) {
+    fprintf(stderr, "FAIL turn count is blank\n");
+    return 0;
+  }
+  static int have = 0;
+  static int prev_led = -1;
+  static uint64_t prev = 0;
+  // The bench checks the last frame again after the run. The same
+  // picture at the same light is that recheck. A new edge has the
+  // other light, and the count has to have moved.
+  if (have && sig == prev) {
+    if (led_on != prev_led) {
+      fprintf(stderr, "FAIL turn count did not change\n");
+      return 0;
+    }
+    return 1;
+  }
+  have = 1;
+  prev_led = led_on;
+  prev = sig;
+  printf("TURN");
+  for (const auto& kv : bmp) {
+    if (turn_word(kv.first, dock) && kv.second != 0u)
+      printf(" %d:%08x", kv.first, kv.second);
+  }
+  printf("\n");
   if (!led_on) {
     for (const auto& kv : bmp) {
+      if (turn_word(kv.first, dock)) continue;
       if (kv.second != 0u) {
         fprintf(stderr, "FAIL bitmap word %d is %08x\n", kv.first, kv.second);
         return 0;
@@ -475,6 +521,7 @@ inline int picture_ok(const std::map<int, uint32_t>& bmp, int led_on,
     }
   }
   for (const auto& kv : bmp) {
+    if (turn_word(kv.first, dock)) continue;
     int known = 0;
     for (int i = 0; i < n; i++) if (rows[i].word == kv.first) known = 1;
     if (!known && kv.second != 0u) {

@@ -22,7 +22,9 @@ module uart_disk_top (
   output wire armed,
   // Idle-high. The bench bit-bangs a press byte here after the disk.
   // Wired with the disk sender: only one of them drives a zero.
-  input  wire host_rx
+  input  wire host_rx,
+  // High: a load of -40 is ones and the arm word stays unstored.
+  input  wire kbd_ones
 );
   wire cpu_clk;
   wire pressed;
@@ -83,7 +85,8 @@ module uart_disk_top (
     .io_diskTake(disk_take),
     .io_cpuClk(cpu_clk),
     .io_armed(armed),
-    .io_btnPressed(pressed)
+    .io_btnPressed(pressed),
+    .io_kbdOnes(kbd_ones)
   );
 
   // Same decoder the Dock uses, 210 cpu clocks a bit. The disk sender

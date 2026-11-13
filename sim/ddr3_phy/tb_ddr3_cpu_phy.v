@@ -160,6 +160,7 @@ module tb_ddr3_cpu_phy;
         .io_cpuClk(),
         .io_armed(),
         .io_btnPressed(1'b0),
+        .io_kbdOnes(1'b0),
         .io_bmpRdAddr(),
         .io_bmpRdReq(),
         .io_bmpRdData(32'd0),

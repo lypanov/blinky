@@ -1,5 +1,5 @@
 MODULE Blink;
-  IMPORT Files, Fonts, Texts, Display, MMT := AMemoryMappedToggle, Kernel, Modules, SYSTEM;
+  IMPORT Files, Fonts, Texts, Display, MMT := AMemoryMappedToggle, Input, Kernel, Modules, Oberon, SYSTEM;
   (* The 4K square is five bitmap pixels at (75, 55). The letter A is
      at (80, 55), in the same words. The Dock build replaces these two
      lines with the square at 150, 110, 10, 10 and the letter at
@@ -8,6 +8,7 @@ MODULE Blink;
     mkX = 80; mkY = 55;
     tx = 64; ty = 40;
     lnX = 4; lnY = 8;
+    tnX = 4; tnY = 100; tnW = 40; tnH = 8;
     slackRecs = 33; (*the full heap's free records; the short limit has one fewer*)
   (*
     This body fills a list, checks every record, then calls ArmHook.
@@ -17,7 +18,7 @@ MODULE Blink;
     MemLim, AllocPtr, the boot root, and the stack origin, 58 DIV 29
     is 2 and the remainder in H is 0, the two products match, the sum
     of this placed code matches the word stored at address 28, and
-    kept is 1247. Modules loads Oberon. Oberon.Call starts this
+    kept is 1191. Modules loads Oberon. Oberon.Call starts this
     module by the command Blink.Run. The LED pin stays dark otherwise.
 
     The loop draws the square, the letter, and the count, then stores
@@ -74,13 +75,13 @@ MODULE Blink;
 
     MemLim is 28000H. The heap is the 65536 bytes from the stack origin
     18000H up to that limit. Files.Old of Oberon, Fonts, the font,
-    Display, AMemoryMappedToggle, this module, Texts, and Blink.Rate,
-    plus the trailer file and the writer file, are ten opens. Each
-    takes a 1280-byte buffer and a 512-byte descriptor, 17920 bytes.
-    Reading a later page of a file reuses its one buffer. Fonts
-    allocates two blocks of 3072 bytes. The text, the two buffers and
-    the three pieces are 288 bytes, and 1280 bytes stay free so the
-    count can be written until Collect. 1247 records of 32 bytes fill
+    Display, AMemoryMappedToggle, this module, Texts, Input, and
+    Blink.Rate, plus the trailer file and the writer file, are eleven
+    opens. Each takes a 1280-byte buffer and a 512-byte descriptor,
+    19712 bytes. Reading a later page of a file reuses its one buffer.
+    Fonts allocates two blocks of 3072 bytes. The text, the two buffers
+    and the three pieces are 288 bytes, and 1280 bytes stay free so the
+    count can be written until Collect. 1191 records of 32 bytes fill
     the rest. The heap has 33 records free after that list on the full
     limit, and 32 when MemLim is one record lower. Those 33 are held
     while the list is built, then released. head, node and spare are
@@ -89,6 +90,27 @@ MODULE Blink;
     The arm word depends on that count. A limit one record lower finds
     no block for the last record, stores the light off, and stops
     before the arm word is stored.
+
+    Input is the book's module. SetMouseLimits, Mouse, and Available
+    run before the list is built. -40 reads 0 and -36 reads 0: no key
+    is ready, and the mouse sits at the origin with the buttons up.
+    Available is 0, the key set is empty, and both coordinates are 0.
+    The arm word is stored only after that answer. An image where -40
+    reads ones makes Available report a key and Mouse report the three
+    buttons at the far corner. This loop then stores the light off and
+    halts. The arm word is not stored, so the LED stays dark.
+
+    Run returns after Install. Oberon.Loop is the book's loop: each
+    turn polls the mouse and the keyboard, and with neither pending it
+    calls the next task whose time has come. The blink task's period
+    is the file's delay. The loop sets the next deadline before the
+    handler runs, so a held button skips the toggle and does not queue
+    a burst. The period is halved on the off-edge after the second
+    on, which is the gap after the third on. Oberon.Turns counts the
+    loop's turns. The number is drawn in an 8-character field, and it
+    stays up while the square goes dark. A second task that never
+    returns, once the light has come on twice, stops the loop. The
+    LED stays on.
 
     Every four on-edges, Collect marks from Modules.root and then scans,
     the way Oberon.GC does. A module whose pointer list is at 0 is skipped:
@@ -99,6 +121,10 @@ MODULE Blink;
     Rec = RECORD n: INTEGER; next: Node END;
 
   VAR last, now, wait, keys, n, due, half, thousand: INTEGER;
+    hang: INTEGER;
+    task, stuck: Oberon.Task;
+    mx, my: INTEGER;
+    mkeys: SET;
     node, head, spare: Node;
     kept*: INTEGER;
     rate: Files.File;
@@ -165,8 +191,29 @@ MODULE Blink;
        clears it. *)
     IF on >= 0 THEN
       Display.CopyPattern(Display.white, SYSTEM.ADR(buf), px, py, Display.invert)
+    ELSE
+      Display.CopyPattern(Display.white, SYSTEM.ADR(buf), px, py, Display.paint)
     END
   END PaintChar;
+
+  (* Eight digits every edge, leading zeros included. GetPat and
+     PaintChar take the same path for every digit of this font, and
+     the field is erased first, so the on and off edges spend the
+     same time here. The digits stay while the square is inverted off.
+     Texts is not used: WriteInt of this field did not fit in 8 ms. *)
+  PROCEDURE DrawTurns;
+    VAR v, d, dig, dx, x, y, w, h, pat, pen: INTEGER;
+  BEGIN
+    Display.ReplConst(Display.black, tnX, tnY, tnW, tnH, Display.replace);
+    v := Oberon.Turns; d := 10000000; pen := tnX;
+    WHILE d > 0 DO
+      dig := v DIV d; v := v MOD d;
+      Fonts.GetPat(Fonts.Default, CHR(dig + ORD(30X)), dx, x, y, w, h, pat);
+      IF (w < 1) OR (w > 8) OR (h < 1) OR (h > 8) THEN Dark END;
+      PaintChar(-1, pen + x, tnY + y, w, h, pat);
+      pen := pen + dx; d := d DIV 10
+    END
+  END DrawTurns;
 
   PROCEDURE Show(on: INTEGER);
     VAR Rdr: Texts.Reader;
@@ -214,6 +261,29 @@ MODULE Blink;
     END;
     IF i # -1 THEN Dark END
   END Check;
+
+  PROCEDURE Tick;
+  BEGIN
+    SYSTEM.GET(-60, keys);
+    IF ~ODD(keys) THEN
+      DrawTurns;
+      IF MMT.light = 0 THEN INC(n); Show(1) ELSE Show(0) END;
+      SYSTEM.LDREG(5, 0);
+      SYSTEM.LDREG(9, 0);
+      MMT.Toggle;
+      IF MMT.light = 1 THEN
+        DEC(due);
+        IF due = 0 THEN Collect; Check; due := 4 END
+      ELSIF n = 2 THEN
+        task.period := task.period DIV 2
+      END
+    END
+  END Tick;
+
+  PROCEDURE Stick;
+  BEGIN
+    IF n >= 2 THEN REPEAT UNTIL FALSE END
+  END Stick;
 
   PROCEDURE ArmHook(k: INTEGER);
   BEGIN
@@ -324,6 +394,9 @@ MODULE Blink;
   IF prod # 4.0 THEN Dark END;
   quot := 15.0 / 3.0;
   IF quot # 5.0 THEN Dark END;
+  Input.SetMouseLimits(1024, 768);
+  Input.Mouse(mkeys, mx, my);
+  IF (Input.Available() # 0) OR (mkeys # {}) OR (mx # 0) OR (my # 0) THEN Dark END;
   wait := wait * half;
   NEW(line);
   IF line = NIL THEN Dark END;
@@ -343,7 +416,7 @@ MODULE Blink;
     IF node = NIL THEN Dark END;
     node.next := spare; spare := node; INC(half)
   END;
-  WHILE kept < 1247 DO
+  WHILE kept < 1191 DO
     NEW(node);
     IF node = NIL THEN Dark END;
     node.n := kept; node.next := head; head := node; INC(kept)
@@ -353,22 +426,15 @@ MODULE Blink;
   Check;
   ArmHook(7E37H);
   last := Kernel.Time();
-  WHILE TRUE DO
-    now := Kernel.Time();
-    SYSTEM.GET(-60, keys);
-    IF ODD(keys) THEN
-      IF now - last >= wait THEN last := last + wait END
-    ELSIF now - last >= wait THEN
-      IF MMT.light = 0 THEN INC(n); Show(1) ELSE Show(0) END;
-      SYSTEM.LDREG(5, 0);
-      MMT.Toggle;
-      last := last + wait;
-      IF MMT.light = 1 THEN
-        IF n = 3 THEN wait := wait DIV 2 END;
-        DEC(due);
-        IF due = 0 THEN Collect; Check; due := 4 END
-      END
-    END
+  now := last;
+  hang := 0;
+  task := Oberon.NewTask(Tick, wait);
+  IF task = NIL THEN Dark END;
+  Oberon.Install(task);
+  IF hang # 0 THEN
+    stuck := Oberon.NewTask(Stick, 1);
+    IF stuck = NIL THEN Dark END;
+    Oberon.Install(stuck)
   END
   END Run;
 

@@ -5,7 +5,7 @@
 
 module spi_disk_model #(
   parameter [23:0] BASE = 24'h200000,
-  // PAGE_LIMIT is 80 sectors plus the 20-byte header, 81940 bytes.
+  // PAGE_LIMIT is 81 sectors plus the 20-byte header, 82964 bytes.
   // Texts.rsc took the image past 64KB.
   parameter integer MAXB = 131072,
   parameter integer LOAD = 1,

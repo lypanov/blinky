@@ -437,8 +437,8 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
   PROCEDURE Init*;
   BEGIN Install(SYSTEM.ADR(Trap), 20H);  (*install temporary trap*)
     SYSTEM.GET(12, MemLim); SYSTEM.GET(24, heapOrg);
-    (* The book sets 8000H. Modules.Init reserves the same 6F00H. *)
-    stackOrg := heapOrg; stackSize := 6F00H; heapLim := MemLim;
+    (* The book sets 8000H. Modules.Init reserves the same 6000H. *)
+    stackOrg := heapOrg; stackSize := 6000H; heapLim := MemLim;
     list1 := 0; list2 := 0; list3 := 0; list0 := heapOrg;
     SYSTEM.PUT(list0, heapLim - heapOrg); SYSTEM.PUT(list0+4, -1); SYSTEM.PUT(list0+8, 0);
     allocated := 0; clock := 0; InitSecMap

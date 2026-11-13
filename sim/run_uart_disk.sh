@@ -104,12 +104,17 @@ if (( N % 2 )); then
   exit 1
 fi
 PERIOD=$((N * 48375))
+# Same poll window as the NOR bench: under 2 ms, so a 2 ms rate change misses it.
 echo "[ok] elaborated N=$N ms period=$PERIOD"
 
-"$BIN" --period "$PERIOD" --slack 2048 --edges 3 --min-pc 0x900 "${GOOD[@]}"
-echo "[ok] UART disk N=$N period $PERIOD, button released"
+"$BIN" --period "$PERIOD" --slack 40960 --edges 3 --min-pc 0x900 "${GOOD[@]}" \
+  | tee "$ROOT/sim/out/uart-turns.log"
+python3 "$ROOT/tools/turn_count.py" "$ROOT/sim/out/uart-turns.log" dock
+echo "[ok] UART disk N=$N period $PERIOD, button released, the turn count rises"
+"$BIN" --kbd-ones --expect-halt --expect-no-arm --min-pc 0x900 "${GOOD[@]}"
+echo "[ok] UART disk -40 reads ones, the arm word stays unstored, the LED stays dark"
 # 0x01 is the Dock press byte. The LED stays on, then 0x00 resumes it.
-"$BIN" --press --period "$PERIOD" --slack 2048 --edges 1 --min-pc 0x900 \
+"$BIN" --press --period "$PERIOD" --slack 40960 --edges 1 --min-pc 0x900 \
   --hold-cycles $((PERIOD * 3)) --bit-clocks 210 "${GOOD[@]}"
 
 python3 - "$DISK" "$ROOT/sim/out/disk_bad_build.bin" "$ROOT/sim/out/disk_bad_byte.bin" << 'PY'
@@ -149,7 +154,7 @@ open(dst, "wb").write(set_rate(open(src, "rb").read(), int(delay)))
 print(f"[ok] switch disk {delay} ms")
 PY
 "$BIN" --period "$SWITCH_PERIOD" --period2 $((SWITCH_PERIOD / 2)) \
-  --switch-after 4 --slack 2048 --edges 7 --min-pc 0x900 --cycles 240000000 \
+  --switch-after 4 --slack 40960 --edges 7 --min-pc 0x900 --cycles 240000000 \
   +disk="$ROOT/sim/out/disk-rate-switch.bin" "${GOOD[@]}"
 echo "[ok] UART disk halves 100 ms after the third rise"
 
@@ -177,7 +182,7 @@ if checksum(src[20:]) != checksum(alt[20:]):
 open(dst_path, "wb").write(alt)
 print(f"[ok] second rate {delay} ms differs in {len(diffs)} rate bytes, checksum held")
 PY
-"$BIN" --period "$ALT_PERIOD" --slack 2048 --edges 3 --min-pc 0x900 \
+"$BIN" --period "$ALT_PERIOD" --slack 40960 --edges 3 --min-pc 0x900 \
   +disk="$ROOT/sim/out/disk-rate-alt.bin" "${GOOD[@]}"
 echo "[ok] UART disk N=$ALT period $ALT_PERIOD, same image"
 
@@ -295,6 +300,36 @@ cp "$DISK" "$ROOT/sim/out/disk-bad-dir-uart.bin"
   +disk="$ROOT/sim/out/disk-bad-dir-uart.bin"
 python3 "$ROOT/tools/trap_line.py" --blank "$ROOT/sim/out/bad-dir-dock.dump"
 echo "[ok] UART disk damaged directory is 87H, the arm word stays unstored, the LED stays dark"
+
+python3 "$ROOT/sim/link_inner.py" \
+  --uart-disk \
+  --stuck \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/stuck-uart.words"
+cp "$DISK" "$ROOT/sim/out/disk-stuck-uart.bin"
+# hang := 1 changes Blink's code sum, so the arm word changes. The
+# compare constant has to be this disk's word or the pin stays dark.
+if ! SIM_IMAGE=modules mill chisel-blinky.runMain gcd.CPUSimTop; then
+  echo "error: CPUSimTop elaboration failed" >&2
+  exit 1
+fi
+verilator "${VERILATOR_FLAGS[@]}" \
+  "$ROOT/generated/CPUSimTopHyper.v" \
+  "$ROOT/generated/InstrRom.v" \
+  "$ROOT/generated/HwMul.v" \
+  "$ROOT/generated/FpSnap.v" \
+  "$ROOT/sim/HyperRamUserModel.v" \
+  "$ROOT/sim/CpuClock2.v" \
+  "$ROOT/gowin/KeepBit.v" \
+  "$ROOT/sim/LUT2.v" \
+  "$ROOT/gowin/uart_word_rx.v" \
+  "$ROOT/gowin/button_gate.v" \
+  "$ROOT/sim/uart_disk_top.v" \
+  "$ROOT/sim/tb_uart_disk.cpp"
+"$BIN" --period "$PERIOD" --slack 40960 --stuck-edges 3 --min-pc 0x900 \
+  +disk="$ROOT/sim/out/disk-stuck-uart.bin" "${GOOD[@]}"
+echo "[ok] UART disk stuck task halts after the second on-edge"
+cp "$ROOT/sim/out/disk_uart.bin" "$DISK"
 
 python3 "$ROOT/sim/link_inner.py" \
   --uart-disk \
