@@ -1218,7 +1218,8 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
          uart_disk: bool = False, no_collect: bool = False,
          index_trap: bool = False, short_heap: bool = False,
          bad_font: bool = False, bad_command: bool = False,
-         line_trap: bool = False) -> dict:
+         line_trap: bool = False, bad_dir: bool = False,
+         arm_sum: int | None = None) -> dict:
     if flash_boot and uart_disk:
         raise SystemExit("flash boot and the UART disk are different images")
     if not flash_boot and not uart_disk:
@@ -1236,6 +1237,8 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         bad_font=bad_font,
         bad_command=bad_command,
         line_trap=line_trap,
+        bad_dir=bad_dir,
+        arm_sum=arm_sum,
     )
 
 
@@ -1290,13 +1293,18 @@ def main() -> int:
                         help="Oberon calls Blink.Ran. ThisCommand returns 5 and the LED stays dark")
     parser.add_argument("--line-trap", action="store_true",
                         help="Blink traps after the font is loaded and prints the line")
+    parser.add_argument("--bad-dir", action="store_true",
+                        help="The directory mark is zero. FileDir.Init asserts and the LED stays dark")
+    parser.add_argument("--arm-sum", type=lambda s: int(s, 0), default=None,
+                        help="Directory filler word that makes the payload checksum this value")
     args = parser.parse_args()
     n = args.mov_iter if args.mov_iter is not None else args.max_iter
     info = link(n, break_arm=args.break_arm, flash_boot=args.flash_boot,
                 uart_disk=args.uart_disk, no_collect=args.no_collect,
                 index_trap=args.index_trap, short_heap=args.short_heap,
                 bad_font=args.bad_font, bad_command=args.bad_command,
-                line_trap=args.line_trap)
+                line_trap=args.line_trap, bad_dir=args.bad_dir,
+                arm_sum=args.arm_sum)
     write_words(info["words"], args.out)
     write_map(info, MAP_PATH)
     counts = " ".join(f"{name} {info['counts'][name]}" for name in ORDER)
@@ -1325,6 +1333,7 @@ def main() -> int:
         + (" NO-COLLECT" if args.no_collect else "")
         + (" INDEX-TRAP" if args.index_trap else "")
         + (" LINE-TRAP" if args.line_trap else "")
+        + (" BAD-DIR" if args.bad_dir else "")
         + (" BAD-FONT" if args.bad_font else "")
         + (" BAD-COMMAND" if args.bad_command else "")
     )

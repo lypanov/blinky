@@ -755,19 +755,22 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
          uart_disk: bool = False, no_collect: bool = False,
          index_trap: bool = False, short_heap: bool = False,
          bad_font: bool = False, bad_command: bool = False,
-         line_trap: bool = False) -> dict:
+         line_trap: bool = False, bad_dir: bool = False,
+         arm_sum: int | None = None) -> dict:
     if flash_boot == uart_disk:
         raise SystemExit("pass one of flash boot or the UART disk")
-    if index_trap and (no_collect or break_arm or bad_font or bad_command or line_trap):
+    if index_trap and (no_collect or break_arm or bad_font or bad_command or line_trap or bad_dir):
         raise SystemExit("the index trap is its own disk")
-    if line_trap and (no_collect or break_arm or bad_font or bad_command):
+    if line_trap and (no_collect or break_arm or bad_font or bad_command or bad_dir):
         raise SystemExit("the line trap is its own disk")
-    if short_heap and (no_collect or break_arm or index_trap or bad_font or bad_command or line_trap):
+    if short_heap and (no_collect or break_arm or index_trap or bad_font or bad_command or line_trap or bad_dir):
         raise SystemExit("the short heap is its own ROM, on the ordinary disk")
-    if bad_font and (no_collect or break_arm or bad_command):
+    if bad_font and (no_collect or break_arm or bad_command or bad_dir):
         raise SystemExit("the damaged font is its own disk")
-    if bad_command and (no_collect or break_arm):
+    if bad_command and (no_collect or break_arm or bad_dir):
         raise SystemExit("the misspelt command is its own disk")
+    if bad_dir and (no_collect or break_arm or arm_sum is not None):
+        raise SystemExit("the damaged directory is its own disk")
     if max_iter % 2 or not 1 <= max_iter <= 0x7FFF:
         raise SystemExit(f"rate {max_iter} must be a positive even millisecond count")
     env = _norebo()
@@ -961,6 +964,32 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         raise SystemExit(f"rate bytes at {rate_at} are {got}")
     if int.from_bytes(disk[HEADER_BYTES : HEADER_BYTES + 4], "little") != DIR_MARK:
         raise SystemExit("payload does not start with the directory")
+    if bad_dir:
+        # FileDir.Init asserts the root mark. The bootstrap checksum is
+        # recomputed, so the trap is the assertion, not the header check.
+        entries_n = int.from_bytes(payload[4:8], "little")
+        if entries_n < 1:
+            raise SystemExit("the directory has no entries to keep")
+        payload[0:4] = b"\0\0\0\0"
+        total = _checksum(bytes(payload))
+        disk = struct.pack("<5I", MAGIC, VERSION, BUILD, len(payload), total) + bytes(payload)
+        if int.from_bytes(disk[HEADER_BYTES : HEADER_BYTES + 4], "little") != 0:
+            raise SystemExit("the damaged directory still has a mark")
+        print(f"[ok] directory mark cleared, {entries_n} entries kept, checksum rebuilt")
+    if arm_sum is not None:
+        # The loaded bitstream compares the stored word with the checksum
+        # it was elaborated from. Four bytes of the directory filler, which
+        # FileDir does not read, make this payload sum to that checksum.
+        # The entries and the rate file stay as the book laid them out.
+        if int.from_bytes(payload[12:16], "little") != 0:
+            raise SystemExit("directory filler is not empty")
+        delta = (arm_sum - total) & 0xFFFFFFFF
+        payload[12:16] = delta.to_bytes(4, "little")
+        total = _checksum(bytes(payload))
+        if total != (arm_sum & 0xFFFFFFFF):
+            raise SystemExit(f"filler left the checksum at {total:08x}")
+        disk = struct.pack("<5I", MAGIC, VERSION, BUILD, len(payload), total) + bytes(payload)
+        print(f"[ok] directory filler {delta:08x} checksum {total:08x}")
     branch = int.from_bytes(image[:4], "little")
     body = 4 + (branch & 0xFFFFFF) * 4
     string_at = image.find(b"Oberon\x00")
