@@ -418,8 +418,20 @@ A counter that must be reset by the main loop. If the loop stops for longer than
 
 Proof: the stuck task from item 46 shows the hung code within the published time, with the LED stopped. The good image never shows it over a ten-minute run.
 
+## Item 48 — Dock: reboot to load a new disk
+
+Today a new disk on the Dock means an SRAM load of the same bitstream, then the upload. Add a reboot signal on the UART, in hardware: the receiver watches for a fixed byte sequence and, when it sees it, forces the CPU to the bootstrap's start address, the way a trap forces a jump. The DDR3 controller is not touched, so training is not repeated. The bootstrap then takes a new disk over the UART exactly as it does after a load. The bitstream does not change between software changes. Dock only: the 4K has no UART, and no step may need a button.
+
+The jump is in hardware because Project Oberon has no interrupts: a CPU stuck in a loop or halted after a trap never runs a software listener. So the same signal recovers a good run, a trap, and a hang.
+
+Pick a sequence of at least eight fixed bytes and publish it here before building. The bootstrap tells the receiver when an upload starts and ends; the sequence is ignored only during an upload, so disk bytes can never trigger it, and it works before and after the arm word. The receiver flops stay in the corner that trains (`R[2:22]C[2:18]`).
+
+Proof: one SRAM load, then three disks sent one after another with two different published rates (for example 0.500 Hz, 0.250 Hz, 0.500 Hz), each preceded by the reboot sequence. The LED and the square follow each disk's rate, and the status blocks show item 34's boot stage codes after each reboot. Then a disk that traps (item 35's broken Blink) and a disk that hangs in a loop before the arm word: each leaves the LED dark, and the sequence plus the next good disk bring the blink back. No SRAM load during the whole run. Verilator runs the same sequence, including the sequence sent in the middle of an upload, which must not reboot.
+
 ## Later
 
 - The Dock's full 1024×768 screen from DDR3 (`docs/led-ladder.md`, steps 13–14).
 - The book's hardware floating-point unit on the Dock.
 - `Viewers` and the tiled desktop (`docs/led-ladder.md`, part 5).
+- A fork of Peter De Wachter's oberon-risc-emu (the GUI sibling of Norebo) with this machine's I/O map: the status register, the two bitmap sizes, the floating-point trap, and our disk. Software and integration tests then run on the PC, and the boards are checkpoints.
+- The Dock's microSD slot as a disk that survives power-off.
