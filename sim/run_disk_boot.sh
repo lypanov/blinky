@@ -198,6 +198,19 @@ cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-bad-command.bin"
 echo "[ok] NOR disk misspelt command is code 5, the arm word stays unstored, the LED stays dark"
 cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
+python3 "$ROOT/sim/link_inner.py" \
+  --flash-boot \
+  --bad-dir \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/bad-dir.words"
+cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-bad-dir.bin"
+"$BIN" --expect-halt --expect-no-arm --expect-status 0x87 \
+  --status-seq 1,2,5,6,7,8,9,10,0x87 \
+  --dump-bmp "$ROOT/sim/out/bad-dir-nano.dump"
+python3 "$ROOT/tools/trap_line.py" --blank "$ROOT/sim/out/bad-dir-nano.dump"
+echo "[ok] NOR disk damaged directory is 87H, the arm word stays unstored, the LED stays dark"
+cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
+
 cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-full.bin"
 python3 "$ROOT/sim/link_inner.py" \
   --flash-boot \

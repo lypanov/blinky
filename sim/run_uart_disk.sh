@@ -285,6 +285,19 @@ echo "[ok] UART disk misspelt command is code 5, the arm word stays unstored, th
 
 python3 "$ROOT/sim/link_inner.py" \
   --uart-disk \
+  --bad-dir \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/bad-dir-uart.words"
+cp "$DISK" "$ROOT/sim/out/disk-bad-dir-uart.bin"
+"$BIN" --expect-halt --expect-no-arm --expect-status 0x87 --min-pc 0x900 \
+  --status-seq 1,3,4,5,6,7,8,9,10,0x87 \
+  --dump-bmp "$ROOT/sim/out/bad-dir-dock.dump" \
+  +disk="$ROOT/sim/out/disk-bad-dir-uart.bin"
+python3 "$ROOT/tools/trap_line.py" --blank "$ROOT/sim/out/bad-dir-dock.dump"
+echo "[ok] UART disk damaged directory is 87H, the arm word stays unstored, the LED stays dark"
+
+python3 "$ROOT/sim/link_inner.py" \
+  --uart-disk \
   --short-heap \
   --max-iter "$N" \
   --out "$WORDS"
