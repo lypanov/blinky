@@ -4,6 +4,12 @@
 
 Always use non-fast for subagents. Do not pass a model slug that ends in `-fast`.
 
+## Loading boards
+
+Dock SRAM load and UART disk: `docs/load-boards.md`. Run `tools/load_dock.py`.
+Never flash. Never program the Nano while loading the Dock. The Nano 4K path
+is not in the script yet.
+
 ## Merging
 
 Rebase. That is the maintainer's preference for landing pull requests. `main` stays a straight line: each branch commit is replayed, the patch stays the same, the SHA changes. PRs #41–#43 landed this way.
