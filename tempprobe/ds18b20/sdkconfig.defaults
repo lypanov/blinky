@@ -1,0 +1,5 @@
+CONFIG_IDF_TARGET="esp32"
+
+# Radios stay off. This firmware only reads a DS18B20 on GPIO 4.
+# CONFIG_ESP_WIFI_ENABLED is not set
+# CONFIG_BT_ENABLED is not set
