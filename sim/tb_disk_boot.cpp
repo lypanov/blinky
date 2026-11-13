@@ -47,6 +47,7 @@ int main(int argc, char** argv) {
   int press = 0;
   uint64_t hold_cycles = 0;
   int expect_status = -1;
+  const char* dump_bmp = nullptr;
   std::vector<int> expect_seq;
   for (int i = 1; i < argc; i++) {
     auto need = [&](const char* name) -> const char* {
@@ -70,6 +71,7 @@ int main(int argc, char** argv) {
     else if (!strcmp(argv[i], "--press")) press = 1;
     else if (!strcmp(argv[i], "--hold-cycles")) hold_cycles = strtoull(need("--hold-cycles"), nullptr, 10);
     else if (!strcmp(argv[i], "--expect-status")) expect_status = (int)strtol(need("--expect-status"), nullptr, 0);
+    else if (!strcmp(argv[i], "--dump-bmp")) dump_bmp = need("--dump-bmp");
     else if (!strcmp(argv[i], "--status-seq")) {
       const char* spec = need("--status-seq");
       expect_seq.clear();
@@ -178,8 +180,6 @@ int main(int argc, char** argv) {
     prev = led;
     if (top->halted && halt_at == 0) {
       halt_at = cycle;
-      printf("HALT cycle %llu led %d pc %08x\n",
-             (unsigned long long)cycle, led, top->pc);
       break;
     }
   }
@@ -398,6 +398,19 @@ int main(int argc, char** argv) {
           failed = 1;
         }
       }
+    }
+  }
+  if (dump_bmp) {
+    FILE* out = fopen(dump_bmp, "w");
+    if (!out) {
+      fprintf(stderr, "FAIL dump %s\n", dump_bmp);
+      failed = 1;
+    } else {
+      for (const auto& kv : bmp) {
+        if (kv.second)
+          fprintf(out, "%d %08x\n", kv.first, kv.second);
+      }
+      fclose(out);
     }
   }
   top->final();

@@ -215,8 +215,51 @@ print(f"[ok] index-trap disks differ, boot cores match ({len(cf)} bytes)")
 PY
 "$BIN" --expect-halt --expect-no-arm --expect-status 0x81 --min-pc 0x900 \
   --status-seq 1,3,4,5,6,7,8,9,10,11,0x81 \
+  --dump-bmp "$ROOT/sim/out/index-trap-dock.dump" \
   +disk="$ROOT/sim/out/disk-index-trap-uart.bin"
+python3 "$ROOT/tools/trap_line.py" --blank "$ROOT/sim/out/index-trap-dock.dump"
 echo "[ok] UART disk index trap is 81H, the arm word stays unstored, the LED stays dark"
+
+python3 "$ROOT/sim/link_inner.py" \
+  --uart-disk \
+  --line-trap \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/line-trap-uart.words"
+cp "$DISK" "$ROOT/sim/out/disk-line-trap-uart.bin"
+cp "$ROOT/sim/out/line-trap-expect.txt" "$ROOT/sim/out/line-trap-dock.txt"
+python3 "$ROOT/sim/link_inner.py" \
+  --flash-boot \
+  --line-trap \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/line-trap-flash.words"
+python3 - "$DISK" "$ROOT/sim/out/disk-line-trap-uart.bin" << 'PY'
+import sys
+
+def core(path):
+    data = open(path, "rb").read()
+    image = bytearray(data[20 + 1024:])
+    alloc = int.from_bytes(image[16:20], "little")
+    if not 0 < alloc <= len(image):
+        raise SystemExit(f"{path} alloc {alloc:#x}")
+    image[28:32] = b"\0\0\0\0"
+    return data, bytes(image[:alloc])
+
+flash, uart = sys.argv[1:]
+df, cf = core(flash)
+du, cu = core(uart)
+if cf != cu:
+    raise SystemExit("line-trap boot cores differ")
+if df == du:
+    raise SystemExit("line-trap disks are the same file")
+print(f"[ok] line-trap disks differ, boot cores match ({len(cf)} bytes)")
+PY
+"$BIN" --expect-halt --expect-no-arm --expect-status 0x10B --min-pc 0x900 \
+  --status-seq 1,3,4,5,6,7,8,9,10,11,0x10B \
+  --dump-bmp "$ROOT/sim/out/line-trap-dock.dump" \
+  +disk="$ROOT/sim/out/disk-line-trap-uart.bin"
+python3 "$ROOT/tools/trap_line.py" --check \
+  "$ROOT/sim/out/line-trap-dock.txt" "$ROOT/sim/out/line-trap-dock.dump"
+echo "[ok] UART disk trap line, the arm word stays unstored, the LED stays dark"
 
 python3 "$ROOT/sim/link_inner.py" \
   --uart-disk \

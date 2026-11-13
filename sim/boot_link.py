@@ -8,6 +8,7 @@ directory sector and the image. BootLoad copies that image to address 0.
 from __future__ import annotations
 
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -519,6 +520,31 @@ def _with_index_trap(text: str) -> str:
     )
 
 
+def _with_line_trap(text: str) -> str:
+    """Run indexes past an array after the font is loaded.
+
+    InstallGate has run, so the handler prints the line. The arm
+    prologue is left off this disk.
+    """
+    var = "  VAR last, now, wait, keys, n, due, half, thousand: INTEGER;\n"
+    hook = "  InstallGate;\n  SYSTEM.PUT(-84, 10BH);\n"
+    if text.count(var) != 1 or text.count(hook) != 1:
+        raise SystemExit("Blink.Mod has no single place for the line trap")
+    text = text.replace(
+        var,
+        var + "    sample: ARRAY 4 OF INTEGER;\n    idx: INTEGER;\n",
+        1,
+    )
+    return text.replace(
+        hook,
+        "  InstallGate;\n"
+        "  idx := 4;\n"
+        "  sample[idx] := 0;\n"
+        "  SYSTEM.PUT(-84, 10BH);\n",
+        1,
+    )
+
+
 def _check_index_trap(code: list[int], entry: int) -> None:
     """One BLR, condition CC, trap number 1, in the body that is the entry."""
     if entry % 4:
@@ -534,9 +560,38 @@ def _check_index_trap(code: list[int], entry: int) -> None:
         i for i, word in enumerate(code)
         if (word & 0xF0FF0000) in (0x40000000, 0x50000000) and (word & 0xFFFF) == 0x07C0
     ]
-    if arm:
-        raise SystemExit(f"index-trap Blink loads the arm address at {arm}")
+    if len(arm) != 1:
+        raise SystemExit(f"index-trap Blink has {len(arm)} loads of the picture address, wanted the one in Report")
     print(f"[ok] index trap word {at} entry {start} insn {code[at]:08X}")
+
+
+def _trap_hits(code: list[int]) -> list[int]:
+    return [i for i, word in enumerate(code) if (word & 0xFF0000FF) == 0xDA00001C]
+
+
+def _check_line_trap(code: list[int], run_off: int) -> int:
+    """One index trap, in Run, after the font is in use.
+
+    Report stores this bitstream's picture word at 7C0H. That is not the
+    arm word of this disk, and the blink loop does not run.
+    """
+    if run_off % 4:
+        raise SystemExit(f"line-trap Run {run_off:#x} is not a word")
+    hits = _trap_hits(code)
+    if len(hits) != 1:
+        raise SystemExit(f"line trap encodings {len(hits)}, wanted one")
+    at = hits[0]
+    start = run_off // 4
+    if not start <= at < start + 48:
+        raise SystemExit(f"line trap at word {at}, Run word {start}")
+    arm = [
+        i for i, word in enumerate(code)
+        if (word & 0xF0FF0000) in (0x40000000, 0x50000000) and (word & 0xFFFF) == 0x07C0
+    ]
+    if len(arm) != 1:
+        raise SystemExit(f"line-trap Blink has {len(arm)} loads of the picture address, wanted the one in Report")
+    print(f"[ok] line trap word {at} Run {start} insn {code[at]:08X}")
+    return at * 4
 
 
 def _check_trap_status(code: list[int]) -> None:
@@ -564,6 +619,8 @@ def _board_text(name: str, dock: bool) -> str:
             ),
             ("mkX = 80; mkY = 55;", "mkX = 143; mkY = 110;"),
             ("tx = 64; ty = 40;", "tx = 96; ty = 96;"),
+            ("lnX = 4; lnY = 8;", "lnX = 8; lnY = 32;"),
+            ("SYSTEM.PUT(7C0H, 222FE47DH);", "SYSTEM.PUT(7C0H, 28097085H);"),
         ],
         "Fonts": [('This("Tiny4x6.Fnt")', 'This("Oberon10.Scn.Fnt")')],
     }.get(name)
@@ -601,7 +658,8 @@ _UNITS = (
 
 
 def _compile_files(env: dict[str, str], index_trap: bool = False,
-                   dock: bool = False, bad_command: bool = False) -> dict[str, bytes]:
+                   dock: bool = False, bad_command: bool = False,
+                   line_trap: bool = False) -> dict[str, bytes]:
     # Isolated from sim/payload. Norebo loads every module it imports from
     # the working directory before the command. Oberon.rsc would run
     # Blink5.Go. Texts imports Fonts, and a Fonts.rsc left here is loaded
@@ -626,6 +684,22 @@ def _compile_files(env: dict[str, str], index_trap: bool = False,
     if index_trap:
         path = os.path.join(work, "Blink.Mod")
         patched = _with_index_trap(open(path, encoding="utf-8").read())
+        open(path, "w", encoding="utf-8").write(patched)
+        # The body traps before Run. Leave the font file unloaded.
+        path = os.path.join(work, "Fonts.Mod")
+        body = open(path, encoding="utf-8").read()
+        body, n = re.subn(
+            r'Default := This\("[^"]+"\)',
+            "Default := NIL",
+            body,
+            count=1,
+        )
+        if n != 1:
+            raise SystemExit("Fonts.Mod has no single Default font load")
+        open(path, "w", encoding="utf-8").write(body)
+    if line_trap:
+        path = os.path.join(work, "Blink.Mod")
+        patched = _with_line_trap(open(path, encoding="utf-8").read())
         open(path, "w", encoding="utf-8").write(patched)
     if bad_command:
         path = os.path.join(work, "Oberon.Mod")
@@ -680,12 +754,15 @@ def _hyper_bytes() -> int:
 def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
          uart_disk: bool = False, no_collect: bool = False,
          index_trap: bool = False, short_heap: bool = False,
-         bad_font: bool = False, bad_command: bool = False) -> dict:
+         bad_font: bool = False, bad_command: bool = False,
+         line_trap: bool = False) -> dict:
     if flash_boot == uart_disk:
         raise SystemExit("pass one of flash boot or the UART disk")
-    if index_trap and (no_collect or break_arm or bad_font or bad_command):
+    if index_trap and (no_collect or break_arm or bad_font or bad_command or line_trap):
         raise SystemExit("the index trap is its own disk")
-    if short_heap and (no_collect or break_arm or index_trap or bad_font or bad_command):
+    if line_trap and (no_collect or break_arm or bad_font or bad_command):
+        raise SystemExit("the line trap is its own disk")
+    if short_heap and (no_collect or break_arm or index_trap or bad_font or bad_command or line_trap):
         raise SystemExit("the short heap is its own ROM, on the ordinary disk")
     if bad_font and (no_collect or break_arm or bad_command):
         raise SystemExit("the damaged font is its own disk")
@@ -708,6 +785,7 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         raise SystemExit("address 28 is already used")
     files = _compile_files(
         env, index_trap=index_trap, dock=uart_disk, bad_command=bad_command,
+        line_trap=line_trap,
     )
     blink = parse_rsc(os.path.join(ROOT, "sim", "out", "bootfiles", "Blink.rsc"), output_format="quiet")
     blink["raw"] = files["Blink"]
@@ -727,6 +805,7 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     # Fonts is 6, Texts 7, Display 8, AMemoryMappedToggle 9.
     # Blink itself is module 10.
     blink_mt = 0x20 + 10 * 4
+    line_off = None
     if index_trap:
         _check_index_trap(blink["code"], blink["entry_point"])
     else:
@@ -749,11 +828,14 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         blink_src = open(os.path.join(ROOT, "tests", "Blink5.Mod"), "r", encoding="ascii").read()
         if f"WHILE kept < {KEPT} DO" not in blink_src or "ArmHook(7E37H)" not in blink_src:
             raise SystemExit("Blink.Mod does not publish the kept loop and the hook")
-        prologue = _arm_prologue(
-            with_disk=True, memlim=MEMLIM, alloc=alloc, root=root, stack=STACK,
-            blink_mt=blink_mt, kept_off=kept_off,
-        )
-        files["Blink"] = _append_arm(files["Blink"], prologue)
+        if line_trap:
+            line_off = _check_line_trap(blink["code"], run_off)
+        else:
+            prologue = _arm_prologue(
+                with_disk=True, memlim=MEMLIM, alloc=alloc, root=root, stack=STACK,
+                blink_mt=blink_mt, kept_off=kept_off,
+            )
+            files["Blink"] = _append_arm(files["Blink"], prologue)
     mem = Mem(bytes(image), LIMIT)
     root_now, alloc_now = _load(mem, root, alloc, "Oberon", files)
     if mem.get(root_now + NUM) != 5:
@@ -761,6 +843,34 @@ def make(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
     root_now, alloc_now = _load(mem, root_now, alloc_now, "Blink", files)
     if mem.get(root_now + NUM) != 10 or _name_at(mem, root_now) != "Blink":
         raise SystemExit(f"root is {_name_at(mem, root_now)} num {mem.get(root_now + NUM)}")
+    if line_off is not None:
+        abs_at = mem.get(root_now + CODE) + line_off
+        word = mem.get(abs_at) & 0xFFFFFFFF
+        pos = (word & 0xFFFFFF) >> 8
+        pc = abs_at + 4
+        if uart_disk:
+            origin, span, font = (8, 32), 16, "tests/Oberon10.Scn.Fnt"
+            board = "dock"
+        else:
+            origin, span, font = (4, 8), 8, "tests/Tiny4x6.Fnt"
+            board = "nano"
+        expect = os.path.join(ROOT, "sim", "out", "line-trap-expect.txt")
+        os.makedirs(os.path.dirname(expect), exist_ok=True)
+        with open(expect, "w", encoding="ascii") as out:
+            out.write(
+                f"board {board}\n"
+                f"origin {origin[0]} {origin[1]}\n"
+                f"span {span}\n"
+                f"pos {pos}\n"
+                f"trap 1\n"
+                f"pc {pc:08X}\n"
+                f"module Blink\n"
+                f"font {font}\n"
+            )
+        print(
+            f"[ok] line {board} pos {pos} pc {pc:08X} "
+            f"at ({origin[0]}, {origin[1]})"
+        )
     if alloc_now > LIMIT:
         raise SystemExit(f"allocation ends at {alloc_now:#x}, limit is {LIMIT:#x}")
     fonts = _find(mem, root_now, "Fonts")

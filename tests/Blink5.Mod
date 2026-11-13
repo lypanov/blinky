@@ -7,6 +7,7 @@ MODULE Blink;
   CONST sqX = 75; sqY = 55; sqW = 5; sqH = 5;
     mkX = 80; mkY = 55;
     tx = 64; ty = 40;
+    lnX = 4; lnY = 8;
     slackRecs = 33; (*the full heap's free records; the short limit has one fewer*)
   (*
     This body fills a list, checks every record, then calls ArmHook.
@@ -51,6 +52,14 @@ MODULE Blink;
     off and stops. The clock starts after that read. Opening the file
     takes longer than the delay, and a clock started earlier would
     queue a burst of toggles.
+
+    A trap after the font is loaded prints the book's one line. The
+    text is the one System.Trap writes: the position, the trap number,
+    the module, and the address. The line is drawn with this font.
+    Kernel keeps the status code until Run has installed that handler.
+    A trap before the font is loaded still stores 80H plus the number.
+    NEW and the floating-point traps chain back to Kernel. The arm
+    word is not stored, so the LED stays dark.
 
     The third time the light turns on, this loop halves the delay. The
     next edge is one half-delay later, and every edge after that stays
@@ -98,6 +107,7 @@ MODULE Blink;
     line: Texts.Text;
     W: Texts.Writer;
     junk: Texts.Buffer;
+    reporting: BOOLEAN;
 
   PROCEDURE Collect;
     VAR m: Modules.Module;
@@ -209,8 +219,93 @@ MODULE Blink;
   BEGIN
   END ArmHook;
 
-  PROCEDURE Run*;
+  PROCEDURE DrawChar(px, py, w, h, pat: INTEGER);
+    VAR row, nb, k, src, dst: INTEGER;
+      b: BYTE;
+      buf: ARRAY 32 OF BYTE;
   BEGIN
+    IF (w >= 1) & (w <= 16) & (h >= 1) & (h <= 16) THEN
+    nb := (w + 7) DIV 8;
+    SYSTEM.PUT(SYSTEM.ADR(buf), CHR(w));
+    SYSTEM.PUT(SYSTEM.ADR(buf) + 1, CHR(h));
+    dst := SYSTEM.ADR(buf) + 2;
+    row := 0;
+    WHILE row < h DO
+      src := pat + 2 + (h - 1 - row) * nb;
+      k := 0;
+      WHILE k < nb DO
+        SYSTEM.GET(src, b); SYSTEM.PUT(dst, b); INC(src); INC(dst); INC(k)
+      END;
+      INC(row)
+    END;
+    Display.CopyPattern(Display.white, SYSTEM.ADR(buf), px, py, Display.invert)
+    END
+  END DrawChar;
+
+  (* System.Trap's line, then a halt. The vector stays Kernel.Trap.
+     NEW and floating point never arrive here. A second trap, or a
+     missing font, stores 80H plus the number and stops. *)
+  PROCEDURE Report(n, pos, lnk: INTEGER);
+    VAR mod: Modules.Module;
+      Rdr: Texts.Reader;
+      ch: CHAR;
+      dx, x, y, w, h, pat, pen: INTEGER;
+      T: Texts.Text;
+      TW: Texts.Writer;
+  BEGIN
+    IF reporting OR (Fonts.Default = NIL) THEN
+      SYSTEM.PUT(-84, 80H + n); LED(n + 192); REPEAT UNTIL FALSE
+    END;
+    reporting := TRUE;
+    NEW(T);
+    IF T # NIL THEN
+      Texts.Open(T, "");
+      T.notify := Note;
+      Texts.OpenWriter(TW);
+      IF TW.buf # NIL THEN
+        Texts.WriteLn(TW);
+        Texts.WriteString(TW, "  pos ");
+        Texts.WriteInt(TW, pos, 4);
+        Texts.WriteString(TW, "  TRAP");
+        Texts.WriteInt(TW, n, 4);
+        mod := Modules.root;
+        WHILE (mod # NIL) & ((lnk < mod.code) OR (lnk >= mod.imp)) DO mod := mod.next END;
+        IF mod # NIL THEN
+          Texts.WriteString(TW, " in "); Texts.WriteString(TW, mod.name)
+        END;
+        Texts.WriteString(TW, " at");
+        Texts.WriteHex(TW, lnk);
+        Texts.WriteLn(TW);
+        Texts.Append(T, TW.buf);
+        (* Bitmap pixels stay dark until this bitstream's arm word.
+           The blink loop does not run, so the LED stays dark. *)
+        SYSTEM.PUT(7C0H, 222FE47DH);
+        Texts.OpenReader(Rdr, T, 0);
+        pen := lnX;
+        Texts.Read(Rdr, ch);
+        WHILE ~Rdr.eot DO
+          Fonts.GetPat(Fonts.Default, ch, dx, x, y, w, h, pat);
+          IF (w > 0) & (h > 0) THEN DrawChar(pen + x, lnY + y, w, h, pat) END;
+          pen := pen + dx;
+          Texts.Read(Rdr, ch)
+        END;
+        SYSTEM.PUT(-84, 10BH);
+        REPEAT UNTIL FALSE
+      END
+    END;
+    SYSTEM.PUT(-84, 80H + n); LED(n + 192); REPEAT UNTIL FALSE
+  END Report;
+
+  PROCEDURE InstallGate;
+  BEGIN Kernel.SetHandler(Report)
+  END InstallGate;
+
+  PROCEDURE Run*;
+    VAR dx, x, y, w, h, pat: INTEGER;
+  BEGIN
+  Fonts.GetPat(Fonts.Default, 41X, dx, x, y, w, h, pat);
+  IF (Fonts.Default = NIL) OR (w < 1) OR (h < 1) THEN Dark END;
+  InstallGate;
   SYSTEM.PUT(-84, 10BH);
   rate := Files.Old("Blink.Rate");
   IF rate = NIL THEN Dark END;

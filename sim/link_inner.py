@@ -85,8 +85,8 @@ if KEPT != 1247 or HEAP_BYTES != 0x10000 or MEMLIM != 0x28000 or SHORT_MEMLIM !=
 # Modules.Init subtracts this from the stack origin. Texts' module
 # block ends near 0x10600, past the old 32KB ceiling at 0x10000.
 # FileDir.Init's frame is about 12KB, so 28KB still clears it.
-RESERVE = 0x7000
-LIMIT = STACK - RESERVE
+RESERVE = 0x6F00
+LIMIT = STACK - RESERVE  # Modules.Mod DEC(limit, 6F00H): 18000H - 6F00H = 11100H
 BODY_LO = ALLOC
 BODY_HI = LIMIT
 ROM_WORDS = 4096
@@ -1217,7 +1217,8 @@ def _finalize_flash(info: dict) -> dict:
 def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
          uart_disk: bool = False, no_collect: bool = False,
          index_trap: bool = False, short_heap: bool = False,
-         bad_font: bool = False, bad_command: bool = False) -> dict:
+         bad_font: bool = False, bad_command: bool = False,
+         line_trap: bool = False) -> dict:
     if flash_boot and uart_disk:
         raise SystemExit("flash boot and the UART disk are different images")
     if not flash_boot and not uart_disk:
@@ -1234,6 +1235,7 @@ def link(max_iter: int, break_arm: bool = False, flash_boot: bool = False,
         short_heap=short_heap,
         bad_font=bad_font,
         bad_command=bad_command,
+        line_trap=line_trap,
     )
 
 
@@ -1286,12 +1288,15 @@ def main() -> int:
                         help="The font this board opens has 17 runs, so load traps")
     parser.add_argument("--bad-command", action="store_true",
                         help="Oberon calls Blink.Ran. ThisCommand returns 5 and the LED stays dark")
+    parser.add_argument("--line-trap", action="store_true",
+                        help="Blink traps after the font is loaded and prints the line")
     args = parser.parse_args()
     n = args.mov_iter if args.mov_iter is not None else args.max_iter
     info = link(n, break_arm=args.break_arm, flash_boot=args.flash_boot,
                 uart_disk=args.uart_disk, no_collect=args.no_collect,
                 index_trap=args.index_trap, short_heap=args.short_heap,
-                bad_font=args.bad_font, bad_command=args.bad_command)
+                bad_font=args.bad_font, bad_command=args.bad_command,
+                line_trap=args.line_trap)
     write_words(info["words"], args.out)
     write_map(info, MAP_PATH)
     counts = " ".join(f"{name} {info['counts'][name]}" for name in ORDER)
@@ -1319,6 +1324,7 @@ def main() -> int:
         + (f" short {SHORT_MEMLIM:#x}" if args.short_heap else "")
         + (" NO-COLLECT" if args.no_collect else "")
         + (" INDEX-TRAP" if args.index_trap else "")
+        + (" LINE-TRAP" if args.line_trap else "")
         + (" BAD-FONT" if args.bad_font else "")
         + (" BAD-COMMAND" if args.bad_command else "")
     )

@@ -8,6 +8,7 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
     OverlaySlots = 2; (*pages kept in RAM; lost at power-off*)
 
   TYPE Sector* = ARRAY SectorLength OF BYTE;
+    TrapFn = PROCEDURE (n, pos, lnk: INTEGER);
 
   VAR allocated*, NofSectors*: INTEGER;
     heapOrg*, heapLim*: INTEGER; 
@@ -21,6 +22,8 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
     nofOver: INTEGER;
     overSec: ARRAY OverlaySlots OF INTEGER;
     overData: ARRAY OverlaySlots OF Sector;
+    (* NIL until Blink has a font. NEW and floating point stay here. *)
+    Handler: TrapFn;
     
 (* ---------- New: heap allocation ----------*)
 
@@ -277,6 +280,10 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
   BEGIN SYSTEM.PUT(at, 0E7000000H + (Padr - at) DIV 4 -1)
   END Install;
 
+  PROCEDURE SetHandler*(h: TrapFn);
+  BEGIN Handler := h
+  END SetHandler;
+
   PROCEDURE BitAnd(x, y: INTEGER): INTEGER;
   BEGIN RETURN SYSTEM.VAL(INTEGER, SYSTEM.VAL(SET, x) * SYSTEM.VAL(SET, y))
   END BitAnd;
@@ -420,6 +427,7 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
     ELSE
       w := v DIV 10H MOD 10H; (*trap number*)
       IF w = 0 THEN New(a, b)
+      ELSIF Handler # NIL THEN Handler(w, v DIV 100H MOD 10000H, u)
       ELSE (*status mode: bit 7, then the trap number*)
         SYSTEM.PUT(-84, 80H + w); LED(w + 192); REPEAT UNTIL FALSE
       END
@@ -429,7 +437,8 @@ MODULE Kernel;  (*NW/PR  11.4.86 / 27.12.95 / 4.2.2014*)
   PROCEDURE Init*;
   BEGIN Install(SYSTEM.ADR(Trap), 20H);  (*install temporary trap*)
     SYSTEM.GET(12, MemLim); SYSTEM.GET(24, heapOrg);
-    stackOrg := heapOrg; stackSize := 7000H; heapLim := MemLim;
+    (* The book sets 8000H. Modules.Init reserves the same 6F00H. *)
+    stackOrg := heapOrg; stackSize := 6F00H; heapLim := MemLim;
     list1 := 0; list2 := 0; list3 := 0; list0 := heapOrg;
     SYSTEM.PUT(list0, heapLim - heapOrg); SYSTEM.PUT(list0+4, -1); SYSTEM.PUT(list0+8, 0);
     allocated := 0; clock := 0; InitSecMap

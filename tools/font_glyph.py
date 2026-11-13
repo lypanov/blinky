@@ -54,17 +54,60 @@ def _pack_rows(rows: tuple[str, ...]) -> bytes:
     return bytes(out)
 
 
+# 3x5, top row first. The trap line needs the book's letters. Digits and
+# A stay the patterns the count pictures already use.
+TINY_LETTERS = {
+    "B": ("###", "#.#", "##.", "#.#", "###"),
+    "C": ("###", "#..", "#..", "#..", "###"),
+    "D": ("##.", "#.#", "#.#", "#.#", "##."),
+    "E": ("###", "#..", "##.", "#..", "###"),
+    "F": ("###", "#..", "##.", "#..", "#.."),
+    "I": ("###", ".#.", ".#.", ".#.", "###"),
+    "K": ("#.#", "##.", "#..", "##.", "#.#"),
+    "L": ("#..", "#..", "#..", "#..", "###"),
+    "N": ("#.#", "###", "###", "#.#", "#.#"),
+    "P": ("###", "#.#", "###", "#..", "#.."),
+    "R": ("###", "#.#", "##.", "#.#", "#.#"),
+    "S": ("###", "#..", "###", "..#", "###"),
+    "T": ("###", ".#.", ".#.", ".#.", ".#."),
+    "a": ("...", ".##", "#.#", "#.#", ".##"),
+    "i": (".#.", "...", ".#.", ".#.", ".#."),
+    "k": ("...", "#.#", "##.", "#..", "#.#"),
+    "l": (".#.", ".#.", ".#.", ".#.", ".#."),
+    "n": ("...", "##.", "#.#", "#.#", "#.#"),
+    "o": ("...", ".#.", "#.#", "#.#", ".#."),
+    "p": ("...", "##.", "#.#", "##.", "#.."),
+    "s": ("...", ".##", "#..", ".#.", "##."),
+    "t": (".#.", "###", ".#.", ".#.", ".#."),
+}
+TINY_BLANK = (".#.", ".#.", ".#.", ".#.", ".#.")
+
+
 def tiny_bytes() -> bytes:
-    """Digits 0..9 and A. NofRuns is the low byte at file offset 14."""
+    """Digits, A, and the trap-line letters. Boxes come first, then rasters.
+
+    NofRuns is the low byte at file offset 14. A space has a box and no
+    raster: it advances the pen and paints nothing.
+    """
+    upper = [chr(c) for c in range(ord("A"), ord("T") + 1)]
+    lower = [chr(c) for c in range(ord("a"), ord("t") + 1)]
+    rasters = [b""]
+    rasters.extend(_pack_rows(rows) for rows in TINY_DIGITS)
+    for ch in upper:
+        rasters.append(TINY_A if ch == "A" else _pack_rows(TINY_LETTERS.get(ch, TINY_BLANK)))
+    for ch in lower:
+        rasters.append(_pack_rows(TINY_LETTERS.get(ch, TINY_BLANK)))
     parts = [
         bytes((0xDB, 0x00, ord("T"), ord("4"))),
-        struct.pack("<6H", 6, 0, 3, 0, 4, 2),
-        struct.pack("<4H", 48, 58, 65, 66),
+        struct.pack("<6H", 6, 0, 3, 0, 4, 4),
+        struct.pack("<8H", 32, 33, 48, 58, 65, 85, 97, 117),
     ]
-    box = struct.pack("<5H", 4, 0, 0, 3, 5)
-    parts.extend(box for _ in range(11))
-    parts.extend(_pack_rows(rows) for rows in TINY_DIGITS)
-    parts.append(TINY_A)
+    for raster in rasters:
+        if raster:
+            parts.append(struct.pack("<5H", 4, 0, 0, 3, 5))
+        else:
+            parts.append(struct.pack("<5H", 4, 0, 0, 0, 0))
+    parts.extend(raster for raster in rasters if raster)
     return b"".join(parts)
 
 
@@ -366,7 +409,7 @@ def _built(tiny: bytes, oberon: bytes) -> tuple[list[tuple], list[tuple]]:
 
 def check() -> None:
     tiny, oberon = _load_fonts()
-    if tiny[14] != 2 or oberon[14] != 6:
+    if tiny[14] != 4 or oberon[14] != 6:
         raise SystemExit("NofRuns bytes are not 2 and 6")
     nano, dock = _built(tiny, oberon)
     text = open(HEADER_PATH, "r", encoding="ascii").read()

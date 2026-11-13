@@ -155,8 +155,25 @@ python3 "$ROOT/sim/link_inner.py" \
   --out "$ROOT/sim/out/index-trap.words"
 cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-index-trap.bin"
 "$BIN" --expect-halt --expect-no-arm --expect-status 0x81 \
-  --status-seq 1,2,5,6,7,8,9,10,11,0x81
+  --status-seq 1,2,5,6,7,8,9,10,11,0x81 \
+  --dump-bmp "$ROOT/sim/out/index-trap-nano.dump"
+python3 "$ROOT/tools/trap_line.py" --blank "$ROOT/sim/out/index-trap-nano.dump"
 echo "[ok] NOR disk index trap is 81H, the arm word stays unstored, the LED stays dark"
+cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
+
+python3 "$ROOT/sim/link_inner.py" \
+  --flash-boot \
+  --line-trap \
+  --max-iter "$N" \
+  --out "$ROOT/sim/out/line-trap.words"
+cp "$ROOT/sim/out/disk.bin" "$ROOT/sim/out/disk-line-trap.bin"
+cp "$ROOT/sim/out/line-trap-expect.txt" "$ROOT/sim/out/line-trap-nano.txt"
+"$BIN" --expect-halt --expect-no-arm --expect-status 0x10B \
+  --status-seq 1,2,5,6,7,8,9,10,11,0x10B \
+  --dump-bmp "$ROOT/sim/out/line-trap-nano.dump"
+python3 "$ROOT/tools/trap_line.py" --check \
+  "$ROOT/sim/out/line-trap-nano.txt" "$ROOT/sim/out/line-trap-nano.dump"
+echo "[ok] NOR disk trap line, the arm word stays unstored, the LED stays dark"
 cp "$ROOT/sim/out/disk-rate-base.bin" "$ROOT/sim/out/disk.bin"
 
 python3 "$ROOT/sim/link_inner.py" \
