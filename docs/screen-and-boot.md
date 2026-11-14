@@ -316,10 +316,6 @@ One SRAM load of the damaged Dock disk, checksum `f6baaacb`. The fresh line is `
 
 Next is 41. Item 34 is not done.
 
-## Item 100 — the letter A off the square ring
-
-On the Dock, Blink's `mkX = 143` with Oberon10 covers the square's left ring (`sqX = 150`, screen x 300). Move `mkX` so a dark one-pixel ring remains around the 20×20 box. Do not move the square. The 4K `mkX = 80` already sits to the right of `sqX = 75`. Proof: a lit Dock frame has exactly 400 white pixels in x 300..319, y 220..239, and the one-pixel ring is dark.
-
 ## Item 41 — the book's `Texts`
 
 Blink writes its count with `Texts.WriteInt` into a text and draws the line with the font. The Dock's hardware digit converter and glyph lookup retire. `Texts` contains floating-point instructions, which item 38 already traps. The Nano video PLL is `ODIV_SEL` 8, VCO 1080 MHz, CLKOUT 135 MHz. The Dock pixel rPLL stays `ODIV_SEL` 16, 64.800 MHz, and the serializer stays `ODIV_SEL` 2, 324.000 MHz.
@@ -492,7 +488,19 @@ Capture card `/dev/video0`, YUYV 1024×768, 60 fps, 2400 frames. File `/home/lyp
 
 Next is 47. Item 44 is not done.
 
-## Item 47 — the watchdog
+## Item 47 — the letter A off the square ring
+
+On the Dock, Blink's `mkX = 143` with Oberon10 covers the square's left ring (`sqX = 150`, screen x 300). Move `mkX` so a dark one-pixel ring remains around the 20×20 box. Do not move the square. The 4K `mkX = 80` already sits to the right of `sqX = 75`.
+
+HDMI is on the 4K. Skip 20K. Proof on the 4K: a lit frame has exactly 400 white pixels in x 300..319, y 220..239, and the one-pixel ring is dark.
+
+## Item 48 — 4K HDMI marker
+
+A hardware strip on the Nano 4K only: the first two active rows are green. HDMI ch0 is blue, ch1 green, ch2 red. Green is the existing `BLACK` word on ch0 and ch2 and `WHITE` on ch1. Not gated by `armed` or `blank`, so trap, stuck, and status mode still show it. `VIDEO_DOCK` must not have it. If the 4K place does not fit, one row, or the left 32 pixels of those rows.
+
+HDMI is on the 4K. After the 4K proof, ask the maintainer to switch HDMI to the 20K. Do not mark this item done until that 20K capture: no green strip, the field stays black-and-white, the square is still 400 white pixels in x 300..319, y 220..239.
+
+## Item 49 — the watchdog
 
 A counter that must be reset by the main loop. If the loop stops for longer than a published time, the screen switches to status mode with a "hung" code. Hardware cost: one counter and a compare; record the 4K cost.
 

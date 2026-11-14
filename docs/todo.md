@@ -52,13 +52,14 @@ Ledger items are not to-dos. If a later item cannot fit on the Nano 4K without a
 38. Floating point, trapped to Oberon on both boards. Same file, item 38. Done. The measured result is in that file. Next stays 39.
 39. The book's `Display` draws the square. Same file, item 39. Done. The measured result is in that file. Next is 40.
 40. The book's `Fonts`: the 4×6 font on the 4K, `Oberon10` on the Dock. Same file, item 40. Done. The measured result is in that file. Next is 41.
-100. Dock: move the letter A off the square's left ring. Same file, item 100.
 41. The book's `Texts` writes the count; the Dock's digit hardware retires. Same file, item 41. Done. The measured result is in that file. Next is 42.
 42. Commands by name: `Oberon.Call` starts Blink. Same file, item 42. Done. The measured result is in that file. Next is 43.
 43. The trap line on screen. Same file, item 43. Done. The measured result is in that file. Next is 44.
 44. The book's file system, `FileDir`, on the disk. Same file, item 44.
 45. The `Input` stand-in. Same file, item 45. Done. The measured result is in that file. Next is 46.
 46. The main loop with Blink as a background task. Same file, item 46. Done. The measured result is in that file. Next is 47.
-47. The watchdog. Same file, item 47.
+47. The letter A off the square ring. Same file, item 47. HDMI on the 4K. Skip 20K.
+48. 4K HDMI marker: green on the first two active rows, always on. Same file, item 48. HDMI on the 4K; after that proof, ask to switch to the 20K.
+49. The watchdog. Same file, item 49.
 
 The rest of `docs/modules-mod-plan.md` is the original fifteen and the boot path. Read a section when the proof cites it. Those headings are not a second queue.

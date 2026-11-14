@@ -8,7 +8,10 @@ description: >-
 ---
 
 There is one HDMI cable. The maintainer moves it. Do not trust a remembered
-size, a frozen picture, or which board was last loaded.
+size, a frozen picture, or which board was last loaded. The words
+**HDMI is plugged into 4K** and **HDMI is plugged into 20K** are the
+prove-ladder cue: prove that board now, then ask for a switch if the other
+board is still required. See `.cursor/skills/prove-ladder/SKILL.md`.
 
 ## Room light
 

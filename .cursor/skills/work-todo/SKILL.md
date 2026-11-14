@@ -9,7 +9,7 @@ description: >-
 
 Read these, in this order:
 
-1. `.cursor/skills/prove-ladder/SKILL.md`. Follow it for every proof.
+1. `.cursor/skills/prove-ladder/SKILL.md`. Follow it for every proof. If the user says **HDMI is plugged into 4K** or **HDMI is plugged into 20K**, that skill says which board to prove now, and when to ask for a cable switch.
 2. `docs/todo.md`. Take the item named on the `Next:` line. One item. Do not start the next.
 3. The documents that item names. Read those sections when the item needs them. `docs/bringup-ledger.md` is the Nano 4K space list. `docs/modules-mod-plan.md` is the modules plan.
 

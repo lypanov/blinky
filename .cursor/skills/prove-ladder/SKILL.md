@@ -6,7 +6,9 @@ description: >-
   DDR3. A full Icarus plus Micron run through Modules.Init to two LED
   edges is only after a real DDR3 failure. Use when advancing a ladder
   step, proving a step, loading the 4K or the Dock, or checking a blink
-  on the webcam. A step is done only when sim, 4K, and 20K all agree.
+  on the webcam, or when the user says HDMI is plugged into 4K or 20K.
+  A step is done only when sim, 4K, and 20K all agree, unless skip 20K
+  or skip 4K is given for that item.
 ---
 
 ## Webcam MCP (LEDs)
@@ -38,6 +40,14 @@ same functions on a private path, not the MCP. `tools/measure_blink.sh
 --device /dev/video2` is only if the service is down.
 
 Which board has the HDMI cable: `.cursor/skills/identify-hdmi-board/SKILL.md`.
+
+## HDMI cable
+
+The maintainer's words **HDMI is plugged into 4K** and **HDMI is plugged into 20K** name which board the capture card is on. Prove that board now. Size is YUYV 720×480 on the 4K and 1024×768 on the 20K. When the room is lit, confirm with `.cursor/skills/identify-hdmi-board/SKILL.md`.
+
+An item is not done until sim, 4K, and 20K all agree, unless the maintainer says **skip 20K** or **skip 4K** for that item (for example "skip 20K for item 47").
+
+If HDMI is on the 4K and the 20K stage is still required, after the 4K HDMI proof **stop and ask the maintainer to switch HDMI to the 20K**. Do not mark the item done. Do not assume the cable has moved. Same if HDMI is on the 20K and the 4K stage is still open: ask for the switch to the 4K.
 
 ## Ladder
 
