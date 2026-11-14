@@ -480,9 +480,11 @@ The stuck SRAM load of the stuck disk: first rise 17.192 s, fall 18.192 s, secon
 
 The Dock disk is 82964 bytes, checksum `077cd0c9`, arm word `a660dd2c`, sha256 `fbcfc3c7fd1c165b6635b712cd902846c4700a1eaff2d9af62e318caea8e6a35`. The light compare is `32'h103F0`. The LED is the registered DDR write, one `cpu_clk` after the store, and it is still gated by the arm word. Place option 0, route option 1. The good bitstream is sha256 `cd6fa3cce7f26456f06a79d9fd6985478825ab998645bf7e0c8eaa69282dc5a3`. Logic 6376/20736. pclk Fmax 96.886 MHz against 96.749, cpu_clk 28.968 MHz against 24.187. The Dock is USB port `3-3.1.1`, bus 003 device 013. The UART was bound with `blinky-bind-dock-uart`.
 
-Two good loads waited at `C.0440` with the mask clear, lanes `000C` `000A`, `E0` `A55A`, `G` `A55A`, `F` `A8`, took the 82964-byte disk, and the mask became `FFFFFFFFFF`. The first armed line is `C.AB48`. The second, inside the clip, is `C.AB50`. The lit core is x 277, y 44. After that reload the rise-to-rise gaps are 2.033 s, 2.000 s, then 1.000 s. One later gap is 1.033 s and one is 0.967 s. The stuck Dock disk was not sent. Nothing was written to the Dock flash. `/dev/video0` stayed on the 4K.
+Three good loads waited at `C.0440` with the mask clear, lanes `000C` `000A`, `E0` `A55A`, `G` `A55A`, `F` `A8`, took the 82964-byte disk, and the mask became `FFFFFFFFFF`. The armed lines are `C.AB48`, `C.AB50`, and `C.AB4C`. One other send sat at `C.0000` with the mask still clear; it is not counted. Webcam `/dev/video2`, 640×480, 30 fps, MJPEG. The lit core is x 278, y 44. After the `C.AB4C` reload the rise-to-rise gaps are 1.968 s, 2.034 s, then 0.967 s. Later gaps are 1.000 s, 1.034 s, and 0.967 s.
 
-Next stays 46. Item 44 is not done.
+The stuck disk is the same 82964 bytes and the same checksum `077cd0c9`. `hang := 1` is the byte at `0xC69E`. Four bytes of directory filler keep the payload sum, so the same bitstream's arm word still matches. sha256 `78b984ef5b778786c867ed8e6ca481dff86eba0f17dfe2b3365d59c59f76fcb5`. One stuck load waited at the same `C.0440` line, took that disk, and the mask became `FFFFFFFFFF`. The armed line is `C.B244`. The clip starts at the SRAM load. The leftover on-edge from the previous image falls at 1.433 s. First rise 18.333 s, fall 19.366 s, second rise 20.333 s, then the same pixel stays lit for the remaining 69.699 s. Rise-to-rise is 2.000 s. No third rise. Nothing was written to the Dock flash.
+
+Next is 47. Item 44 is not done.
 
 ## Item 47 — the watchdog
 
