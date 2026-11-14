@@ -39,6 +39,10 @@ Do **not** `import server` from `tools/webcam-mcp/server.py`. That is the
 same functions on a private path, not the MCP. `tools/measure_blink.sh
 --device /dev/video2` is only if the service is down.
 
+`roi=nano4k` is a blob, not a pixel. If that result is FFT-only with no
+edges, or the box is on the far right of the 640 frame, it is not the
+lamp. Open the annotated still and measure the other lower orange blob.
+
 Which board has the HDMI cable: `.cursor/skills/identify-hdmi-board/SKILL.md`.
 
 ## HDMI cable
@@ -55,7 +59,7 @@ Verilator compiles Oberon with the machine tree `/home/lypanov/fpga/norebo-compi
 
 ## Ladder
 
-Prove every ladder step in this order and do not skip a stage. First run simulation until the expected checks pass. Verilator (`tools/run_verilator_sim.sh`) proves the CPU image. Then load the same tip on the Tang Nano 4K (HyperRAM) and confirm on hardware — usually the LED blinks at the published formula rate, measured by the webcam, with a dark LED meaning fail. Only after that, prove the same tip on the Primer 20K / Dock (DDR3). When the Nano 4K and the Primer 20K already blink on this tip and there is no real DDR3 failure, the Dock stage is closed. A step is done only when sim, 4K, and 20K all agree.
+Prove every ladder step in this order and do not skip a stage. First run simulation until the expected checks pass. Verilator (`tools/run_verilator_sim.sh`) proves the CPU image. Then load the same tip on the Tang Nano 4K (HyperRAM) and confirm on hardware — usually the LED blinks at the published formula rate, measured by the webcam, with a dark LED meaning fail. If Gowin CT1135 names `bodyFor_31_N`, that N is this netlist. Grep the place log for `bodyFor_31_` and put that wire in `tang-nano-4k-hdmi.cst`. Only after that, prove the same tip on the Primer 20K / Dock (DDR3). When the Nano 4K and the Primer 20K already blink on this tip and there is no real DDR3 failure, the Dock stage is closed. A step is done only when sim, 4K, and 20K all agree.
 
 A full Icarus plus Micron run through Modules.Init to two LED edges (`IMAGE=ddr3modules sim/run_ddr3_cpu_phy.sh`) is only for a real DDR3 failure: calibration, the write eye, the controller, or the Micron protocol. N=5 does not skip the boot. That image still runs Modules.Init before the delay loop, so the ladder must not demand the run just to print a blink score.
 
