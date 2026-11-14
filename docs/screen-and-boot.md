@@ -482,7 +482,7 @@ The Dock disk is 82964 bytes, checksum `077cd0c9`, arm word `a660dd2c`, sha256 `
 
 Two good loads waited at `C.0440` with the mask clear, lanes `000C` `000A`, `E0` `A55A`, `G` `A55A`, `F` `A8`, took the 82964-byte disk, and the mask became `FFFFFFFFFF`. The first armed line is `C.AB48`. The second, inside the clip, is `C.AB50`. The lit core is x 277, y 44. After that reload the rise-to-rise gaps are 2.033 s, 2.000 s, then 1.000 s. One later gap is 1.033 s and one is 0.967 s. The stuck Dock disk was not sent. Nothing was written to the Dock flash. `/dev/video0` stayed on the 4K.
 
-Next is 47. Item 44 is not done.
+Next stays 46. Item 44 is not done.
 
 ## Item 47 — the watchdog
 
