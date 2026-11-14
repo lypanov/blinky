@@ -466,6 +466,24 @@ The book's `Oberon` module and its `Loop`. Blink becomes a background task insta
 
 Proof: the LED and the square blink at 0.500 Hz from the task. The status line or the screen shows the loop's count of turns rising. A task that never returns stops the blink at the predicted moment.
 
+`tests/Oberon.Mod` is the book's loop without viewers. `Loop` increments `Turns`, polls `Input`, and runs the next task whose deadline has passed. The deadline steps from the previous one so a late poll does not walk the rate. The module body calls `Blink.Run`, then `Loop`. `Run` still fills the list, checks it, and stores the arm word, then `NewTask(Tick, wait)` and `Install`. `Tick` paints `Oberon.Turns` as eight digits at bitmap (4, 100), inverts the square, and toggles the light. After the second on-edge, `n = 2` and the period halves. The stuck disk compiles `hang := 1` and installs `Stick`, which loops forever once `n >= 2`.
+
+Blink is still module 11. The open-file count is 11 and the kept count is 1191. The disk is 82964 bytes.
+
+`tools/run_verilator_sim.sh` exits 0. The NOR 16 ms edges are cycles 437217720, 437631048, and 438065718, PC `00010400`, period 432000, mask `FFFFFFFFFF`, R5 and R9 zero. The turn field decodes 1, 7, 19. The ones image halts at cycle 413709264 with status `10BH`, 0 edges, and the arm word unstored. The stuck disk's third edge is cycle 438094594, LED on, and the halt is 438105184. The UART 16 ms edges are 152385554, 153146340, and 153921020, PC `00010420`, period 774000. The turn field decodes 1, 65, 133. The ones image halts at cycle 128751920, PC `000107B0`, 0 edges. The stuck UART halt is cycle 153942994, PC `00010E3C`, LED on, after three edges.
+
+The 4K disk is 82964 bytes, checksum `9cfbad4e`, arm word `3de7a0ab`, sha256 `d167ca4fa80a2b4d0cf63a64ffef5edaf41ec2b62f92d4aa5dbac8c4cd10b342`. The 1000 ms bytes at `0xB174` are `e8 03 00 00 18 fc ff ff`. The light compare is `32'h103D0`. The good bitstream is sha256 `b514dc2ea3a4bc366ec29c57a306c39cac6c724a82060cdcf7e471607ab863dd`. Logic 4545/4608, CLS 2301/2304. cpu_clk Fmax 13.675 MHz against 13.500. The stuck disk is checksum `9cfcad4f`, arm word `3de0a0aa`, sha256 `5d8abccf87b14a626f173886b78fc8271dd585c2d96620a9510f3a81a5840aad`. The stuck bitstream is sha256 `35e0d924d3d2d210cfdf43dc3f1264507a8fd2306e4141365a40e1b2707998a1`. Logic 4561/4608, CLS 2302/2304. cpu_clk Fmax 13.510 MHz against 13.500. The NOR write is the data file at `0x200000`, bus 003 device 012, port `3-3.3`. JEDEC `856016`. The read-back matches, and the 256 bytes at `0x1FFF00` are unchanged. Each SRAM load was `openFPGALoader -m` on that bus, `write to ram`, Load SRAM 100%, CRC success.
+
+Webcam `/dev/video2`, 640×480, 30 fps, MJPEG. The lit core is x 170, y 240. After the good SRAM load the first rise is at 15.727 s. The rise-to-rise gaps are 1.999 s, 1.999 s, then 1.000 s. One later gap is 1.033 s. Capture card `/dev/video0`, YUYV 720×480, 60 fps, 360 frames. After the grey boot the eight-digit turn field at bitmap (4, 100) rises 107905, 112107, 115487, 118869, 122249, 125629, 129009, 132389 while the blink count at (64, 40) holds 16 through 20. Lit pixels are luma 255. U and V are 128.
+
+The stuck SRAM load of the stuck disk: first rise 17.192 s, fall 18.192 s, second rise 19.191 s, then the same pixel stays lit for the remaining 37.816 s. Rise-to-rise is 1.999 s. No third rise. A 120-frame HDMI grab after that halt holds count 2 and turns 12722 for 41 frames, white pixel count 2080 on every one of those frames.
+
+The Dock disk is 82964 bytes, checksum `077cd0c9`, arm word `a660dd2c`, sha256 `fbcfc3c7fd1c165b6635b712cd902846c4700a1eaff2d9af62e318caea8e6a35`. The light compare is `32'h103F0`. The LED is the registered DDR write, one `cpu_clk` after the store, and it is still gated by the arm word. Place option 0, route option 1. The good bitstream is sha256 `cd6fa3cce7f26456f06a79d9fd6985478825ab998645bf7e0c8eaa69282dc5a3`. Logic 6376/20736. pclk Fmax 96.886 MHz against 96.749, cpu_clk 28.968 MHz against 24.187. The Dock is USB port `3-3.1.1`, bus 003 device 013. The UART was bound with `blinky-bind-dock-uart`.
+
+Two good loads waited at `C.0440` with the mask clear, lanes `000C` `000A`, `E0` `A55A`, `G` `A55A`, `F` `A8`, took the 82964-byte disk, and the mask became `FFFFFFFFFF`. The first armed line is `C.AB48`. The second, inside the clip, is `C.AB50`. The lit core is x 277, y 44. After that reload the rise-to-rise gaps are 2.033 s, 2.000 s, then 1.000 s. One later gap is 1.033 s and one is 0.967 s. The stuck Dock disk was not sent. Nothing was written to the Dock flash. `/dev/video0` stayed on the 4K.
+
+Next is 47. Item 44 is not done.
+
 ## Item 47 — the watchdog
 
 A counter that must be reset by the main loop. If the loop stops for longer than a published time, the screen switches to status mode with a "hung" code. Hardware cost: one counter and a compare; record the 4K cost.
