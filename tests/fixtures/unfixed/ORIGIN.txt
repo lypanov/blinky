@@ -1,9 +1,20 @@
 Historical RAW (unfixed) Oberon code-section dumps.
 Hex words only; these are not .rsc binaries.
 
+AMemoryMappedToggle.Mod
+  git show ddb19e0^:tests/AMemoryMappedToggle.Mod
+  Blink3 source: Toggle is light := 1 - light. tools/test_bl_fixup.py
+  compiles this file so LightToggle stays at 0x1048.
+
 AMemoryMappedToggle.code
   git show e5743c8:tests/AMemoryMappedToggle.code
-  source today: tests/AMemoryMappedToggle.Mod (unchanged)
+  Blink3 unfixed ROM, 18 words. sim/build_pdchain_imem.py plants this
+  dump. Do not replace it with the live module.
+
+AMemoryMappedToggle.phase.code
+  tests/AMemoryMappedToggle.Mod after ddb19e0: Toggle stores 0 or 1
+  from phase, not 1 - light. 29 words. tools/verify_raw_oberon_code.py
+  compares the live source to this dump.
 
 Blink3test.code
   rebuilt with tests/Blink3test.Mod maxIterations := 262144

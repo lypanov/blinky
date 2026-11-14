@@ -27,8 +27,8 @@ CASES = [
         "name": "AMemoryMappedToggle",
         "sources": ["AMemoryMappedToggle.Mod"],
         "rsc": "AMemoryMappedToggle.rsc",
-        "fixture": "AMemoryMappedToggle.code",
-        "origin": "e5743c8:tests/AMemoryMappedToggle.code",
+        "fixture": "AMemoryMappedToggle.phase.code",
+        "origin": "AMemoryMappedToggle.Mod phase stores (ddb19e0); 29 words",
     },
     {
         "name": "LightToggle (Blink3test.Mod)",
@@ -125,10 +125,13 @@ def word_diff(expected, got, label, origin):
 def compile_case(case, norebo_bin, norebo_path, work: Path):
     case_dir = work / case["name"].replace(" ", "_").replace("(", "").replace(")", "")
     case_dir.mkdir()
+    source_paths = case.get("source_paths", {})
     for src in case["sources"]:
-        shutil.copy(TESTS / src, case_dir / src)
+        src_path = Path(source_paths.get(src, TESTS / src))
+        dest = Path(src).name
+        shutil.copy(src_path, case_dir / dest)
         run(
-            [norebo_bin, "ORP.Compile", src],
+            [norebo_bin, "ORP.Compile", dest],
             cwd=case_dir,
             env={**os.environ, "NOREBO_PATH": norebo_path},
         )

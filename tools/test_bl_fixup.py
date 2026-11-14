@@ -17,6 +17,7 @@ from pathlib import Path
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 TESTS = os.path.join(ROOT, "tests")
+BLINK3_AMMT = os.path.join(TESTS, "fixtures", "unfixed", "AMemoryMappedToggle.Mod")
 sys.path.insert(0, HERE)
 
 from rsc_parser import ImportedModule, fixup_bl  # noqa: E402
@@ -58,6 +59,7 @@ def rsc_dir():
     case = {
         "name": "LightToggle",
         "sources": ["AMemoryMappedToggle.Mod", "Blink3test.Mod"],
+        "source_paths": {"AMemoryMappedToggle.Mod": BLINK3_AMMT},
         "rsc": "LightToggle.rsc",
     }
     rsc = compile_case(case, norebo_bin, norebo_path, work)
