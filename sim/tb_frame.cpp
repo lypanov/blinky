@@ -192,6 +192,7 @@ int main(int argc, char** argv) {
   std::vector<uint8_t> wrote(AW * AH, 0);
   int seen = 0;
   int white = 0;
+  int green = 0;
   bool capturing = false;
   int got = 0;
   int frame_cpu = 0;
@@ -212,15 +213,26 @@ int main(int argc, char** argv) {
     int de = (x >= H0 && x < H1 && y >= V0 && y < V1);
     if ((int)top->de_q != de) fail("de");
     if (de) {
-      if (top->word0 != top->word1 || top->word0 != top->word2) fail("channels");
-      if (top->word0 != BLACK && top->word0 != WHITE) fail("pixel word");
       int ax = x - H0;
       int ay = y - V0;
+#if defined(FRAME_SQUARE) && !defined(VIDEO_DOCK)
+      int marker = (ay < 2);
+#else
+      int marker = 0;
+#endif
+      if (marker) {
+        if (top->word0 != BLACK || top->word1 != WHITE || top->word2 != BLACK)
+          fail("marker");
+      } else {
+        if (top->word0 != top->word1 || top->word0 != top->word2) fail("channels");
+        if (top->word0 != BLACK && top->word0 != WHITE) fail("pixel word");
+      }
       int i = ay * AW + ax;
       if (wrote[i]) fail("pixel twice");
       wrote[i] = 1;
-      img[i] = top->word0 == WHITE ? 255 : 0;
+      img[i] = (!marker && top->word0 == WHITE) ? 255 : 0;
       if (img[i]) white++;
+      if (marker) green++;
       seen++;
     }
     got++;
@@ -241,6 +253,10 @@ int main(int argc, char** argv) {
   if (fprintf(f, "P5\n%d %d\n255\n", AW, AH) < 0) fail("write");
   if (fwrite(img.data(), 1, img.size(), f) != img.size()) fail("write");
   fclose(f);
-  printf("ok %s cycle %d frame_cpu %d white %d\n", board, target, frame_cpu, white);
+#if defined(FRAME_SQUARE) && !defined(VIDEO_DOCK)
+  if (green != AW * 2) fail("marker count");
+#endif
+  printf("ok %s cycle %d frame_cpu %d white %d green %d\n",
+         board, target, frame_cpu, white, green);
   return 0;
 }

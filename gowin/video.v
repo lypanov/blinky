@@ -594,9 +594,20 @@ module video (
   wire status_on = de_r && in_stat && !status_q[8] && status_bit;
   wire square_on = de_r && rbit && armed_s2 && status_q[8];
   wire lit = (status_on || square_on || text_on) && !blank_s2;
+  // Nano 4K only: first two active rows are green. HDMI ch0 is blue,
+  // ch1 green, ch2 red. Green is BLACK on ch0/ch2 and WHITE on ch1.
+  // Not gated by armed or blank, so trap, stuck, and status still
+  // show it. VIDEO_DOCK must not have it.
+`ifndef VIDEO_DOCK
+  wire marker = de_r && (py_r < 10'd2);
+  wire [9:0] word0_o = !de_r ? ctrl0 : ((lit && !marker) ? WHITE : BLACK);
+  wire [9:0] word1_o = !de_r ? CTRL00 : ((lit || marker) ? WHITE : BLACK);
+  wire [9:0] word2_o = marker ? BLACK : word1_o;
+`else
   wire [9:0] word0_o = !de_r ? ctrl0 : (lit ? WHITE : BLACK);
   wire [9:0] word1_o = !de_r ? CTRL00 : (lit ? WHITE : BLACK);
   wire [9:0] word2_o = word1_o;
+`endif
 `endif
 
   // led is the CPU's ledState && armed, on the CPU clock.
