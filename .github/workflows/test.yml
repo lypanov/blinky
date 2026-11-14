@@ -39,6 +39,7 @@ jobs:
       - name: Cache Norebo
         uses: actions/cache@v4
         with:
+          # CI has no /home/lypanov/fpga, so setup_norebo.sh installs here.
           path: tools/project-norebo
           key: norebo-${{ hashFiles('tools/norebo.pin') }}
       - name: Build pinned Norebo and check raw .rsc code

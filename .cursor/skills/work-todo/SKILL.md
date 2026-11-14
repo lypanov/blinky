@@ -7,6 +7,8 @@ description: >-
   next to-do, or when the Nano 4K runs out of space.
 ---
 
+Norebo is `/home/lypanov/fpga/norebo-compiled`. A worktree has no `tools/project-norebo`. Before the first compile or `tools/run_verilator_sim.sh`, `tools/setup_norebo.sh` is a no-op when that tree matches `tools/norebo.pin`. Do not clone into the worktree. Do not `rm -rf` the machine tree.
+
 Read these, in this order:
 
 1. `.cursor/skills/prove-ladder/SKILL.md`. Follow it for every proof. If the user says **HDMI is plugged into 4K** or **HDMI is plugged into 20K**, that skill says which board to prove now, and when to ask for a cable switch.

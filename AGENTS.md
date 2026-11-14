@@ -2,6 +2,10 @@
 
 The project's goal and working rules are in `docs/strategy.md`. Read it once per session.
 
+## Machine Norebo
+
+The Oberon compiler is `/home/lypanov/fpga/norebo-compiled`, not `tools/project-norebo` in a worktree. That path is gitignored and empty on a fresh checkout. `tools/setup_norebo.sh` creates the machine tree if it is missing and is a no-op when the pin matches. Do not clone Norebo into a worktree. Do not `rm -rf` the machine tree. If `tools/norebo.pin` changes, move `/home/lypanov/fpga/norebo-compiled` aside and re-run `tools/setup_norebo.sh`.
+
 ## Loading boards
 
 Dock SRAM load and UART disk: `docs/load-boards.md`. Run `tools/load_dock.py`.

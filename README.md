@@ -44,12 +44,12 @@ N=5 is period 3110 at PC `0x2070`. A bad disk halts at PC `0x260` with the LED o
 Blink2 / Blink3 `.Mod` files are compiled with Wirth's Project Oberon 2013 `ORP` via [project-norebo](https://github.com/pdewacht/project-norebo), pinned in `tools/norebo.pin`.
 
 ```sh
-tools/setup_norebo.sh              # clone pin, run upstream ./build.sh
+tools/setup_norebo.sh              # build the pin if it is not already there
 python3 tools/verify_raw_oberon_code.py   # raw code vs historical unfixed dumps
 tools/process_mod_files.sh         # compile tests/*.Mod; writes tests/raw/ *before* fixup
 ```
 
-The clone lands in `tools/project-norebo/` (gitignored). After the monorepo layout (PR #7) keep the pin and scripts in `tools/` and point them at `core/tests/`. `.rsc` object files are gitignored; the bit-for-bit check uses tiny hex dumps in `tests/fixtures/unfixed/`, not binary `.rsc` files.
+On this machine the built pin is `/home/lypanov/fpga/norebo-compiled`, outside every worktree. `tools/setup_norebo.sh` creates that tree if it is missing. It does not delete a live tree. If the pin in `tools/norebo.pin` does not match, move the tree aside and re-run. GitHub CI has no `/home/lypanov/fpga`, so the same script installs `tools/project-norebo/` (gitignored, cached). Override the install path with `NOREBO_INSTALL_ROOT`. After the monorepo layout (PR #7) keep the pin and scripts in `tools/` and point them at `core/tests/`. `.rsc` object files are gitignored; the bit-for-bit check uses tiny hex dumps in `tests/fixtures/unfixed/`, not binary `.rsc` files.
 
 ## Visualizer (Phase 2)
 

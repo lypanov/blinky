@@ -140,10 +140,20 @@ def _check_sources() -> None:
             raise SystemExit(f"{rel} sha256 {got} is not the recorded source")
 
 
+def _norebo_root() -> str:
+    script = f"""
+set -euo pipefail
+source "{ROOT}/tools/norebo_env.sh"
+norebo_export
+printf '%s\\n' "$NOREBO_ROOT"
+"""
+    return subprocess.check_output(["bash", "-c", script], text=True).strip()
+
+
 def _unchanged_symbol(name: str, key: int) -> str:
     root = os.environ.get("NOREBO_ROOT")
     if not root:
-        root = os.path.join(ROOT, "tools", "project-norebo")
+        root = _norebo_root()
     hits = []
     for base in ("build2", "build3", "Oberon", "Norebo"):
         path = os.path.join(root, base, f"{name}.smb")

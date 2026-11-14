@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
-# Clone a pinned pdewacht/project-norebo and build it with its own build.sh.
-# Default checkout: tools/project-norebo (gitignored). Override with NOREBO_ROOT.
+# Create the pinned pdewacht/project-norebo tree and build it with its
+# own build.sh. On this machine that tree is
+# /home/lypanov/fpga/norebo-compiled, outside every worktree. GitHub CI
+# has no /home/lypanov/fpga, so the same script installs
+# tools/project-norebo (gitignored). Override with NOREBO_INSTALL_ROOT.
+#
+# The live destination is never rm -rf'd. A matching built tree is a
+# no-op. A present-but-wrong machine tree is a refuse: move it aside
+# and re-run. A present-but-wrong worktree copy is moved aside, then
+# replaced from a staging clone.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -8,58 +16,72 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/tools/norebo_env.sh"
 
 norebo_read_pin
-DEST="$(norebo_root)"
+DEST="$(norebo_install_root)"
+MACHINE="$(norebo_machine_root)"
 
 if [ -z "${NOREBO_URL:-}" ] || [ -z "${NOREBO_SHA:-}" ]; then
   echo "error: tools/norebo.pin is missing url= or sha=" >&2
   exit 1
 fi
 
-mkdir -p "$(dirname "$DEST")"
-
 STAMP="$DEST/.blinky-pin"
-need_clone=1
-if [ -d "$DEST/.git" ]; then
-  current="$(git -C "$DEST" rev-parse HEAD 2>/dev/null || true)"
-  if [ "$current" = "$NOREBO_SHA" ]; then
-    need_clone=0
+
+if norebo_is_built "$DEST"; then
+  got="$(norebo_got_sha "$DEST")"
+  if [ "$got" = "$NOREBO_SHA" ]; then
+    printf '%s\n' "$NOREBO_SHA" > "$STAMP"
+    echo "=== Norebo already built at $DEST ($NOREBO_SHA) ==="
+    echo "NOREBO_ROOT=$DEST"
+    echo "commit=$NOREBO_SHA"
+    exit 0
   fi
-elif [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$NOREBO_SHA" ] && norebo_is_built "$DEST"; then
-  need_clone=0
+  echo "error: $DEST is ${got:-empty}, pin is $NOREBO_SHA" >&2
+  echo "move that tree aside and re-run tools/setup_norebo.sh" >&2
+  exit 1
 fi
 
-if [ "$need_clone" -eq 1 ]; then
-  echo "=== Cloning $NOREBO_URL at $NOREBO_SHA ==="
-  rm -rf "$DEST"
-  git clone "$NOREBO_URL" "$DEST"
-  git -C "$DEST" checkout --detach "$NOREBO_SHA"
+if [ -e "$DEST" ]; then
+  if [ "$DEST" = "$MACHINE" ]; then
+    echo "error: $DEST exists but is not a built pin match" >&2
+    echo "move that tree aside and re-run tools/setup_norebo.sh" >&2
+    exit 1
+  fi
+  aside="${DEST}.old.$$"
+  echo "=== Moving unusable $DEST to $aside ==="
+  mv "$DEST" "$aside"
 fi
 
-got="$(git -C "$DEST" rev-parse HEAD 2>/dev/null || cat "$STAMP" 2>/dev/null || true)"
+STAGE="${DEST}.new"
+if [ -e "$STAGE" ]; then
+  echo "error: staging path $STAGE already exists" >&2
+  echo "move it aside and re-run tools/setup_norebo.sh" >&2
+  exit 1
+fi
+
+mkdir -p "$(dirname "$DEST")"
+echo "=== Cloning $NOREBO_URL at $NOREBO_SHA into $STAGE ==="
+git clone "$NOREBO_URL" "$STAGE"
+git -C "$STAGE" checkout --detach "$NOREBO_SHA"
+
+got="$(git -C "$STAGE" rev-parse HEAD)"
 if [ "$got" != "$NOREBO_SHA" ]; then
   echo "error: expected $NOREBO_SHA, got ${got:-empty}" >&2
   exit 1
 fi
 
-if norebo_is_built "$DEST" && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$NOREBO_SHA" ]; then
-  echo "=== Norebo already built at $DEST ($NOREBO_SHA) ==="
-else
-  echo "=== Building Norebo with ./build.sh ==="
-  (
-    cd "$DEST"
-    if [ -e build1 ] || [ -e build2 ] || [ -e build3 ]; then
-      make clean
-    fi
-    ./build.sh
-  )
-fi
+echo "=== Building Norebo with ./build.sh ==="
+(
+  cd "$STAGE"
+  ./build.sh
+)
 
-if ! norebo_is_built "$DEST"; then
-  echo "error: build.sh finished but $DEST/build2/ORP.rsc is missing" >&2
+if ! norebo_is_built "$STAGE"; then
+  echo "error: build.sh finished but $STAGE/build2/ORP.rsc is missing" >&2
   exit 1
 fi
 
-printf '%s\n' "$NOREBO_SHA" > "$STAMP"
+printf '%s\n' "$NOREBO_SHA" > "$STAGE/.blinky-pin"
+mv "$STAGE" "$DEST"
 
 echo "=== Norebo ready ==="
 echo "NOREBO_ROOT=$DEST"

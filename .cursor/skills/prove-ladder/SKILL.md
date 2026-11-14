@@ -49,6 +49,10 @@ An item is not done until sim, 4K, and 20K all agree, unless the maintainer says
 
 If HDMI is on the 4K and the 20K stage is still required, after the 4K HDMI proof **stop and ask the maintainer to switch HDMI to the 20K**. Do not mark the item done. Do not assume the cable has moved. Same if HDMI is on the 20K and the 4K stage is still open: ask for the switch to the 4K.
 
+## Norebo
+
+Verilator compiles Oberon with the machine tree `/home/lypanov/fpga/norebo-compiled`. `tools/setup_norebo.sh` creates it if it is missing. Do not clone `tools/project-norebo` in the worktree. If you `tee` the sim log, use `set -o pipefail`.
+
 ## Ladder
 
 Prove every ladder step in this order and do not skip a stage. First run simulation until the expected checks pass. Verilator (`tools/run_verilator_sim.sh`) proves the CPU image. Then load the same tip on the Tang Nano 4K (HyperRAM) and confirm on hardware — usually the LED blinks at the published formula rate, measured by the webcam, with a dark LED meaning fail. Only after that, prove the same tip on the Primer 20K / Dock (DDR3). When the Nano 4K and the Primer 20K already blink on this tip and there is no real DDR3 failure, the Dock stage is closed. A step is done only when sim, 4K, and 20K all agree.

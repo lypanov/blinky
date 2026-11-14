@@ -1,8 +1,10 @@
 ### Project Specific stuff
 test_run_dir/*
 tools/webcam-mcp/.venv/
-# Pinned Norebo clone/build (see tools/setup_norebo.sh). After PR #7 this
-# still lives under tools/; tests/*.Mod move to core/tests/.
+# Pinned Norebo clone/build (see tools/setup_norebo.sh). On this machine
+# the live tree is /home/lypanov/fpga/norebo-compiled. GitHub CI still
+# installs tools/project-norebo. After PR #7 this still lives under
+# tools/; tests/*.Mod move to core/tests/.
 tools/project-norebo/
 tests/raw/
 ### XilinxISE template
