@@ -4,6 +4,11 @@ The project's goal and working rules are in `docs/strategy.md`. Read it once per
 
 ## Loading boards
 
+Dock SRAM load and UART disk: `docs/load-boards.md`. Run `tools/load_dock.py`.
+Nano 4K SRAM load and NOR disk: the same file. Run `tools/load_nano.py`.
+Never flash a bitstream. The 4K disk write is the data file at `0x200000`
+only. Never program the other board. HDMI capture is in that file too.
+
 Bitstreams are SRAM-loaded only (`openFPGALoader ... -m`), on both boards. Never write a bitstream to any flash, internal or external.
 
 One exception, Nano 4K only: openFPGALoader may write a **data file** built by the disk image builder to the board's external SPI NOR (Puya P25Q32, 4 MiB). Only inside the disk region, `0x200000`–`0x3FFFFF`. Never below `0x200000`, never a `.fs` or other bitstream, never the internal flash. Verify the write by reading it back. The Primer 20K Dock rule is unchanged: no flash writes of any kind.
