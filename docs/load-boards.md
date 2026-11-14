@@ -86,18 +86,24 @@ arm word.
 ## Capture card (HDMI)
 
 There is one stick, UGREEN 15389, `/dev/video0`. The maintainer moves the
-HDMI cable. Do not assume which board is in the picture: set the size to
-match the cable, then look at luma.
+HDMI cable. Set `--board` to match the cable. Open the stick, then load, so
+a reload re-locks. The command lines are `tools/hdmi_capture.sh`.
 
 ```sh
-tools/hdmi_stats.py --board dock    # 1024×768
-tools/hdmi_stats.py --board nano    # 720×480
+tools/hdmi_capture.sh --board dock --out DIR --frames 1800 -- \
+    tools/load_dock.py BITSTREAM.fs DISK.bin
+tools/hdmi_capture.sh --board nano --out DIR --frames 1800 -- \
+    tools/load_nano.py --sram-only BITSTREAM.fs
 ```
 
-White pixels are luma 255. A locked grey Dock field with luma about 139 and
-U=V=128 is “not armed”, not a dead cable. `measure_blink` is red-minus-green
-and reads zero on these black-and-white frames; do not use it on HDMI, and
-do not convert YUYV to an RGB PNG to judge the picture.
+Native rawvideo at 60 fps, not `-c:v copy`. The first frames can be
+leftovers; the script skips them. A live clip has changing hashes and the
+20×20 square at x 300..319, y 220..239 going 0 then about 400. A locked
+grey field with luma about 139 and U=V=128 is “not armed”, or the size does
+not match the cable. `tools/hdmi_stats.py --board nano|dock` prints luma on
+a few frames. White is 255. `measure_blink` is red-minus-green and reads
+zero on these black-and-white frames; do not use it on HDMI, and do not
+convert YUYV to an RGB PNG to judge the picture.
 
 Webcam `/dev/video2` is the LED camera. `tools/measure_blink.sh` defaults to
 `/dev/video0`. For an LED clip pass `--device /dev/video2`. Always open
@@ -121,3 +127,5 @@ usually a clean square wave.
   clip that spans the change makes `measure_blink` untrusted.
 - The wrong HDMI size on a live cable looks like the unarmed grey field
   (luma 139, U=V=128). Set `--board` to match the cable, not the other FPGA.
+- HDMI: open the stick, then load (`tools/hdmi_capture.sh`). A grab after
+  the load, or a clip that never reloads, can sit on one frame.

@@ -316,6 +316,10 @@ One SRAM load of the damaged Dock disk, checksum `f6baaacb`. The fresh line is `
 
 Next is 41. Item 34 is not done.
 
+## Item 100 — the letter A off the square ring
+
+On the Dock, Blink's `mkX = 143` with Oberon10 covers the square's left ring (`sqX = 150`, screen x 300). Move `mkX` so a dark one-pixel ring remains around the 20×20 box. Do not move the square. The 4K `mkX = 80` already sits to the right of `sqX = 75`. Proof: a lit Dock frame has exactly 400 white pixels in x 300..319, y 220..239, and the one-pixel ring is dark.
+
 ## Item 41 — the book's `Texts`
 
 Blink writes its count with `Texts.WriteInt` into a text and draws the line with the font. The Dock's hardware digit converter and glyph lookup retire. `Texts` contains floating-point instructions, which item 38 already traps. The Nano video PLL is `ODIV_SEL` 8, VCO 1080 MHz, CLKOUT 135 MHz. The Dock pixel rPLL stays `ODIV_SEL` 16, 64.800 MHz, and the serializer stays `ODIV_SEL` 2, 324.000 MHz.

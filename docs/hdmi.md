@@ -16,7 +16,7 @@ The screen becomes a second witness next to the LED. The Nano 4K goes first, so 
 
 **The 4K is built at every step.** Steps 3–5 are Dock steps, but each one also builds and places the 4K image in its highest mode (`square`) and records logic, CLS, and block RAM. If a Dock change pushes the 4K over, make that change conditional on the mode, so it is left out of the 4K build.
 
-**Measuring.** The capture card is a V4L2 device. Use the webcam MCP's `measure_blink` on it if it opens the device, with an ROI over the screen or the square. Otherwise use ffmpeg on the device directly. Before any measurement, grab one frame and confirm there is a signal. If there is none, stop and say so. Do not measure the webcam instead. The screen's rate must match the published formula and the webcam's LED rate in the same run.
+**Measuring.** The capture card is `/dev/video0`. Do not grab one frame: that can be a leftover from the last lock, or a freeze. Open the stick, then load the board, with `tools/hdmi_capture.sh` (`docs/load-boards.md`). A live clip has changing hashes and the square going from 0 to about 400 white pixels. Do not run `measure_blink` on HDMI, and do not convert YUYV to RGB. Do not measure the webcam instead. The screen's rate must match the published formula and the webcam's LED rate in the same run.
 
 **When the 4K does not fit.** First try to make the video block smaller without changing the CPU. Record what each attempt saved. If it still does not fit, stop. Do not take a bring-up ledger cut in the same task. Report:
 - logic, CLS, and block RAM with video `off`, at the first attempt, and at the smallest attempt
