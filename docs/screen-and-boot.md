@@ -484,6 +484,8 @@ Three good loads waited at `C.0440` with the mask clear, lanes `000C` `000A`, `E
 
 The stuck disk is the same 82964 bytes and the same checksum `077cd0c9`. `hang := 1` is the byte at `0xC69E`. Four bytes of directory filler keep the payload sum, so the same bitstream's arm word still matches. sha256 `78b984ef5b778786c867ed8e6ca481dff86eba0f17dfe2b3365d59c59f76fcb5`. One stuck load waited at the same `C.0440` line, took that disk, and the mask became `FFFFFFFFFF`. The armed line is `C.B244`. The clip starts at the SRAM load. The leftover on-edge from the previous image falls at 1.433 s. First rise 18.333 s, fall 19.366 s, second rise 20.333 s, then the same pixel stays lit for the remaining 69.699 s. Rise-to-rise is 2.000 s. No third rise. Nothing was written to the Dock flash.
 
+The capture card `/dev/video0` was opened at YUYV 1024×768, 60 fps, including one 2400-frame recording that covered a further good SRAM load. That load waited at the same `C.0440` line, took the same disk, and armed at `C.B248`. After that arm the Dock LED still edges at 1.000 s (webcam `/dev/video2`, ten rises, median 1.004 s, 14 Nov 2026 09:22 CET). From frame 79 the HDMI bytes are one picture, sha256 prefix `17fb0a2d6dba7d21`, 4661 pixels of luma 255, none of them in the 20×20 box at x 300..319, y 220..239, and the same bytes as the freeze from before the load. That is not a screen witness of the square or of `Oberon.Turns`. The 4K HDMI grab above is the screen witness of the good path.
+
 Next is 47. Item 44 is not done.
 
 ## Item 47 — the watchdog
