@@ -75,10 +75,15 @@ static void to_frame(Vvideo* top) {
   fails++;
 }
 
+static int marker_row(int y) {
+  return y >= 36 && y < 38;
+}
+
 static void frame(Vvideo* top, int want_square, const char* name) {
   int white = 0;
   int active = 0;
   int outside = 0;
+  int green = 0;
   for (int i = 0; i < FRAME; i++) {
     posedge(top);
     int x = top->x_q;
@@ -88,31 +93,36 @@ static void frame(Vvideo* top, int want_square, const char* name) {
     int de = (x >= 122 && x < 842 && y >= 36 && y < 516);
     int sq = de && in_square(x, y);
     int on = sq && want_square;
-    uint16_t want0 = de ? (on ? WHITE : BLACK) : ctrl(vs, hs);
-    uint16_t want1 = de ? want0 : CTRL00;
+    int mark = de && marker_row(y);
+    uint16_t want0 = de ? ((on && !mark) ? WHITE : BLACK) : ctrl(vs, hs);
+    uint16_t want1 = de ? ((on || mark) ? WHITE : BLACK) : CTRL00;
+    uint16_t want2 = de ? ((on && !mark) ? WHITE : BLACK) : CTRL00;
     if ((int)top->de_q != de || (int)top->hs_q != hs || (int)top->vs_q != vs ||
-        top->word0 != want0 || top->word1 != want1 || top->word2 != want1) {
+        top->word0 != want0 || top->word1 != want1 || top->word2 != want2) {
       if (fails < 8) {
         fprintf(stderr,
                 "FAIL %s i=%d x=%d y=%d de=%u hs=%u vs=%u w=%03x %03x %03x"
-                " want de=%d w=%03x\n",
+                " want de=%d w=%03x %03x %03x\n",
                 name, i, x, y, top->de_q, top->hs_q, top->vs_q,
-                top->word0, top->word1, top->word2, de, want0);
+                top->word0, top->word1, top->word2, de, want0, want1, want2);
       }
       fails++;
     }
     if (de) active++;
     if (on && top->word0 == WHITE) white++;
-    if (de && !sq && top->word0 != BLACK) outside++;
+    if (mark && top->word0 == BLACK && top->word1 == WHITE && top->word2 == BLACK)
+      green++;
+    if (de && !sq && !mark && top->word0 != BLACK) outside++;
   }
   if (active != AW * AH) {
     fprintf(stderr, "FAIL %s active %d\n", name, active);
     fails++;
   }
   int want_white = want_square ? 20 * 20 : 0;
-  if (white != want_white || outside) {
-    fprintf(stderr, "FAIL %s white %d want %d outside %d\n",
-            name, white, want_white, outside);
+  int want_green = AW * 2;
+  if (white != want_white || outside || green != want_green) {
+    fprintf(stderr, "FAIL %s white %d want %d outside %d green %d want %d\n",
+            name, white, want_white, outside, green, want_green);
     fails++;
   }
 }

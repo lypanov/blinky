@@ -1,6 +1,6 @@
-# Screen and boot (to-do items 32–47)
+# Screen and boot (to-do items 32–48)
 
-The write-ups for `docs/todo.md` items 32–47, planned on 10 Nov 2026. The rules in `docs/strategy.md` apply to every item: each one keeps the LED blinking at a rate published before the board is trusted, a failed check leaves the LED dark, and Oberon code is preferred to FPGA logic. Both boards are built at every item. If the Nano 4K does not fit, stop and name the next open item in `docs/bringup-ledger.md`.
+The write-ups for `docs/todo.md` items 32–48, planned on 10 Nov 2026. The rules in `docs/strategy.md` apply to every item: each one keeps the LED blinking at a rate published before the board is trusted, a failed check leaves the LED dark, and Oberon code is preferred to FPGA logic. Both boards are built at every item. If the Nano 4K does not fit, stop and name the next open item in `docs/bringup-ledger.md`.
 
 ## The direction
 
@@ -513,6 +513,24 @@ Next is 48. Item 44 is not done.
 A hardware strip on the Nano 4K only: the first two active rows are green. HDMI ch0 is blue, ch1 green, ch2 red. Green is the existing `BLACK` word on ch0 and ch2 and `WHITE` on ch1. Not gated by `armed` or `blank`, so trap, stuck, and status mode still show it. `VIDEO_DOCK` must not have it. If the 4K place does not fit, one row, or the left 32 pixels of those rows.
 
 HDMI is on the 4K. After the 4K proof, ask the maintainer to switch HDMI to the 20K. Do not mark this item done until that 20K capture: no green strip, the field stays black-and-white, the square is still 400 white pixels in x 300..319, y 220..239.
+
+The marker is in `gowin/video.v`, inside `VIDEO_SQUARE`, under `ifndef VIDEO_DOCK`. `marker` is `de_r && (py_r < 10'd2)`. Green is `BLACK` on ch0 and ch2 and `WHITE` on ch1. It is not gated by `armed` or `blank`. The `VIDEO_DOCK` assignment is the old three-channel copy. The flash path has no `py_r` and is unchanged. Two rows placed on the 4K, so the one-row and left-32 fallbacks were not used.
+
+`sim/run_video.sh` passes. The Nano square and text benches expect 1440 green pixels on the first two active rows, including unarmed, blanked, and off. `sim/run_frame_check.sh` passes. Nano `FRAME_SQUARE` dumps those rows as black in the P5 so `frame_expect.py` still matches, and it fails if `green != 1440`. Dock square, Dock text, and both flash pictures still require the three channels equal; their green count is 0.
+
+`tools/run_verilator_sim.sh` exits 0. The disk is unchanged from item 47. The NOR 16 ms edges are cycles 437217720, 437631048, and 438065718, PC `00010400`, period 432000, mask `FFFFFFFFFF`, R5 and R9 zero. The turn field decodes 1, 7, 19. The count-1 picture is 10 words. The ones image halts at cycle 413709264 with status `10BH`, 0 edges, and the arm word unstored. The stuck disk's third edge is cycle 438094594, LED on, and the halt is 438105184. The UART 16 ms edges are 152385554, 153146340, and 153921020, PC `00010420`, period 774000. The turn field decodes 1, 65, 133. The count-1 picture is 26 words. The ones image halts at cycle 128751920, PC `000107B0`, 0 edges. The stuck UART halt is cycle 153942994, PC `00010E3C`, LED on, after three edges.
+
+The 4K disk is still 82964 bytes, checksum `6f047f55`, arm word `ce1872b0`, sha256 `c90efb455fce367dc3338219518acd99ee73bda2ae65348ce4a8658f2173d050`. The 1000 ms bytes at `0xB174` are `e8 03 00 00 18 fc ff ff`. The light compare is `32'h103D0`. The NOR was not rewritten. SRAM load `--sram-only`, `openFPGALoader -m`, bus 003 device 012, port `3-3.3`, `write to ram`, Load SRAM 100%, CRC success.
+
+4K place, `modules_n1000`, square. Against item 47 this uses 42 more LUT (the ALU stays 369) and 2 more CLS. Logic 4574/4608 (100%; 4205 LUT, 369 ALU, 0 ROM16), registers 2212/3612 (62%), CLS 2304/2304 (100%). BSRAM 9/10 (2 SP, 5 SDPB, 1 SDPX9B, 1 pROM). DSP 2/8, one `MULT36X36`, site `DSP_R19[2]` (R19C20). Setup and hold violated endpoints 0. Worst setup slack +0.130 ns. Worst hold slack +0.479 ns. The 27 MHz port's Fmax is 71.721 MHz. `cpu_clk` Fmax is 13.523 MHz against 13.500. The HyperRAM `clkdiv` Fmax is 56.274 MHz against 27.000. This netlist extracts `bodyFor_31_6`. The CST already has that wire. The bitstream is `gowin/impl/pnr/modules_n1000.fs`, 1772222 bytes, sha256 `cde7ed110b47b97bc068d32c734c76eb48c9f0c043be30b256b18b2aed0644b5`. Built Sat 14 Nov 2026 13:13:02 CET.
+
+Webcam `/dev/video2`, 640×480. The lit core is x 174, y 191. Clip `/home/lypanov/fpga/blink-measure/20261114-131602-mcp/clip.mkv`, 180 frames in 18.03 s, about 10 fps MJPEG, measured in the box `132,150` 61×60. The LED is blinking. That clip's edge rate is 0.888 Hz because the camera dropped to 10 fps; it is not the published 1 Hz. Capture card `/dev/video0`, YUYV 720×480, 60 fps, 2400 frames. File `/home/lypanov/fpga/blink-measure/hdmi-marker-5b60/nano-hdmi/hdmi.yuyv`. Recorded Sat 14 Nov 2026 13:13:52 CET. The stick is 720×480, and the small monitor in the webcam still shows a green top bar, so HDMI is on the 4K.
+
+The first 151 frames are leftover grey (luma about 139, U=V=128). Frame 151 is the first with the marker: 1440 of 1440 pixels on y 0..1, luma 255, U=18, V=1, and 12800 status-white pixels, square 0. That is status mode before the arm word. After that frame the capture is never grey again: 873 status+green, 716 dark+green, 660 lit+green. Each lit frame has exactly 400 pixels of luma 255, U=V=128, at x 300..319, y 220..239. The one-pixel ring is 127..139, 84 pixels. The letter sits at x 324..335, y 220..239. Square rise frames 1083, 1202, 1322, 1382, … The first two rise-to-rise gaps are 119 frames and 120 frames (1.983 s, 2.000 s). From the third rise the gaps are 60 frames (1.000 s), with one of 59 and two of 61.
+
+The Dock disk is still 82964 bytes, checksum `d996a2e3`, arm word `788aaf06`, sha256 `bd53fdc594fb72a7fe9417e2e24c106e1e5b0e4d18519f3b4bbbb78909a30470`. The light compare is `32'h103F0`. Place option 0, route option 1. Logic 6373/20736 (31%; 5825 LUT, 548 ALU, 0 ROM16), registers 3184/16173 (20%), CLS 4658/10368 (45%). BSRAM 26/46 (1 SP, 24 SDPB, 1 pROM). DSP 2/24, one `MULT36X36`. Setup and hold violated endpoints 0. Worst setup slack +0.192 ns. Worst hold slack +0.273 ns. `pclk` Fmax is 98.575 MHz against 96.749, `cpu_clk` 27.629 MHz against 24.187. The pixel clock Fmax is 114.321 MHz against 64.800. The bitstream is `gowin/primer20k/impl/pnr/ddr3modules_n1000.fs`, 7261998 bytes, sha256 `b6d9a1b1fe5c2c1f492573a8dd1bc9244d19f858e13025ef147a96d5998b1474`. Built Sat 14 Nov 2026 13:19:29 CET. The Dock was not SRAM-loaded. HDMI stayed on the 4K.
+
+Next stays 48. Ask the maintainer to switch HDMI to the 20K. Item 44 is not done.
 
 ## Item 49 — the watchdog
 

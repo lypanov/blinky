@@ -177,6 +177,7 @@ static void frame(Vvideo* top, int show, int square, const char* name) {
   int white = 0;
   int want_white = 0;
   int mismatch = 0;
+  int green = 0;
   for (int i = 0; i < FRAME; i++) {
     posedge(top);
     int x = top->x_q;
@@ -186,24 +187,30 @@ static void frame(Vvideo* top, int show, int square, const char* name) {
     int de = (x >= 122 && x < 842 && y >= 36 && y < 516);
     // The bitmap replaced the glyphs. A lit pixel is the square only.
     int on = show && de && square_on(x, y, square);
+    int mark = de && y >= 36 && y < 38;
     (void)glyph_on;
-    uint16_t want0 = de ? (on ? WHITE : BLACK) : ctrl(vs, hs);
-    uint16_t want1 = de ? want0 : CTRL00;
+    uint16_t want0 = de ? ((on && !mark) ? WHITE : BLACK) : ctrl(vs, hs);
+    uint16_t want1 = de ? ((on || mark) ? WHITE : BLACK) : CTRL00;
+    uint16_t want2 = de ? ((on && !mark) ? WHITE : BLACK) : CTRL00;
     if ((int)top->de_q != de || (int)top->hs_q != hs || (int)top->vs_q != vs ||
-        top->word0 != want0 || top->word1 != want1 || top->word2 != want1) {
+        top->word0 != want0 || top->word1 != want1 || top->word2 != want2) {
       if (mismatch < 8) {
         fprintf(stderr,
-                "FAIL %s i=%d x=%d y=%d de=%u w=%03x want de=%d w=%03x on=%d\n",
-                name, i, x, y, top->de_q, top->word0, de, want0, on);
+                "FAIL %s i=%d x=%d y=%d de=%u w=%03x %03x %03x"
+                " want de=%d w=%03x %03x %03x on=%d\n",
+                name, i, x, y, top->de_q, top->word0, top->word1, top->word2,
+                de, want0, want1, want2, on);
       }
       mismatch++;
     }
     if (on) want_white++;
     if (de && top->word0 == WHITE) white++;
+    if (mark && top->word0 == BLACK && top->word1 == WHITE && top->word2 == BLACK)
+      green++;
   }
-  if (mismatch || white != want_white) {
-    fprintf(stderr, "FAIL %s mismatch %d white %d want %d\n",
-            name, mismatch, white, want_white);
+  if (mismatch || white != want_white || green != 720 * 2) {
+    fprintf(stderr, "FAIL %s mismatch %d white %d want %d green %d\n",
+            name, mismatch, white, want_white, green);
     fails++;
   } else {
     printf("ok %s white %d\n", name, white);

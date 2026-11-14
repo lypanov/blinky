@@ -40,7 +40,7 @@ Bitstreams are SRAM-loaded only. The one flash exception is the Nano 4K's disk d
 
 - `docs/todo.md`: the work queue. One item at a time, from `Next:`. It is an index; each item points to its write-up. Finished items stay in place, marked "Done.".
 - `docs/next-steps.md`: write-ups for to-do items 19–31.
-- `docs/screen-and-boot.md`: write-ups for to-do items 32–47: the status register, the bitmap, the book's `Display`, `Fonts` and `Texts`, traps, and the main loop.
+- `docs/screen-and-boot.md`: write-ups for to-do items 32–48: the status register, the bitmap, the book's `Display`, `Fonts` and `Texts`, traps, the main loop, and the 4K HDMI marker.
 - `docs/bringup-ledger.md`: the Nano 4K space list, one numbered list, and the record of how the 4K got its room.
 - `docs/led-ladder.md`: the long-range map from the blink to the Oberon desktop, including the far-future items.
 - `docs/hdmi.md`, `docs/modules-mod-plan.md`: finished plans, kept for their measured results.
