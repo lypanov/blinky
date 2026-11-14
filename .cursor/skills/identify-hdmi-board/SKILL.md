@@ -42,8 +42,6 @@ take one more still before judging cables.
 
 ## MCP
 
-On Cursor desktop, tools are `list_cameras`, `capture_still`, `auto_adjust`,
-`detect_leds`, `measure_blink`, `check_all` at `http://127.0.0.1:8766/mcp`.
-A cloud agent on this machine may not see those tools in its catalog. Call
-the same URL with the MCP HTTP client. Do not import `server.py`. Do not run
+How to reach the webcam MCP (HTTP URL, venv, not `import server`) is the
+first section of `.cursor/skills/prove-ladder/SKILL.md`. Do not run
 `measure_blink` on `/dev/video0` (that is the HDMI stick).
