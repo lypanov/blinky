@@ -7,8 +7,9 @@ Always use non-fast for subagents. Do not pass a model slug that ends in `-fast`
 ## Loading boards
 
 Dock SRAM load and UART disk: `docs/load-boards.md`. Run `tools/load_dock.py`.
-Never flash. Never program the Nano while loading the Dock. The Nano 4K path
-is not in the script yet.
+Nano 4K SRAM load and NOR disk: the same file. Run `tools/load_nano.py`.
+Never flash a bitstream. The 4K disk write is the data file at `0x200000`
+only. Never program the other board. HDMI capture is in that file too.
 
 ## Merging
 
