@@ -630,7 +630,7 @@ def _board_text(name: str, dock: bool) -> str:
                 "sqX = 75; sqY = 55; sqW = 5; sqH = 5;",
                 "sqX = 150; sqY = 110; sqW = 10; sqH = 10;",
             ),
-            ("mkX = 80; mkY = 55;", "mkX = 143; mkY = 110;"),
+            ("mkX = 81; mkY = 55;", "mkX = 161; mkY = 110;"),
             ("tx = 64; ty = 40;", "tx = 96; ty = 96;"),
             ("lnX = 4; lnY = 8;", "lnX = 8; lnY = 32;"),
             ("tnX = 4; tnY = 100; tnW = 40; tnH = 8;", "tnX = 8; tnY = 160; tnW = 56; tnH = 10;"),

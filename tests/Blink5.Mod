@@ -1,11 +1,12 @@
 MODULE Blink;
   IMPORT Files, Fonts, Texts, Display, MMT := AMemoryMappedToggle, Input, Kernel, Modules, Oberon, SYSTEM;
   (* The 4K square is five bitmap pixels at (75, 55). The letter A is
-     at (80, 55), in the same words. The Dock build replaces these two
-     lines with the square at 150, 110, 10, 10 and the letter at
-     143, 110. Both squares are the 20-pixel box at screen (300, 220). *)
+     at (81, 55), in the same words, one bitmap pixel to the right of
+     the square so screen x 320 stays dark. The Dock build replaces
+     these two lines with the square at 150, 110, 10, 10 and the letter
+     at 161, 110. Both squares are the 20-pixel box at screen (300, 220). *)
   CONST sqX = 75; sqY = 55; sqW = 5; sqH = 5;
-    mkX = 80; mkY = 55;
+    mkX = 81; mkY = 55;
     tx = 64; ty = 40;
     lnX = 4; lnY = 8;
     tnX = 4; tnY = 100; tnW = 40; tnH = 8;

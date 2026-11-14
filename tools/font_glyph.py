@@ -9,8 +9,8 @@ drops the square bits on the way on, and lights the letter on the way off.
 
 Texts.WriteInt(W, n, 1) writes the decimal digits and no leading spaces.
 The 4K line is the generated 4x6 file, at bitmap (64, 40). The letter A
-is at (80, 55). The Dock line is Oberon10, at bitmap (96, 96). The letter
-is at (143, 110).
+is at (81, 55). The Dock line is Oberon10, at bitmap (96, 96). The letter
+is at (161, 110).
 """
 from __future__ import annotations
 
@@ -230,8 +230,8 @@ class Board:
 
 
 # Same origins as the constants in tests/Blink5.Mod.
-NANO = Board("nano", 256, (75, 55, 5, 5), (80, 55), (64, 40), 4)
-DOCK = Board("dock", 512, (150, 110, 10, 10), (143, 110), (96, 96), 2)
+NANO = Board("nano", 256, (75, 55, 5, 5), (81, 55), (64, 40), 4)
+DOCK = Board("dock", 512, (150, 110, 10, 10), (161, 110), (96, 96), 2)
 
 
 def count_text(count: int) -> str:
@@ -274,6 +274,19 @@ def frame(board: Board, font: bytes, on: bool, count: int = 1) -> dict[int, int]
     if not on:
         _paint_picture(words, board, font, count, "invert")
     return {k: v for k, v in words.items() if v}
+
+
+def screen_box_and_ring() -> tuple[set[tuple[int, int]], set[tuple[int, int]]]:
+    """The 20×20 HDMI box at (300, 220) and the one-pixel ring around it."""
+    box = {(x, y) for x in range(300, 320) for y in range(220, 240)}
+    ring: set[tuple[int, int]] = set()
+    for x in range(299, 321):
+        ring.add((x, 219))
+        ring.add((x, 240))
+    for y in range(220, 240):
+        ring.add((299, y))
+        ring.add((320, y))
+    return box, ring
 
 
 def screen_pixels(board: Board, font: bytes) -> set[tuple[int, int]]:
@@ -451,6 +464,15 @@ def _built(tiny: bytes, oberon: bytes) -> tuple[list[tuple], list[tuple]]:
             raise SystemExit(f"count {count} off frame is not black")
         if count > 1 and (npic == nano[count - 2] or dpic == dock[count - 2]):
             raise SystemExit(f"count {count} matches the previous picture")
+    box, ring = screen_box_and_ring()
+    for board, font in ((NANO, tiny), (DOCK, oberon)):
+        pix = screen_pixels(board, font)
+        inside = pix & box
+        if len(inside) != 400:
+            raise SystemExit(f"{board.name} box has {len(inside)} white pixels")
+        hit = pix & ring
+        if hit:
+            raise SystemExit(f"{board.name} ring is lit at {sorted(hit)[:8]}")
     return nano, dock
 
 
