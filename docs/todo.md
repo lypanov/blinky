@@ -59,5 +59,6 @@ Ledger items are not to-dos. If a later item cannot fit on the Nano 4K without a
 45. The `Input` stand-in. Same file, item 45. Done. The measured result is in that file. Next is 46.
 46. The main loop with Blink as a background task. Same file, item 46.
 47. The watchdog. Same file, item 47.
+48. The monorepo layout: each track gets its own directory. Redoes PR #7 on current `main`. [`docs/monorepo-layout.md`](monorepo-layout.md).
 
 The rest of `docs/modules-mod-plan.md` is the original fifteen and the boot path. Read a section when the proof cites it. Those headings are not a second queue.
